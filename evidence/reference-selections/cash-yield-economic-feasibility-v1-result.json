@@ -1,0 +1,53 @@
+{
+  "schema_version": "economic-cash-feasibility-result-v1",
+  "evaluated_at": "2026-08-28T22:03:19Z",
+  "plan_id": "reference_selection_plan_440f25e70d421d2f6d90",
+  "plan_hash": "c141ca47abf1f57d12ab1573e6c52eaa3bdc7f1a025a043eb5adcb9f299c8c26",
+  "plan_registration_commit": "6a235677b0e697fba88314a603a9403ee5504e79",
+  "evaluator_commit": "84968edc885d74b959b9cfe2ddae31e1c3a524cc",
+  "economic_cash_proxy": {
+    "dataset_id": "historical_economic_series_847417ec59b5c2f312c0",
+    "series_id": "US_ONE_MONTH_TREASURY_BILL_TOTAL_RETURN",
+    "first_effective_date": "1926-07-01",
+    "last_effective_date": "2026-06-30",
+    "observation_count": 26274
+  },
+  "development": {
+    "annualized_nominal_return_fraction": "0.06363738217243009",
+    "annualized_real_return_fraction": "0.0245918801929923",
+    "annualized_volatility_fraction": "0.03369930294242024",
+    "maximum_drawdown_fraction": "0.07075887357062693",
+    "annualized_turnover_fraction": "0.042105697176309506",
+    "risk_contributions": {
+      "CASH": "0.026252385389524378",
+      "INFLATION_SENSITIVE": "0.5231109183896127",
+      "US_EQUITY": "0.45063669622086294"
+    }
+  },
+  "blind": {
+    "annualized_nominal_return_fraction": "0.06290016500224382",
+    "annualized_real_return_fraction": "0.029818601604448602",
+    "annualized_volatility_fraction": "0.03160308803627715",
+    "maximum_drawdown_fraction": "0.049067250494063464",
+    "annualized_turnover_fraction": "0.058425647967756955",
+    "risk_contributions": {
+      "CASH": "0.037428006406864466",
+      "INFLATION_SENSITIVE": "0.35457331695855665",
+      "US_EQUITY": "0.607998676634579"
+    }
+  },
+  "stress_loss_fraction": {
+    "covid-liquidity-shock": "0.02429039704964131",
+    "global-financial-crisis": "0.07437185117194922",
+    "inflation-rates-shock": "0.048239987691753194",
+    "stagflation-oil-shock": "0.03602181052429543"
+  },
+  "economic_gate_result": "PASS",
+  "decision": "PROCEED_TO_CASH_PRODUCT_TRACKING_AND_LIQUIDITY_EVIDENCE",
+  "capital_authorization": "NONE",
+  "limits": [
+    "The Treasury-bill proxy proves the economic role of yield-bearing cash, not Binance product returns.",
+    "USDT Flexible rate tracking, venue and stablecoin risk, redemption availability and account reconciliation remain unproven.",
+    "The existing PAXG and SPY implementation evidence gaps remain and this result cannot qualify a Reference Policy."
+  ]
+}

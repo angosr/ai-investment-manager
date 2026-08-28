@@ -1,0 +1,62 @@
+{
+  "schema_version": "cash-yield-rate-tracking-evidence-v1",
+  "evaluated_at": "2026-08-28T22:10:00Z",
+  "dataset": {
+    "dataset_id": "historical_cash_yield_rate_8cbe3e46c344176a653b",
+    "manifest_content_hash": "87a42ae933194e23c2c6f8bbeb2cf0e84afce4e88f555cb7d5a6fb0108d47d28",
+    "observations_hash": "2c115e5359ca45e84c6051dadd90d7f918f4443905f2f50e0e4d020edaac7fdd",
+    "venue": "BINANCE",
+    "product_id": "USDT001",
+    "asset": "USDT",
+    "source_url": "https://api.binance.com/sapi/v1/simple-earn/flexible/history/rateHistory",
+    "documentation_url": "https://developers.binance.com/docs/simple_earn/flexible-locked/history/Get-Rate-History",
+    "vintage_policy": "CURRENT_VINTAGE_AT_COLLECTION",
+    "collected_at": "2026-08-28T22:08:58.433142Z",
+    "first_effective_at": "2024-07-09T23:00:00Z",
+    "last_effective_at": "2026-08-28T21:00:00Z",
+    "observation_count": 18719,
+    "interval_seconds": 3600,
+    "query_window_count": 26,
+    "all_query_pages_complete": true,
+    "hourly_timeline_contiguous": true
+  },
+  "rate_summary": {
+    "minimum_apr": "0.0071467",
+    "fifth_percentile_apr": "0.0083804",
+    "median_apr": "0.0197173",
+    "mean_apr": "0.02680591744217106",
+    "ninety_fifth_percentile_apr": "0.05877741",
+    "maximum_apr": "0.28032",
+    "latest_apr": "0.0280612",
+    "modeled_period_return_fraction": "0.05895299392109554",
+    "modeled_annualized_return_fraction": "0.027188691871556703",
+    "minimum_rolling_30_day_mean_apr": "0.008096663194444444",
+    "maximum_rolling_30_day_mean_apr": "0.09911663715277778"
+  },
+  "treasury_proxy_tracking": {
+    "overlap_day_count": 496,
+    "mean_product_apr": "0.02782185732106855",
+    "mean_treasury_proxy_annualized_return": "0.04730755726228513",
+    "mean_product_minus_proxy_fraction": "-0.019485699941216583",
+    "worst_observed_product_minus_proxy_fraction": "-0.04306904328800994",
+    "product_above_proxy_day_fraction": "0.0907258064516129"
+  },
+  "post_observation_sensitivity_only": {
+    "mean_tracking_shortfall": {
+      "development_real_return_fraction": "0.012272",
+      "development_maximum_drawdown_fraction": "0.076292",
+      "blind_real_return_fraction": "0.021908",
+      "blind_maximum_drawdown_fraction": "0.053143"
+    },
+    "worst_observed_tracking_shortfall": {
+      "development_real_return_fraction": "0.002354",
+      "development_maximum_drawdown_fraction": "0.079062",
+      "blind_real_return_fraction": "0.016093",
+      "blind_maximum_drawdown_fraction": "0.053968"
+    },
+    "capital_permission": "NONE_BECAUSE_MAPPING_WAS_NOT_PREREGISTERED"
+  },
+  "decision": "PROCEED_TO_FORWARD_READ_ONLY_RATE_AND_MOCK_LIQUIDITY_EVIDENCE",
+  "capital_authorization": "NONE",
+  "reason": "The product has meaningful positive cash yield and the conservative diagnostic remains economically feasible, but it persistently trails the Treasury-bill proxy and has not proved stressed redemption or account reconciliation."
+}
