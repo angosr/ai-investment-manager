@@ -1,0 +1,97 @@
+{
+  "schema_version": "portfolio-candidate-plan-v1",
+  "plan_id": "diversified-economic-trend-v1",
+  "frozen_at": "2026-08-28T23:44:17Z",
+  "base_commit": "e99fe032d5344c5c22e0ee21fd6f0ab1e1d2dba1",
+  "permission": "RETROSPECTIVE_REJECTION_ONLY",
+  "hypothesis": "BTC、黄金和美国股票的趋势持续性并不保证单资产稳定盈利，但在共同月度资本时点以固定小权重做多或做空、其余资本持有现金，可能通过跨经济暴露分散降低单一 BTC 趋势的回撤和阶段依赖，并在保守换手成本后优于全现金和静态同权组合。",
+  "research_prior": [
+    {
+      "title": "Time series momentum",
+      "doi": "10.1016/j.jfineco.2011.11.003",
+      "adopted": "只采用跨资产、过去收益符号和低频再平衡这一可解释先验；不继承论文收益、波动目标或资本结论。"
+    },
+    {
+      "title": "Time-series momentum and market timing in Bitcoin",
+      "doi": "10.1057/s41283-026-00234-7",
+      "adopted": "BTC 信号固定使用论文摘要明确支持的 12 周慢速基线；拒绝动态速度、参数搜索和相邻周期。"
+    }
+  ],
+  "datasets": {
+    "btc_spot_daily": {
+      "dataset_id": "historical_dataset_2c3d78a5f3d963d50165",
+      "manifest_sha256": "9d71749fcfcfd6610f4c551ef3d86c861e975b9a708a03f830222d8c8c10ef1c",
+      "payload_sha256": "9b787ac9ce41fff8b2a786c5df4c12ef3050b20d349d56e604906a8af5d93dac"
+    },
+    "paxg_spot_daily": {
+      "dataset_id": "historical_dataset_b1a3cbad1cca6e90e80f",
+      "manifest_sha256": "86a8fc6361993064c1d9866958b8c05e7a115b62a293e361fa93b507fb9052c1",
+      "payload_sha256": "84269f56b5b6e6a046dbfd2b6e2cff0b438080bf42bd371287fe498338a8544f"
+    },
+    "us_equity_total_return": {
+      "dataset_id": "historical_economic_series_ba97b40f042388278e45",
+      "manifest_sha256": "2ef4f7e4aadc3ba701f79a06082adc63e9387eebb1c23ab370f8b2b186dd00da",
+      "payload_sha256": "32f79a3a83ca736c253682b195bbaaf1aee7262f88cf0a5248ee18944c06d5aa"
+    },
+    "cash_total_return": {
+      "dataset_id": "historical_economic_series_847417ec59b5c2f312c0",
+      "manifest_sha256": "fe7d869451de938241c15cbebb62341daec941a1161d304bca617142549c36ae",
+      "payload_sha256": "969280f0c2672404735ca53cc398b30822961c5b02d0e13abd1bbaa81b9b1382"
+    },
+    "cpi_deflator": {
+      "dataset_id": "historical_economic_series_3abd061b67f0abe0cbe0",
+      "manifest_sha256": "e6213d03cc5423b05ff6fb74b91aa3af48c2cf010722c19b78fa600154c21d20",
+      "payload_sha256": "7512038a6465ca52375062c0da0c8af9722afc6a646cf8117c0b2230e961d685"
+    }
+  },
+  "sample_contract": {
+    "decision_time": "每个 UTC 月第一日；只能读取此前已经结束的日线或月度收益",
+    "common_window": "PAXG 历史开始后的共同月份；信号预热结束前不产生决策",
+    "btc_signal": "决策日前最后一个已收盘日相对 84 个日历日前最近已收盘日的价格收益符号",
+    "paxg_signal": "此前 12 个完整月的累计价格收益符号",
+    "us_equity_signal": "此前 12 个完整月的累计总收益符号",
+    "zero_signal": "累计收益严格等于零时该暴露权重为零并转入现金",
+    "outcome": "从本月第一份可见价格到下月第一份可见价格的经济暴露收益；美国股票和现金使用月内总收益",
+    "availability_limit": "CRSP 与 CPI 为采集时当前历史视图，不证明历史发布日期；本实验只能否决，不能授权资本。"
+  },
+  "candidate": {
+    "gross_exposure_fraction": "0.50",
+    "risk_asset_absolute_weight": "0.1666666666666666666666666667",
+    "cash_weight": "0.50，加上零信号释放的权重",
+    "directions": "每个风险暴露按冻结信号独立取 LONG、SHORT 或 CASH",
+    "rebalance": "每月只把当前目标与上月目标之差计入换手；固定权重不做月内波动再平衡",
+    "one_way_friction_bps": "10",
+    "stress_one_way_friction_bps": "20",
+    "initial_equity_usdt": "10000"
+  },
+  "baselines": {
+    "cash": "100% 同期一月期美国国库券总收益代理",
+    "static_diversified": "BTC、PAXG、美国股票各长期做多 1/6，现金 1/2；使用同一换手成本"
+  },
+  "evaluation": {
+    "metrics": [
+      "成本后复合收益",
+      "相对现金复合收益",
+      "年化 Sharpe",
+      "最大回撤",
+      "年化换手",
+      "CPI 调整后复合收益"
+    ],
+    "regimes": [
+      ["2021-10-01", "2022-12-01"],
+      ["2022-12-01", "2024-02-01"],
+      ["2024-02-01", "2025-04-01"],
+      ["2025-04-01", "2026-07-01"]
+    ],
+    "gate_all_required": [
+      "候选成本后复合收益严格高于全现金",
+      "候选年化 Sharpe 严格高于静态同权组合",
+      "候选最大回撤严格低于静态同权组合",
+      "四个冻结阶段中至少三个阶段的候选收益严格高于现金",
+      "双倍单边摩擦下候选复合收益仍严格高于现金"
+    ]
+  },
+  "next_step_on_pass": "只允许登记一个新的前瞻 Research Forecast 行为；先验证 Binance 永续产品的 funding、basis、交易时段和可成交成本，不自动授予正式资本。",
+  "next_step_on_rejection": "保存不可变否定结果并删除专属 evaluator 与测试；不搜索权重、信号窗口、成本或阶段边界。",
+  "runtime_change_before_forward_pass": "NONE"
+}
