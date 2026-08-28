@@ -31,6 +31,7 @@ data:
     也只能取得实时盘口前向模拟资格。
 
 rule:
+  starting_equity_usdt: "10000"
   entry_time: first_hour_open_at_or_after_30_calendar_days_before_delivery
   exit_time: official_delivery_time
   legs:
@@ -38,8 +39,12 @@ rule:
     - short_equal_quantity_dated_future
   futures_quantity_step: "0.001"
   futures_minimum_notional: "50"
-  target_leg_notional_fraction_of_starting_equity: "0.40"
-  futures_cash_collateral_fraction_of_starting_equity: "0.60"
+  target_leg_notional_fraction_of_current_equity: "0.40"
+  futures_cash_collateral_fraction_of_current_equity: "0.60"
+  sizing: >-
+    每个季度按上一季度交割后的当前账户权益重新定量；数量向下取整，使现货与交割合约
+    两腿入场名义均不超过当前权益的 40%，未用于现货和入场费用的现金全部作为交割合约
+    抵押。季度之间顺序复利，合约不重叠。
   entry_gate: >-
     仅当按入场现货与交割合约价格冻结的基差，严格大于两腿全部预注册成本时入场；
     不使用年化基差阈值、趋势、情绪、funding、AI 判断或事后选择。
