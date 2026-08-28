@@ -30,9 +30,6 @@ CLI_CONTRACT = {
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
     ),
-    "evaluate-perpetual-funding-carry": (
-        "plan,carry_dataset_id,project_root,spot_catalog,carry_catalog,result"
-    ),
     "fetch-economic-series": "config,series,catalog",
     "fetch-binance-funding-history": "config,symbol,start,end,catalog",
     "fetch-binance-history": "config,symbol,start,end,interval,catalog",
@@ -66,7 +63,6 @@ CLI_CONTRACT = {
 
 RESEARCH_COMMAND_NAMES = {
     "fetch-binance-carry-history",
-    "evaluate-perpetual-funding-carry",
     "fetch-binance-funding-history",
     "fetch-binance-history",
     "fetch-binance-usdm-history",
@@ -280,7 +276,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "fetch-binance-usdm-history",
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
-            "evaluate-perpetual-funding-carry",
             "freeze-event-history",
         },
     }

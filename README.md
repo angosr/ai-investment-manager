@@ -85,7 +85,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' .venv/bin/alembic upgrade head
 
 ## 当前证据边界
 
-代码已经能保存世界认知、Forecast、Portfolio 选择、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置与 Shadow 当前都不启用 Forecast producer：首个 AI+Quant posterior 在 5 个定时槽与 5 个材料事件槽的 20 个目标上逐位复制 Quant，评分增量数学上恒为零且增加 40～101 秒延迟；随后 4h Quant 的最强状态也只有 BTC 6.50bp、PAXG 2.65bp 预期毛收益，均低于 10bp 的确定性往返手续费下界，因此其生产配置、运行器、训练命令、专属 Dashboard 解析和在线研究轮询已硬删除。独立预登记的 BTC 12 周慢趋势虽在 2020-03 至 2026-08 获得正的全期成本后收益，但最大回撤 69.70%，且四个固定阶段只有两个为正，已按原规则拒绝；一次性评估代码同样删除。不可变 Forecast、输入、Outcome 和离线证据制品仍永久保留。BTC/PAXG Spot 只作为规范 Outcome 和只读市场参考；将来获得唯一资本授权的生产行为只能通过对应 USD-M Perpetual 与 SPY TradFi Perpetual 表达合法多空。
+代码已经能保存世界认知、Forecast、Portfolio 选择、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置与 Shadow 当前都不启用 Forecast producer：首个 AI+Quant posterior 在 5 个定时槽与 5 个材料事件槽的 20 个目标上逐位复制 Quant，评分增量数学上恒为零且增加 40～101 秒延迟；随后 4h Quant 的最强状态也只有 BTC 6.50bp、PAXG 2.65bp 预期毛收益，均低于 10bp 的确定性往返手续费下界，因此其生产配置、运行器、训练命令、专属 Dashboard 解析和在线研究轮询已硬删除。独立预登记的 BTC 12 周慢趋势因 69.70% 最大回撤和阶段不稳定被拒绝；固定到期季度套利因只有两个阶段盈利被拒绝；市场中性永续 funding carry 虽在 validation 成本后 +2.60%，一次性 blind 转为 -0.14%，funding 收入低于完整成本，也已拒绝。三项一次性评价代码均删除，只永久保留计划与结果。不可变 Forecast、输入、Outcome 和离线证据制品仍永久保留。BTC/PAXG Spot 只作为规范 Outcome 和只读市场参考；将来获得唯一资本授权的生产行为只能通过对应 USD-M Perpetual 与 SPY TradFi Perpetual 表达合法多空。
 
 当前 Reference Policy 仍为空，产品映射和总资本选择也尚无足够前瞻、非重叠、费用后证据证明增量。TMF/TBT 的永续表达不能冒充防守现金。独立预登记结果已经证明收益型经济现金能让原总组合跨过实际收益、回撤和压力门槛，但 Binance USDT Flexible 在 780 天完整小时历史中平均比一月期国库券代理少约 1.95 个百分点，因此不能直接继承经济代理资格。第一条前瞻事实已证明当前 APR、额度及普通申赎可用；官方合同同时明确压力期赎回可能延迟且没有最坏到账上界，Flexible 资产用于 Spot/Convert 也不等于当前永续保证金。其运行时准入已暂停，只保留低频只读观察，不开发第二套账户状态机、不产生真实申购。RWUSD 继续只作长期闲置现金 challenger。模拟账户保留既有订单和可对账成本作为历史事实；新的研究假设必须先在离线点时验证中跨过预测基线和确定性成本下界，才允许建立一条前瞻逻辑账户，不能用少量交易、毛收益为正或一次方向正确证明稳定盈利，也不能由模拟环境自动升级正式资金权限。
 
