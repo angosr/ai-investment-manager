@@ -26,7 +26,6 @@ from investment_manager.execution.venue.runtime import assemble_product_executio
 from investment_manager.forecast.context.posterior import (
     QuantContextPosteriorAssignmentProducer,
 )
-from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -41,7 +40,6 @@ from investment_manager.forecast.contracts import (
     ForecastProducerKind,
     ForecastSlotCause,
     ForecastSlotOrigin,
-    ForecastSlotStratum,
 )
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -1138,33 +1136,6 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     assert {item["quantity"] for item in dto["instruments"]} == {"0"}
     assert dto["instruments"][0]["price"] == "99995"
     assert dto["instruments"][1]["price"] is None
-
-
-def test_forecast_evidence_always_exposes_both_legal_source_strata() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    create_schema(engine)
-    config = load_config("config/investment-manager.shadow.yaml")
-    policy = config.capital.context_forecast
-    assert policy is not None
-    target_policy = policy.targets[0]
-    instrument = next(
-        item
-        for item in config.capital.forecast_reference_instruments
-        if item.key == target_policy.reference_instrument_key
-    )
-    contract = context_forecast_contract(
-        policy=policy,
-        target_policy=target_policy,
-        instrument=instrument,
-        cost_semantics_version=config.capital.decision.cost_model_version,
-    )
-    SqlForecastContractStore(engine).record_contract(contract)
-
-    evidence = EvaluationDashboardReader(engine, config).forecast_evidence(now=NOW)
-
-    assert evidence is not None
-    assert tuple(item.stratum for item in evidence.source_evidence) == tuple(ForecastSlotStratum)
-    assert all(item.evidence.due_slot_count == 0 for item in evidence.source_evidence)
 
 
 def test_forecast_evidence_reads_quant_state_from_program_snapshot() -> None:

@@ -439,7 +439,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert "forecast_evidence" not in capital_overview.json()
     assert forecast_evidence.status_code == 200
     assert forecast_evidence.json() == {
-        "forecast_evidence": None,
         "quant_forecast_evidence": None,
         "quant_context_posterior_evidence": None,
         "quant_context_pair_evidence": None,

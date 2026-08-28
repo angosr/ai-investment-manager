@@ -206,7 +206,6 @@ export interface AssessmentFeed {
 }
 
 export interface ForecastEvaluationEvidence {
-  forecast_evidence: ForecastEvidenceSummary | null;
   quant_forecast_evidence: ForecastEvidenceSummary | null;
   quant_context_posterior_evidence: ForecastEvidenceSummary | null;
   quant_context_pair_evidence: {

@@ -288,7 +288,7 @@ Quant 候选在验证段选定且盲测一次性揭示后，还必须接受一�
 
 AI + Quant 行为读取同一 State、WorldModel 和 Quant prior，并输出唯一 posterior。模型可见 Quant 投影暴露实际因子值、胜出 prior、程序计算的适用度、可靠性与候选分歧摘要，使 AI 能识别“历史模型未覆盖的结构变化”，但不把离线落选候选的完整分布重新交给 AI 做隐式择模。AI 只能依据有时间边界和引用的现实机制修正最终 bucket，不能改模型权重、点名启停算法或再建立一套 regime 分类。输出必须逐 bucket 说明相对 prior 的概率变化，并把每次实质偏离绑定到当前机制、竞争解释、反向证据或适用状态变化；当前 cell 样本稀薄或最弱阶段没有增量时，AI 不得把模型的平均样本外分数包装成确定性确信。未形成可验证增量时保持或收缩到 prior，而不是为展示 AI 价值强行偏离。AI 不重新计算因子、收益、波动、成本、仓位或订单。Quant 期望毛收益只帮助 AI 理解 prior 的方向和尺度；规范 Forecast 始终预测同一 gross economic Outcome，产品 break-even、预测延迟和完整未来成本只由后续统一 Product/Portfolio 与资本评价计算，AI 不判断净可交易性，也不能在三处各维护一套成本公式。
 
-研究期的 challenger 不能成为正式资金链前的第二个同步 Codex 调用。槽建立时，程序先瞬时形成 Quant 终态；随后用同一 DecisionSlot 和 information cutoff 读取 State、WorldModel、目标状态、合同及 Quant panel，直接写成一份不可变 AI + Quant assignment。该 assignment 就是共享输入的唯一事实，不为冻结输入再创建纯 Context Forecast、占位生产者、第二张输入账本或同步 Codex 调用。AI + Quant 行为身份必须直接覆盖合同、目标状态行为、WorldModel 行为、输入投影、Quant prior、Prompt、Schema 和 Codex 运行合同，不得继承或依赖已退役纯 Context 输出行为的版本号。某目标缺少 Quant 或点时输入时，直接在 AI + Quant 的同槽义务下保存精确 `NO_ESTIMATE`，不能借纯 Context 的成败转译。独立 Evaluation worker 随后只从 assignment 运行 posterior，保存实际 available_at、延迟和失败，不得读取截止后的新事实。当前唯一获授权行为可并行继续 Forecast、Portfolio、Risk 与 Execution，因此 challenger 的账号占用、超时或生成失败不会延迟当轮下单、改变当前目标或阻塞 Trigger。若未来 posterior 获得资本权限，它将替换原正式生产者并直接位于唯一资金链中；旧正式行为同时降为研究或停止，不能继续并行调用后再投票。
+研究期的 challenger 不能成为正式资金链前的第二个同步 Codex 调用。槽建立时，程序先瞬时形成 Quant 终态；随后用同一 DecisionSlot 和 information cutoff 读取 State、WorldModel、目标状态、合同及 Quant panel，直接写成一份不可变 AI + Quant assignment。该 assignment 就是共享输入的唯一事实，不为冻结输入再创建纯 Context Forecast、占位生产者、第二张输入账本或同步 Codex 调用。AI + Quant 行为身份必须直接覆盖合同、目标状态行为、WorldModel 行为、输入投影、Quant prior、Prompt、Schema 和 Codex 运行合同，不得继承或依赖已退役纯 Context 输出行为的版本号。某目标缺少 Quant 或点时输入时，直接在 AI + Quant 的同槽义务下保存精确 `NO_ESTIMATE`，不能借纯 Context 的成败转译。独立 Evaluation worker 随后只从 assignment 运行 posterior，保存实际 available_at、延迟和失败，不得读取截止后的新事实。当前没有获授权的 Forecast 行为，业务模拟账户不新增风险；研究调用的账号占用、超时或生成失败也不能阻塞 Trigger、行情、结算和账户对账。若未来 posterior 获得资本权限，它将直接位于唯一资金链中；同一时点不能再保留另一个获授权生产者并行调用后投票。
 
 前瞻研究的长期对照只有两种方法：纯 Quant prior 与 AI + Quant posterior；冻结的现有 Context 行为仅作为迁移期历史参照，不扩建为第三套长期架构。它们共享槽、信息截止、完成后 Outcome 起点、bucket、缺失语义和评分；分别报告覆盖、proper score、校准、预测幅度与真实收益的单调性、同输入离散度，以及把相同预测映射到当时合法产品后的费用后资本反事实。样本数量只描述不确定性，不构成固定交易门槛。若 Quant 不能优于滚动无条件/简单市场基线，删除该模型假设；若 AI + Quant 不能相对 Quant 提供前瞻增量，删除 posterior 复杂度；只有获授权的唯一行为继续进入正式 Portfolio。
 
@@ -304,11 +304,11 @@ AI + Quant 行为读取同一 State、WorldModel 和 Quant prior，并输出唯�
 
 因此一次结构合法的 AI 输出只是随机 Forecast 行为的一次样本，不是已经校准的确定性收益率。研究资本权限必须把这种行为作为整体评价，并把精确输入离散度纳入估计不确定性；稳定性不足时可以继续保存 Forecast、产品反事实和到期 Outcome，但不能把单次采样恰好越过零点解释为可靠 Edge。若未来用多副本聚合降低推理方差，副本数量、并发与失败规则、聚合函数和最终唯一 Forecast 身份必须共同构成一个新的预登记 producer behavior，完整组件输出只作审计；该行为仍须以真实前瞻、费用后资本结果证明增量，不能在下单前临时重问到“答案一致”为止。
 
-WorldModel 的投资价值必须用前瞻配对消融识别：在同一槽、模型、State、合同、共同截止时间和输出 Schema 下，评价“读取 WorldModel”与“不读取 WorldModel”的 Forecast。正式行为一次联合预测多个资产时，对照必须保留同一整组目标，只删除共享 WorldModel，并用一次调用返回逐目标概率；逐资产配对结算，但联合调用只形成一个独立时间区间，不能缩成首个资产、复制多次调用或把资产数冒充独立样本数。配对分配在任一侧运行前持久化，两侧拥有真实可完成的共同期限；不能在正式 Forecast 成功后才用剩余时间补跑对照。对照结果只进入 Evaluation，不进入 Portfolio。Forecast 相对基线的均值改善只是点估计；资本权限还必须读取与样本依赖和完整搜索历史相符的保守下界、校准、覆盖率和多个市场环境表现。静态无技巧分布不能替代滚动无条件分布、简单市场模型和可投资资本基线。
+WorldModel 的投资价值由同槽 Quant prior 与 AI+Quant posterior 的前瞻差异识别：Quant 表达点时市场状态和历史关系，posterior 只增加 WorldModel 所表达的结构变化。两者共享 State、合同、信息截止和 Outcome，posterior 的输入与输出在调用前持久化；逐资产配对结算，但一次联合调用只形成一个独立时间区间，不能把资产数冒充独立样本数。对照只进入 Evaluation 逻辑账户，不进入 Portfolio。Forecast 相对基线的均值改善只是点估计；资本权限还必须读取依赖结构、校准、覆盖率、完整搜索历史和多种市场状态下的成本后结果。若无法把增量归因于 WorldModel，而 posterior 只增加延迟或噪声，则删除 posterior 复杂度，不再增加第三条无 WorldModel 的 Codex 消融链。
 
 Forecast 的采样政策也是行为的一部分。Cadence 是不依赖市场状态的覆盖义务；每个固定时点都必须保留独立的仅定时槽。材料来源回答“满足冻结条件时是否及时重估”，不能消费、提前履行或改写 cadence 义务；否则重大事件附近的固定样本会被选择性删除，既污染一般预测能力，也无法构造仅定时资本反事实。每个终态按仅定时或仅材料来源分层计算覆盖率、评分和不确定性；共同 Outcome 和重叠时域按预登记时间簇处理，不能把相关事件当成多个独立成功。
 
-不存在覆盖所有问题的通用 `EvaluationPlan` 或 `EvaluationReport`。Release 验收、Reference 资格、Forecast 评分、WorldModel 消融、Product residual、Capital choice 和账户结果分别由唯一领域 evaluator 定义最小类型化合同与结果；治理查询只从这些事实派生共同身份与引用，Dashboard、Agent 和权限不重算结论。跨 evaluator 的稳定评价家族、完整搜索历史、独立裁决和权限规则由 [`SELF_EVOLUTION_DESIGN.md`](SELF_EVOLUTION_DESIGN.md) 唯一规定，本文不再复制第二套学习协议。
+不存在覆盖所有问题的通用 `EvaluationPlan` 或 `EvaluationReport`。Release 验收、Reference 资格、Forecast 评分、Quant/AI+Quant 配对、Product residual、Capital choice 和账户结果分别由唯一领域 evaluator 定义最小类型化合同与结果；治理查询只从这些事实派生共同身份与引用，Dashboard、Agent 和权限不重算结论。跨 evaluator 的稳定评价家族、完整搜索历史、独立裁决和权限规则由 [`SELF_EVOLUTION_DESIGN.md`](SELF_EVOLUTION_DESIGN.md) 唯一规定，本文不再复制第二套学习协议。
 
 任何实验资本资格必须引用对应问题的不可变类型化计划；任何正式权限必须继续引用适用的类型化结果、producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结作用域、资本包络、最大累计损失、有效期、退化条件与撤销动作。样本不足、计划到期或行为身份变化不得默认续权。安全硬约束可以直接减少风险，但不能借安全名义获得 Alpha 权限。
 
@@ -442,7 +442,7 @@ investment_manager/
 
 在线 Outcome 服务只运行当前 Release 明确启用的类型化结算器。一个旧评价器如果既不能影响现役权限，也不承担尚未到期的冻结义务，就不得因为数据库仍有旧表或 Dashboard 仍展示旧记录而继续轮询。Release、对账、风险、幂等恢复和前瞻评价属于最小生产保障；自动改代码、自动提案、通用治理评分和与现役资本无关的消融不得常驻运行。
 
-Outcome 进程可以承载多种现役终结义务，但它们不是一条串行流水线。到期 Forecast/Product 结算、WorldModel 配对消融和同输入稳定性复算分别按自己的绝对 UTC 周期推进；任一慢 AI 调用不得阻塞另一实验，更不得延迟已到期 Outcome。它们只共享不可变事实库和只读输入，不共享一次运行的成功、失败或等待状态，也不能因为并发而把副本、对照输出写入正式 Forecast 或资本链。进程停止时统一收敛这些有界循环，运行健康分别报告各自积压与失败。
+Outcome 进程承载到期 Forecast/Product 结算、AI+Quant assignment 消费和同输入稳定性复算，但结算不等待 AI。posterior 是唯一需要及时完成的现役 Codex 生产任务；稳定性副本只能在其后使用剩余研究容量，不得抢占到期 assignment。三者共享不可变事实库和只读输入，不共享一次运行的成功、失败或等待状态，也不能把副本写入业务 Forecast 或资本链。进程停止时统一收敛这些有界循环，运行健康分别报告积压与失败。
 
 ## 9. 硬迁移原则
 

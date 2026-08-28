@@ -85,8 +85,8 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' .venv/bin/alembic upgrade head
 
 ## 当前证据边界
 
-代码已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置失败关闭资本、Context Forecast 和 WorldModel 消融；`investment-manager.shadow.yaml` 显式启用三者，Testnet profile 再次关闭。当前 Shadow cohort 联合预测 BTC、PAXG 和 SPY 三类经济暴露，逐目标拥有独立合同与候选资本授权；BTC/PAXG Spot 只作为规范 Outcome 和只读市场参考，可执行域仅包含对应 USD-M Perpetual 与 SPY TradFi Perpetual 的合法多空表达。三类产品复用同一账户、Portfolio、Risk、Planner、Mock Venue、funding 和恢复语义，不存在另一条 Spot 资本链。
+代码已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置失败关闭资本、Quant 和 AI+Quant；`investment-manager.shadow.yaml` 显式启用同一组 BTC、PAXG 和 SPY 经济合同上的 Quant prior 与 AI+Quant posterior，Testnet profile 再次关闭。BTC/PAXG Spot 只作为规范 Outcome 和只读市场参考；将来获得唯一资本授权的生产行为只能通过对应 USD-M Perpetual 与 SPY TradFi Perpetual 表达合法多空。现阶段两种生产者均为研究身份，只在同槽预测、结算和费用后逻辑账户中比较，不形成第二套业务账户或真实订单链。
 
-当前 Reference Policy 仍为空，AI Forecast、产品映射和总资本选择也尚无足够前瞻、非重叠、费用后证据证明增量。模拟账户已经产生订单和可对账成本，但少量交易、毛收益为正或一次方向正确都不能证明稳定盈利；未经校准的候选仍属于实验行为，正式资金权限不可由模拟环境自动升级。
+当前 Reference Policy 仍为空，Quant、AI+Quant、产品映射和总资本选择也尚无足够前瞻、非重叠、费用后证据证明增量。模拟账户保留既有订单和可对账成本作为历史事实；现役研究通过独立逻辑账户持续产生含零交易与错过机会在内的成本后反馈，不能用少量交易、毛收益为正或一次方向正确证明稳定盈利，也不能由模拟环境自动升级正式资金权限。
 
-因此当前正确表述是：总组合模拟闭环已经运行并积累可结算事实，但世界认知、Forecast 和资本决策是否具有费用后增量仍待前瞻评价，不具备宣称稳定盈利的证据。
+因此当前正确表述是：同槽 Quant 与 AI+Quant 的前瞻闭环已经开始积累可结算事实，但世界认知、Forecast 和资本决策是否具有费用后增量仍待评价，不具备宣称稳定盈利的证据。

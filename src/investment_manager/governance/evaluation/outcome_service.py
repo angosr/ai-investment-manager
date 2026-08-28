@@ -72,18 +72,10 @@ class OutcomeEvaluationSupervisor:
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
     )
-    _research_ai_slot: asyncio.Lock = field(
-        default_factory=asyncio.Lock,
-        init=False,
-        repr=False,
-    )
-
     async def run(self, stop: asyncio.Event) -> None:
         workers = [self._run_settlement_loop(stop)]
-        if self.forecast_stability_runners:
-            workers.append(self._run_forecast_stability_loop(stop))
-        if self.quant_posterior_runner is not None:
-            workers.append(self._run_quant_posterior_loop(stop))
+        if self.quant_posterior_runner is not None or self.forecast_stability_runners:
+            workers.append(self._run_research_loop(stop))
         await asyncio.gather(*workers)
 
     async def _run_settlement_loop(self, stop: asyncio.Event) -> None:
@@ -131,16 +123,38 @@ class OutcomeEvaluationSupervisor:
                 poll_seconds=policy.poll_seconds,
             )
 
-    async def _run_forecast_stability_loop(self, stop: asyncio.Event) -> None:
+    async def _run_research_loop(self, stop: asyncio.Event) -> None:
+        """Run the capital-relevant posterior before diagnostic replicas."""
+
         policy = self.config.outcome_evaluation
-        runners = self.forecast_stability_runners
-        assert runners
         while not stop.is_set():
             now = require_utc(self.clock())
-            outcomes = []
-            for runner in runners:
+            runner = self.quant_posterior_runner
+            if runner is not None:
                 try:
-                    outcomes.append(await self._reconcile_research(runner, as_of=now))
+                    report = await asyncio.to_thread(runner.reconcile, as_of=now)
+                    self.health.quant_posterior_assignments = report.assignment_count
+                    self.health.quant_posterior_forecasts = report.forecast_count
+                    self.health.quant_posterior_no_estimates = report.no_estimate_count
+                    self.health.quant_posterior_pending = report.pending_count
+                    self.health.last_quant_posterior_error_class = None
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if self.health.last_quant_posterior_error_class != type(exc).__name__:
+                        logger.exception("quant context posterior evaluation failed")
+                    self.health.last_quant_posterior_error_class = type(exc).__name__
+
+            outcomes = []
+            stability_as_of = require_utc(self.clock())
+            for stability_runner in self.forecast_stability_runners:
+                try:
+                    outcomes.append(
+                        await asyncio.to_thread(
+                            stability_runner.reconcile,
+                            as_of=stability_as_of,
+                        )
+                    )
                 except asyncio.CancelledError:
                     raise
                 except BaseException as exc:
@@ -171,36 +185,6 @@ class OutcomeEvaluationSupervisor:
                 now=require_utc(self.clock()),
                 poll_seconds=policy.research_poll_seconds,
             )
-
-    async def _run_quant_posterior_loop(self, stop: asyncio.Event) -> None:
-        runner = self.quant_posterior_runner
-        assert runner is not None
-        while not stop.is_set():
-            now = require_utc(self.clock())
-            try:
-                report = await self._reconcile_research(runner, as_of=now)
-                self.health.quant_posterior_assignments = report.assignment_count
-                self.health.quant_posterior_forecasts = report.forecast_count
-                self.health.quant_posterior_no_estimates = report.no_estimate_count
-                self.health.quant_posterior_pending = report.pending_count
-                self.health.last_quant_posterior_error_class = None
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if self.health.last_quant_posterior_error_class != type(exc).__name__:
-                    logger.exception("quant context posterior evaluation failed")
-                self.health.last_quant_posterior_error_class = type(exc).__name__
-            await _wait_for_next_poll(
-                stop,
-                now=require_utc(self.clock()),
-                poll_seconds=self.config.outcome_evaluation.research_poll_seconds,
-            )
-
-    async def _reconcile_research(self, runner, *, as_of: datetime):
-        """Keep asynchronous evaluation off the operational Codex critical path."""
-
-        async with self._research_ai_slot:
-            return await asyncio.to_thread(runner.reconcile, as_of=as_of)
 
 
 async def _wait_for_next_poll(

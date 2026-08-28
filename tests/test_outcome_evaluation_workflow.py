@@ -178,7 +178,7 @@ def test_forecast_stability_behaviors_share_one_serial_research_lane(
         )
 
         await asyncio.wait_for(
-            supervisor._run_forecast_stability_loop(stop),
+            supervisor._run_research_loop(stop),
             timeout=2,
         )
 
@@ -203,10 +203,12 @@ def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config)
         active = 0
         completed = 0
         maximum_active = 0
+        call_order = []
 
-        def measured(result):
+        def measured(label, result):
             nonlocal active, completed, maximum_active
             with lock:
+                call_order.append(label)
                 active += 1
                 maximum_active = max(maximum_active, active)
             time.sleep(0.02)
@@ -220,6 +222,7 @@ def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config)
         class StabilityRunner:
             def reconcile(self, *, as_of):
                 return measured(
+                    "stability",
                     SimpleNamespace(
                         assignment_count=1,
                         complete_sample_count=1,
@@ -230,6 +233,7 @@ def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config)
         class PosteriorRunner:
             def reconcile(self, *, as_of):
                 return measured(
+                    "posterior",
                     SimpleNamespace(
                         assignment_count=1,
                         forecast_count=1,
@@ -249,5 +253,6 @@ def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config)
         await asyncio.wait_for(supervisor.run(stop), timeout=2)
         assert completed == 2
         assert maximum_active == 1
+        assert call_order == ["posterior", "stability"]
 
     asyncio.run(scenario())

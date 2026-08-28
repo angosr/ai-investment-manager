@@ -103,19 +103,6 @@ class EvaluationDashboardReader:
         self._trading_cost_cache: TradingCostEvidence | None = None
         self._trading_cost_cache_lock = Lock()
 
-    def forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
-        now = require_utc(now)
-        policy = self._config.capital.context_forecast
-        if policy is None or not policy.enabled:
-            return None
-        with self._engine.connect() as connection:
-            return self._forecast_evidence(
-                connection,
-                now=now,
-                producer_id=policy.producer_id,
-                producer_behavior_id=policy.producer_behavior_id,
-            )
-
     def quant_forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
         """Read the research-only Program producer on the same source-independent slots."""
 
@@ -256,9 +243,12 @@ class EvaluationDashboardReader:
 
     def product_payoff_evidence(self) -> ProductPayoffEvidence | None:
         context = self._config.capital.context_forecast
+        posterior = self._config.outcome_evaluation.quant_context_posterior
         if (
             context is None
             or not context.enabled
+            or posterior is None
+            or not posterior.enabled
             or not any(item.product_payoffs is not None for item in context.targets)
         ):
             return None
@@ -275,10 +265,15 @@ class EvaluationDashboardReader:
                 if (payoffs := target.product_payoffs) is not None
             )
         )
+        with self._engine.connect() as connection:
+            contracts = self._active_forecast_contracts(connection)
+            if not contracts:
+                return None
+            producer_behavior_id = self._posterior_behavior_id(contracts)
         cases = SqlProductPayoffProjectionStore(self._engine).outcome_cases(
             product_outcome_version=evaluation.product_payoff_version,
             forecast_outcome_version=evaluation.target_forecast_version,
-            producer_behavior_id=context.producer_behavior_id,
+            producer_behavior_id=producer_behavior_id,
             mapping_cohort=mapping_cohort,
         )
         return evaluate_product_payoff_evidence(
@@ -858,12 +853,6 @@ def _quant_panel_cell_key(raw: object) -> str | None:
         return None
     cell_key = matches[0]
     return cell_key if isinstance(cell_key, str) and cell_key else None
-
-
-def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
-    if evidence is None:
-        return {"forecast_evidence": None}
-    return {"forecast_evidence": _serialize_forecast_evidence_payload(evidence)}
 
 
 def serialize_quant_forecast_evidence(evidence: ForecastEvidence | None) -> dict:

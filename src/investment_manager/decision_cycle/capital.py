@@ -30,7 +30,6 @@ from investment_manager.execution.venue.product import ProductOrderVenue
 from investment_manager.forecast.context.posterior import (
     assemble_quant_context_posterior_assignment_producer,
 )
-from investment_manager.forecast.context.producer import ForecastProductionResult
 from investment_manager.forecast.context.targets import (
     assemble_context_capital_targets,
 )
@@ -92,6 +91,7 @@ from investment_manager.risk.repository import SqlPortfolioRiskStore
 from investment_manager.scheduling.models import AnalysisTriggerType, TriggerBatch
 from investment_manager.settings import AppConfig
 
+ForecastProductionResult = BaseForecast | ForecastNoEstimate
 logger = logging.getLogger(__name__)
 
 

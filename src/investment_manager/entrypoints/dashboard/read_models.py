@@ -772,9 +772,11 @@ class DashboardReader:
             ).scalar_one_or_none()
             if latest_assessment_completed is not None:
                 latest_assessment_completed = database_utc(latest_assessment_completed)
-            context = self._config.capital.context_forecast
-            forecast_behavior = (
-                context.producer_behavior_id if context is not None else "DISABLED"
+            posterior = self._config.outcome_evaluation.quant_context_posterior
+            forecast_producer_id = (
+                posterior.producer_id
+                if posterior is not None and posterior.enabled
+                else "DISABLED"
             )
             overdue_analyses = (
                 select(
@@ -803,8 +805,8 @@ class DashboardReader:
                     ),
                 )
                 .where(
-                    forecast_slot_obligations.c.producer_behavior_id
-                    == forecast_behavior,
+                    forecast_slot_obligations.c.producer_id
+                    == forecast_producer_id,
                     forecast_decision_slots.c.completion_deadline_at <= now,
                     forecasts.c.forecast_id.is_(None),
                     forecast_no_estimates.c.result_id.is_(None),

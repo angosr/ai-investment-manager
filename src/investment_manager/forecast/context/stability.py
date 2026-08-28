@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -286,38 +285,6 @@ def build_context_forecast_stability_assignment(
     }
     values["source_hash"] = content_hash(values)
     return ContextForecastStabilityAssignment.model_validate(values)
-
-
-@dataclass(slots=True)
-class ContextForecastStabilityPreallocator:
-    policy: ContextForecastStabilityPolicy
-    formal_producer_behavior_id: str
-    repository: SqlContextForecastStabilityRepository
-    clock: Callable[[], datetime]
-
-    def before_estimate(
-        self,
-        *,
-        slot: ForecastDecisionSlot,
-        formal_producer_behavior_id: str,
-        formal_analysis_input: dict[str, object] | None,
-        formal_output_schema: dict[str, object] | None,
-    ) -> None:
-        if slot.information_cutoff_at < self.policy.activated_at:
-            return
-        if formal_producer_behavior_id != self.formal_producer_behavior_id:
-            raise ValueError("Context Forecast stability preflight 行为身份不一致")
-        if formal_analysis_input is None or formal_output_schema is None:
-            return
-        preregister_context_forecast_stability(
-            policy=self.policy,
-            repository=self.repository,
-            slot=slot,
-            producer_behavior_id=formal_producer_behavior_id,
-            analysis_input=formal_analysis_input,
-            output_schema=formal_output_schema,
-            assigned_at=require_utc(self.clock()),
-        )
 
 
 def preregister_context_forecast_stability(
@@ -744,31 +711,11 @@ def evaluate_context_forecast_stability(
     )
 
 
-def assemble_context_forecast_stability_preallocator(
-    config: AppConfig,
-    *,
-    engine: Engine,
-    clock,
-) -> ContextForecastStabilityPreallocator | None:
-    policy = config.outcome_evaluation.context_forecast_stability
-    context = config.capital.context_forecast
-    if policy is None or not policy.enabled:
-        return None
-    if context is None or not context.enabled:
-        raise ValueError("启用 Context Forecast stability 必须绑定正式 Forecast")
-    return ContextForecastStabilityPreallocator(
-        policy=policy,
-        formal_producer_behavior_id=context.producer_behavior_id,
-        repository=SqlContextForecastStabilityRepository(engine),
-        clock=clock,
-    )
-
-
 def assemble_context_forecast_stability_runner(
     config: AppConfig,
     *,
     engine: Engine,
-    producer_behavior_id: str | None = None,
+    producer_behavior_id: str,
 ) -> ContextForecastStabilityRunner | None:
     policy = config.outcome_evaluation.context_forecast_stability
     context = config.capital.context_forecast
@@ -786,11 +733,7 @@ def assemble_context_forecast_stability_runner(
     )
     return ContextForecastStabilityRunner(
         policy=policy,
-        formal_producer_behavior_id=(
-            context.producer_behavior_id
-            if producer_behavior_id is None
-            else producer_behavior_id
-        ),
+        formal_producer_behavior_id=producer_behavior_id,
         repository=SqlContextForecastStabilityRepository(engine),
         analyst=CodexContextForecastReplicaAnalyst(
             bundle_root=runtime.bundle_root,
@@ -973,14 +916,12 @@ def _nearest_rank(values: list[Decimal], quantile: Decimal) -> Decimal | None:
 
 __all__ = [
     "ContextForecastStabilityAssignment",
-    "ContextForecastStabilityPreallocator",
     "ContextForecastStabilityReport",
     "ContextForecastStabilityResult",
     "ContextForecastStabilityRunner",
     "ContextForecastStabilityStatus",
     "ContextForecastStabilityTarget",
     "SqlContextForecastStabilityRepository",
-    "assemble_context_forecast_stability_preallocator",
     "assemble_context_forecast_stability_runner",
     "build_context_forecast_stability_assignment",
     "evaluate_context_forecast_stability",

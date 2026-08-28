@@ -257,10 +257,7 @@ capital:
   context_forecast:
     version: portfolio-context-forecast-v35
     enabled: false
-    producer_id: codex-world-model-forecast
-    # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
-    producer_behavior_id: "4df76f9a5b4242f4871794dedf6b3293281fe80f7e8facba12d3bb489fa21f0a"
-    # 世界认知保留 high；这里只把已冻结的联合解释映射为三份概率分布。
+    # 世界认知保留 high；后验只把已冻结联合解释与量化先验映射为三份概率分布。
     reasoning_effort: medium
     horizon_minutes: 240
     # 4h Outcome 每小时滚动重估，避免 60 分钟入场窗之后出现 3 小时资格空档；

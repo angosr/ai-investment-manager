@@ -18,6 +18,7 @@ from investment_manager.forecast.context.posterior import (
     SqlQuantContextPosteriorRepository,
     audit_quant_context_posterior_draft,
     build_quant_context_posterior_assignment,
+    quant_context_input_behavior_id,
     quant_context_posterior_behavior_id,
 )
 from investment_manager.forecast.context.stability import (
@@ -114,15 +115,14 @@ def _fixture():
     )
     instrument = specification.instrument
     contract = specification.contract
+    quant_behavior = stable_id("quant_forecast_behavior", "test")
     formal_binding = ForecastProducerBinding.create(
         contract_id=contract.contract_id,
-        producer_kind=ForecastProducerKind.CONTEXT,
-        producer_id=context.producer_id,
-        producer_behavior_id=context.producer_behavior_id,
-        permission=ForecastPermission.CAPITAL_CANDIDATE,
-        required_feature_keys=target_policy.required_feature_keys,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id=quant.producer_id,
+        producer_behavior_id=quant_behavior,
+        permission=ForecastPermission.RESEARCH,
     )
-    quant_behavior = stable_id("quant_forecast_behavior", "test")
     posterior_behavior = quant_context_posterior_behavior_id(
         config=config,
         contracts=(contract,),
@@ -294,7 +294,13 @@ def _fixture():
     assignment = build_quant_context_posterior_assignment(
         policy=posterior,
         producer_behavior_id=posterior_behavior,
-        formal_producer_behavior_id=context.producer_behavior_id,
+        formal_producer_behavior_id=quant_context_input_behavior_id(
+            config=config,
+            contracts=(contract,),
+            target_state_behaviors=(
+                (contract.outcome_family_id, specification.state_behavior),
+            ),
+        ),
         quant_producer_behavior_id=quant_behavior,
         targets=(target,),
         formal_analysis_input=formal_input,

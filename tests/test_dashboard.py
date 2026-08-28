@@ -17,7 +17,6 @@ from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import CapitalOverview
 from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_capital_choice_evidence,
-    serialize_forecast_evidence,
     serialize_trading_cost_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
@@ -32,7 +31,6 @@ from investment_manager.entrypoints.dashboard.read_models import (
     WorldEvent,
 )
 from investment_manager.entrypoints.dashboard.resources import sample_host_resources
-from investment_manager.forecast.context.evaluation import evaluate_forecast_evidence
 from investment_manager.forecast.models import ExposureDirection
 from investment_manager.portfolio.evaluation import (
     CapitalChoiceCandidateOutcome,
@@ -40,57 +38,6 @@ from investment_manager.portfolio.evaluation import (
     CapitalChoiceExposureOutcome,
     evaluate_trading_cost,
 )
-
-
-def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
-    evidence = evaluate_forecast_evidence(
-        (),
-        due_slot_count=1,
-        forecast_count=1,
-        no_estimate_count=0,
-    )
-
-    assert serialize_forecast_evidence(evidence) == {
-        "forecast_evidence": {
-            "evaluation_version": "context-forecast-evidence-v7",
-            "status": "NO_SETTLED_SAMPLES",
-            "terminal_result_count": 1,
-            "due_slot_count": 1,
-            "forecast_count": 1,
-            "no_estimate_count": 0,
-            "settled_forecast_count": 0,
-            "non_overlapping_sample_count": 0,
-            "mean_ranked_probability_score": None,
-            "benchmark_mean_ranked_probability_score": None,
-            "ranked_probability_skill": None,
-            "rolling_benchmark_mean_ranked_probability_score": None,
-            "rolling_ranked_probability_skill": None,
-            "rolling_ranked_probability_skill_lower_bound": None,
-            "rolling_ranked_probability_skill_upper_bound": None,
-            "market_benchmark_mean_ranked_probability_score": None,
-            "market_ranked_probability_skill": None,
-            "market_ranked_probability_skill_lower_bound": None,
-            "market_ranked_probability_skill_upper_bound": None,
-            "mean_brier_score": None,
-            "benchmark_mean_brier_score": None,
-            "brier_skill": None,
-            "rolling_benchmark_mean_brier_score": None,
-            "rolling_brier_skill": None,
-            "rolling_brier_skill_lower_bound": None,
-            "rolling_brier_skill_upper_bound": None,
-            "rolling_baseline_ready_count": 0,
-            "market_benchmark_mean_brier_score": None,
-            "market_brier_skill": None,
-            "market_brier_skill_lower_bound": None,
-            "market_brier_skill_upper_bound": None,
-            "market_baseline_ready_count": 0,
-            "mean_expected_gross_bps": None,
-            "mean_realized_gross_bps": None,
-            "mean_absolute_return_error_bps": None,
-            "expected_realized_return_correlation": None,
-            "result_coverage": "1",
-        }
-    }
 
 
 def test_capital_choice_evidence_has_a_plain_cost_after_projection() -> None:

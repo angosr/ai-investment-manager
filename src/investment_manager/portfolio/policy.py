@@ -180,12 +180,10 @@ class ContextForecastTargetPolicy(StrictConfig):
 
 
 class ContextForecastPolicy(StrictConfig):
-    """One shared AI call that returns independently settleable economic forecasts."""
+    """Shared economic contracts and AI runtime policy for the active posterior."""
 
     version: str
     enabled: bool = False
-    producer_id: str = Field(min_length=1)
-    producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     reasoning_effort: str = Field(
         default="medium",
         pattern=r"^(low|medium|high|xhigh|max|ultra)$",
@@ -310,16 +308,6 @@ class CapitalPolicy(StrictConfig):
             expected_read_only_references = target_reference_keys - set(spec_keys)
             if set(reference_keys) != expected_read_only_references:
                 raise ValueError("Forecast 只读参考必须精确覆盖不属于 execution specs 的规范参考")
-            expected = {
-                (
-                    context.producer_id,
-                    context.producer_behavior_id,
-                    target.outcome_family_id,
-                )
-                for target in context.targets
-            }
-            if not set(identities).issubset(expected):
-                raise ValueError("Context Forecast 资本授权必须属于当前生产行为与目标")
             exposure_by_key = {
                 item.instrument_key: item.economic_exposure
                 for item in self.investable_universe.instruments

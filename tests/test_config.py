@@ -4,16 +4,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.contract import ASSESS_INSTRUCTIONS
-from investment_manager.forecast.context.estimate import (
-    ContextForecastTargetStateBehavior,
-    context_forecast_behavior_hash,
-)
 from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
-from investment_manager.market.models import InstrumentId, InstrumentProduct, SpotVenue
+from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.platform.database import build_engine
 from investment_manager.portfolio.policy import (
@@ -391,8 +386,6 @@ def test_shadow_has_one_shared_multi_asset_context_research_program() -> None:
 
     instruments = {item.instrument.key: item.instrument for item in config.capital.execution_specs}
     instruments.update({item.key: item for item in config.capital.forecast_reference_instruments})
-    perpetual = {item.key: item for item in config.market_data.perpetual_instruments}
-    cross_venue_symbols = {item.symbol for item in config.market_data.cross_venue_spot.products}
     contracts = tuple(
         context_forecast_contract(
             policy=context,
@@ -402,65 +395,6 @@ def test_shadow_has_one_shared_multi_asset_context_research_program() -> None:
         )
         for target in context.targets
     )
-    behaviors = tuple(
-        ContextForecastTargetStateBehavior(
-            feature_policy=config.feature,
-            reference_instrument=instruments[target.reference_instrument_key],
-            derivative_evidence_instrument=perpetual.get(target.derivative_evidence_instrument_key),
-            comparison_instrument=(
-                perpetual[target.comparison.instrument_key]
-                if target.comparison is not None
-                else None
-            ),
-            comparison_price_multiplier=(
-                target.comparison.reference_price_multiplier
-                if target.comparison is not None
-                else None
-            ),
-            maximum_comparison_age_seconds=context.maximum_quote_age_seconds,
-            interval=config.market_data.interval,
-            bar_window=config.market_data.bar_window,
-            funding_lookback_hours=config.market_data.funding_history_lookback_hours,
-            maximum_quote_skew_seconds=(config.market_data.maximum_cross_market_quote_skew_seconds),
-            cross_venue_spot_version=(
-                config.market_data.cross_venue_spot.version
-                if instruments[target.reference_instrument_key].symbol in cross_venue_symbols
-                else None
-            ),
-            cross_venue_spot_venues=(
-                tuple(sorted(SpotVenue, key=lambda item: item.value))
-                if instruments[target.reference_instrument_key].symbol in cross_venue_symbols
-                else ()
-            ),
-            maximum_cross_venue_spot_age_seconds=(
-                config.market_data.cross_venue_spot.maximum_age_seconds
-                if instruments[target.reference_instrument_key].symbol in cross_venue_symbols
-                else 30
-            ),
-        )
-        for target in context.targets
-    )
-    behavior_id = context_forecast_behavior_hash(
-        config.codex_runtime,
-        context,
-        contracts,
-        behaviors,
-        configured_assess_behavior_hash(config),
-    )
-    assert context.producer_behavior_id == behavior_id
-    changed = list(behaviors)
-    changed[0] = changed[0].model_copy(update={"bar_window": changed[0].bar_window + 1})
-    assert (
-        context_forecast_behavior_hash(
-            config.codex_runtime,
-            context,
-            contracts,
-            tuple(changed),
-            configured_assess_behavior_hash(config),
-        )
-        != behavior_id
-    )
-
     fee_bps = {item.instrument.key: item.fee_bps for item in config.capital.execution_specs}
     assert fee_bps["BINANCE:TRADFI_PERPETUAL:SPYUSDT"] == Decimal("5")
     assert all(contract.permission_evidence_eligible for contract in contracts)

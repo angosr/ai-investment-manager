@@ -94,7 +94,7 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 ## 7. 资本、风控与执行恢复
 
-基础配置失败关闭资本链、Context Forecast 和 WorldModel 消融；Shadow profile 显式启用三者，执行边界是 Binance simulated；Testnet profile 再次关闭，不能继承 Shadow 权限。现役模拟组合覆盖 BTC、PAXG 和 SPY 三个经济暴露，资本域分别只允许 BTC/PAXG USD-M Perpetual 与 SPY TradFi Perpetual 做多或做空；BTC/PAXG Spot 仅作为 Forecast 结算参考和只读市场状态，不能形成仓位、候选或订单。三者共享一次 Context Forecast 调用、一个账户、同一 Portfolio、Risk、Planner、Execution、成本与恢复语义，但各自形成独立 Forecast 和 Outcome。TradFi 产品另外强制读取官方交易日历，并把普通和特殊 funding 纳入账户；SPY 的经济暴露是美国权益，不冒充全球权益。
+基础配置失败关闭资本、Quant 和 AI+Quant；Shadow profile 显式启用同一合同上的 Quant prior 与异步 AI+Quant posterior，Testnet profile 再次关闭，不能继承 Shadow 权限。现役研究覆盖 BTC、PAXG 和 SPY 三个经济暴露；BTC/PAXG Spot 仅作为 Forecast 结算参考和只读市场状态，可执行映射分别为 BTC/PAXG USD-M Perpetual 与 SPY TradFi Perpetual 的合法多空。两种生产者共享 ForecastContract、DecisionSlot、Outcome、Portfolio、Risk、产品成本和逻辑账户重放语义，各自形成独立 Forecast；当前均无业务资本授权，不产生新订单。TradFi 产品另外读取官方交易日历，并把普通和特殊 funding 纳入成本结果；SPY 的经济暴露是美国权益，不冒充全球权益。
 
 候选资本授权只登记“该前瞻合同可以参加本轮模拟比较”，不包含逐品种固定仓位、额外入场 bp、历史样本数或方向限制。Portfolio 比较每个合法多空产品投影与现金的完整费用后边际，Risk 只按账户生存边界缩减；模拟环境本身不得改变方向、目标仓位或制造试探小单。所有未被选择的合法产品投影仍在共同终点结算，因而零订单也必须产生可诊断的反事实反馈。
 

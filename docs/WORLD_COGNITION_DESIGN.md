@@ -221,7 +221,7 @@ WorldModel 更新时钟与 Forecast 槽时钟是两个领域概念，但共用�
 
 规范参考不等于可投资产品。BTC/PAXG 的 Spot 可以继续作为点时可结算的经济 Outcome 和市场状态来源，而当前 Capital cohort 只把对应永续合约作为可持有表达；WorldModel 与 Forecast 不因执行域收缩而改写问题，产品投影也不得因使用 Spot 参考而自动生成 Spot 订单候选。这一分离使信息、预测和执行各自只有一个权威边界，避免在 Portfolio 后段再为被错误纳入的重复产品消歧。
 
-Context Forecast 读取当前 WorldModel、目标相关 State 和合同，输出结构化收益分布及哪些机制影响了分布；Program Forecast 若存在，只读同一时点 State。二者必须预测完全相同的 Outcome，负向和不确定结果也要保存。WorldModel 不等待 Program 先发现机会，Program 也不对 Context 行使 veto。
+AI+Quant posterior 读取当前 WorldModel、目标相关 State、同槽 Quant prior 和合同，输出结构化收益分布及哪些机制改变了 prior；Quant 只读同一时点 State。二者预测完全相同的 Outcome，负向、不确定和 `NO_ESTIMATE` 也都保存。WorldModel 不等待 Quant 先发现机会，Quant 也不对 WorldModel 行使 veto。
 
 长期总组合的推荐默认不是让 AI 直接报产品目标暴露。程序以可复现的长期风险溢价、波动、相关性、趋势、carry 和流动性形成规范经济 Outcome 的中性毛收益分布；AI 把联合 WorldModel 转为少数有证据引用的情景概率和相对/绝对收益观点；Forecast 再按各来源的真实前瞻校准、不确定性和适用时域确定性收缩与融合。具体产品的费用、basis、funding、滑点和延迟不进入这份经济 Forecast，由后续唯一 Product/Portfolio 映射在真实决策时点计算。不同原生时域必须先投影到共同资本决策时域，不能把短期事件冲击直接当作长期收益率。没有已证明的 AI 增量时，AI 观点不得影响 official 资本，但可以在预登记 Mock 包络内获得有界实验暴露并与无 AI 反事实同口径推进；随着证据增加只调整未来权限，不能用一段自信文字直接扩大仓位。
 
@@ -229,11 +229,11 @@ WorldModel 对组合的核心价值不是同时猜中每个产品方向，而是
 
 AI 的结构化观点只包含它能被前瞻验证的内容：情景概率调整、受影响经济暴露、作用方向与时域、观点不确定性、机制和 Evidence 引用，以及会使观点失效的观察。成员收益尺度、基准波动、协方差、产品成本和情景压力由程序状态提供或计算；AI 不填写组合权重、交易数量、杠杆或风险上限。这样一份错误观点会在联合 Forecast 和资本结果中留下可归因损失，而不会与优化器职责重叠。
 
-WorldModel 保存组合级完整联合解释，Context Forecast 不重复执行世界认知维护。它读取一个由 `world_model_id` 可追溯的目标投影：联合 synthesis，以及当前相关机制的身份、关系、claim、传导阶段、时域、完整证据引用和冲突，再结合目标的新鲜 State。Forecast 以合同的无条件基准分布为先验，把目标 State 中的收益状态、波动、量能、现货/衍生品主动流、未平仓量、funding 和仓位作为直接条件信息；它们不是外生因果证据，也不必须被 WorldModel 再次引用才能改变先验，但不能将单一短窗口动量机械外推。全局 Coverage 边界只由 WorldModel 消费一次并体现在机制边界与不确定性中，不能再把同一组领域缺口代码发送给 Forecast 造成重复惩罚；目标自身的行情、衍生品或可执行状态缺失由确定性 State 构建失败关闭。机制的完整因果句、验证合同、连续观测、退休回执、过时事件维护和其他审计元数据仍保存在原 WorldModel，不在第二次 AI 调用中重复发送。该投影是纯函数，不建立第二份摘要、数据库或认知模型；历史 AI 输入快照仍保存模型实际看到的投影，并可打开对应完整 WorldModel。
+WorldModel 保存组合级完整联合解释，AI+Quant posterior 不重复执行世界认知维护。它读取一个由 `world_model_id` 可追溯的目标投影：联合 synthesis，以及当前相关机制的身份、关系、claim、传导阶段、时域、证据引用和冲突，再结合目标的新鲜 State 与同槽 Quant prior。Quant prior 已把收益状态、波动、量能、现货/衍生品主动流、未平仓量、funding 和仓位压缩为可回放概率先验；这些市场状态不是外生因果证据，也不必须被 WorldModel 再次引用，但不能将单一短窗口动量机械外推。全局 Coverage 边界只由 WorldModel 消费一次；目标行情、衍生品或 Quant 输入缺失由确定性构建直接形成对应目标的 `NO_ESTIMATE`。机制的完整因果句、验证合同、连续观测、退休回执、过时事件维护和其他审计元数据仍保存在原 WorldModel，不在 posterior 调用中重复发送。该投影是纯函数，不建立第二份摘要、数据库或认知模型；历史 AI 输入快照保存模型实际看到的投影，并可打开对应完整 WorldModel。
 
 目标 State 可以带一个事前配置的观察专用比较 Instrument，但它只回答“代理 Outcome 相对外部经济参考偏离多少”。程序用同一截止点冻结外部指数价、其自身 mark/index 偏差、交易时段和显式价格换算比例，再计算目标规范参考相对外部参考的偏差；AI 不读取第二份原始行情。该状态既不改变 Outcome、bucket 或结算，也不进入可投资域。当前仅 PAXG 使用 XAUUSDT TradFi Perpetual 的指数价作为黄金交叉参考：它用于区分黄金变化、PAXG 跟踪偏差和 PAXG 永续 basis，不把 Binance 指数冒充 LBMA 基准或一手宏观 GOLD 事实。缺失、闭市或陈旧状态必须显式呈现，不能回填、阻断其他目标或从 PAXG 自身价格猜测黄金。
 
-当前 Context Forecast 中，AI 负责把跨域、非结构化和多层传导转成概率判断；可执行价格、收益代数、成本、funding、数量和保证金由确定性程序计算。这里描述的是现行实验分工，不是永久角色限制：未来 AI、规则或优化器可以经同口径证据竞争任何职责，但都必须服从对应领域合同，资本只读取结构化输出和不可变引用。
+当前 AI+Quant posterior 中，AI 只负责判断跨域、非结构化和多层传导是否构成 Quant 历史关系之外的结构变化，并据此修正概率；因子、可执行价格、收益代数、成本、funding、数量和保证金均由确定性程序计算。未来 AI、规则或优化器可以经同口径证据竞争职责，但都必须服从对应领域合同，资本只读取结构化输出和不可变引用。
 
 一次 Forecast 从其完成后能够取得的真实可成交状态开始具有资本意义。若完成过晚、输入期间发生材料变化或当前 payoff 无法安全重估，该结果仍保留用于运行审计，但不得覆盖更新的资本目标。Forecast 的 `valid_until` 是新建或增加敞口的截止，既有敞口则只能在同一 Forecast 的 `economic_horizon_end` 前继续由剩余 payoff 支持；入场窗结束后禁止加仓，经济时域结束后没有更新 Forecast 就退出。PortfolioTarget 和 TradePlan 仍只拥有各自的短期重算与执行有效期，不增加第三套时效状态机。
 
@@ -257,7 +257,7 @@ WorldModel 保存组合级完整联合解释，Context Forecast 不重复执行�
 
 ### 7.2 预测增量
 
-Context Forecast 与无技巧分布、简单程序基线以及存在时的 Program Forecast 使用同一合同、同一 Outcome 和同口径损失比较。所有预登记槽都计入覆盖率、延迟、失败和结算；不能只统计成功输出或只看最终成交。
+Quant 与 AI+Quant 使用同一合同、同一 DecisionSlot、同一 Outcome 和同口径损失比较，并分别对无技巧分布与滚动市场基线报告结果。所有已分配槽都计入覆盖率、延迟、失败和结算；不能只统计成功输出或只看最终成交。
 
 静态无技巧概率只证明最弱的分布能力。正式评价同时包含滚动无条件分布和至少一个不使用 WorldModel 的简单市场基线，避免把学会总体 bucket 频率误认为时变 Alpha。有序收益桶必须按 [`ARCHITECTURE.md` 的唯一 ForecastContract](ARCHITECTURE.md#42-世界认知与预测) 使用距离敏感 proper score 并结算连续真实收益；`model_mean_score < benchmark_mean_score` 只能描述点估计，不能单独标记为已证明胜出或授予权限。
 
@@ -265,9 +265,9 @@ Quant panel 是 State 到 Forecast 的确定性高密度投影，不是第二个
 
 AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定性 State、当前 WorldModel 投影、Quant panel、ForecastContract。AI 先把 Quant prior 当作可被证据修正的基准，再判断有引用的事件、政策博弈和传导机制是否构成历史模型尚未表达的结构变化；最终逐目标输出唯一 posterior、逐 bucket 的 prior→posterior 变化、造成变化的机制/反证引用和失效条件。AI 的权限止于这种结构性概率修正，不延伸到算法选择、因子计算和交易执行。解释若不能对应概率变化就不进入 Forecast；概率变化若不能对应输入中的点时事实就拒绝。`posterior == prior` 是合法结论，不要求 AI 为证明存在感制造观点。
 
-纯 Quant、现有 Context 与 AI + Quant 使用同一 DecisionSlot/Outcome 账本形成前瞻对照。纯 Quant 和 challenger 均先以 `RESEARCH` 身份运行，只有当前被明确授权的一个行为可以进入 Portfolio；对照不是多 Agent 投票，也不产生第二目标组合。评价既比较概率、校准和覆盖，也比较预测幅度是否足以在统一产品映射与完整成本后形成资本增量。若 posterior 只增加噪声、换手或费用，直接删除该行为或无增量输入，而不是增加门禁、置信乘数或更多叙事字段。
+Quant 与 AI+Quant 使用同一 DecisionSlot/Outcome 账本形成唯一前瞻对照。两者当前均以 `RESEARCH` 身份运行，将来至多一个被明确授权的行为可以进入 Portfolio；对照不是多 Agent 投票，也不产生第二目标组合。评价既比较概率、校准和覆盖，也比较预测幅度是否足以在统一产品映射与完整成本后形成资本增量。若 posterior 只增加噪声、换手或费用，直接删除该行为或无增量输入，而不是增加门禁、置信乘数或更多叙事字段。
 
-同槽不等于把两个 Codex 调用串在交易关键路径上。Quant prior 和 posterior 的完整模型输入必须在槽时冻结；当前获授权行为先独立完成资金链，posterior 由 Evaluation worker 从冻结输入异步完成。评价同时记录生成延迟，并坚持原 information cutoff；研究调用不能争抢正式调用的截止时间、延迟下单或在晚到后偷看新事实。posterior 若晋升为唯一资本来源，原 Context 调用必须退出正式路径，不能永久维持“双 AI 再投票”。
+同槽不等于把 Codex 串在数据与结算关键路径上。Quant prior 和 posterior 的完整模型输入在槽时冻结，posterior 由 Evaluation worker 异步完成；评价记录生成延迟并坚持原 information cutoff，晚到后不能偷看新事实。posterior 若晋升为唯一资本来源，仍只保留这一份 AI 调用，不得恢复纯 Context 或维持“双 AI 再投票”。
 
 异步 challenger 只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把正式输入、同槽 Quant 终态、posterior Prompt/Schema、研究 ProducerBinding 和截止时间原子冻结为一份 assignment；Evaluation worker 只消费该 assignment，并把成功 Forecast 或明确 `NO_ESTIMATE` 写回公共 Forecast/Outcome 账本。成功输出自身就是任务终态，不另建重复 result 表、策略账户或候选组合。Quant 缺少某个目标时，assignment 必须显式保留该缺失终态并立刻为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。一次联合调用仍可覆盖其余拥有真实 Quant prior 的目标。
 
@@ -279,7 +279,7 @@ ForecastContract 是来源无关的公共问题，但槽义务属于具体 produ
 
 历史 AI 重放不能证明 Alpha，因为模型可能已经知道历史结果。AI 的预测权限只读取真实前瞻样本。模型、Prompt、输入投影、合同或工具实质变化后产生新行为身份，不无条件继承旧成绩。
 
-Context Forecast 的 producer behavior 必须绑定产生其上游 WorldModel 的完整行为身份；只冻结 Forecast 自身 Prompt 而忽略 WorldModel 的模型、Prompt、Packet 或 mandate 版本，会把不同认知实验错误合并为同一 Alpha 样本。WorldModel 行为变化时，未来 Forecast producer、资本候选授权和成对消融计划同步换代，旧 Forecast、Outcome 与评价计划保持不可变，不能跨代累计样本。
+AI+Quant 的 producer behavior 必须直接绑定合同、目标状态行为、Quant 制品与投影、WorldModel 的完整行为身份、Prompt、Schema 和 Codex 运行合同；不能借用已退役纯 Context 的配置哈希，也不能忽略 WorldModel 的模型、Prompt、Packet 或 mandate 版本。任一输入行为变化时，未来 posterior 与资本授权同步换代，旧 Forecast 和 Outcome 保持不可变，不能跨代累计样本。
 
 通过条件必须在看结果前冻结，并与数据结构相符：报告 proper score 差异的保守下界、概率校准、尾部结果、覆盖率和市场环境一致性；重叠时域和共同事件按时间依赖簇处理；同一 objective/scope 的全部候选进入搜索修正。最低样本数只允许开始评价，不能替代不确定性判断；没有赢家是合法结果。
 
@@ -293,21 +293,21 @@ Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和�
 
 这项对照不随机探索真实资本，也不把事件选择概率伪造成已知 propensity。当前 Mock 规模没有市场冲击，两账户可在同一未来价格路径上确定性推进；若以后订单规模足以影响成交，或者产品容量、排队和冲击不能共享，逻辑账户只能保留诊断资格，必须以真实 Venue 的受控资本实验取代。触发资格、目标映射、事件形成/去重、响应期限、资本逻辑或成本语义任一改变，都产生新的触发行为和评价计划，不能继承旧政策结果。
 
-开发、walk-forward、一次性 blind 和真实前瞻严格隔离；全部尝试和失败计入选择偏差，重叠预测时域按共同事件和时间依赖簇评价。完整政策的费用后总组合结果决定资本权限，不要求实验先穿过一串人为阶段；但只有认知配对消融改善 Forecast，且该 Forecast 的主动偏离继续改善资本结果，才能把盈利增量归因于世界认知。少量样本仍不能证明稳定盈利。
+开发、walk-forward、一次性 blind 和真实前瞻严格隔离；全部尝试和失败计入选择偏差，重叠预测时域按共同事件和时间依赖簇评价。完整政策的费用后总组合结果决定资本权限，不要求实验先穿过一串人为阶段；但只有 AI+Quant 相对同槽 Quant 改善 Forecast，且该偏离继续改善逻辑账户的成本后结果，才能把盈利增量归因于世界认知。少量样本仍不能证明稳定盈利。
 
 ## 8. 当前证据计划
 
 ### 8.1 现役多资产前瞻 cohort
 
-现役 cohort 只验证世界认知能否改善可交易经济 Forecast，以及这些 Forecast 经真实产品和完整成本映射后能否改善组合，不定义永久交易频率或正式资金资格。基础配置失败关闭 `capital`、Context Forecast 和 WorldModel 消融；只有显式 Shadow profile 启用三者，Testnet 不继承该资格。停用期间不产生新槽、资本目标或消融样本；既有不可变事实继续按其原合同结算。
+现役 cohort 只验证 AI 使用世界认知修正 Quant prior 后，能否改善经济 Forecast 及其真实产品、完整成本后的逻辑账户结果，不定义永久交易频率或正式资金资格。基础配置失败关闭 `capital`、Quant 和 AI+Quant；只有显式 Shadow profile 启用研究生产者，Testnet 不继承该资格。停用期间不产生新槽或研究样本；既有不可变事实继续按原合同结算。
 
-同一信息截止点和同一 WorldModel 只调用一次 Forecast Analyst，分别输出 BTC、PAXG 与 SPY 的 4h 收益分布。三份合同使用各自冻结历史分布校准结果桶，独立形成 Forecast/NoEstimate 和 Outcome；任一资产休市、行情陈旧或输入缺失只影响该合同。WorldModel 可以同时解释流动性、美元、利率、财政、监管、资金流和跨资产传导，但必须把联合解释投影为三份可证伪的资产分布，不能只输出一段无法结算的宏观叙事。
+同一信息截止点先由程序一次形成 BTC、PAXG 与 SPY 的 Quant priors，再由同一份 WorldModel 触发最多一次联合 posterior 调用，分别输出三份 4h 收益分布。三份合同独立形成 Forecast/NoEstimate 和 Outcome；任一资产休市、行情陈旧或 Quant 输入缺失只关闭该目标。WorldModel 可以同时解释流动性、美元、利率、财政、监管、资金流和跨资产传导，但 posterior 必须把相对 prior 的修正落到三份可证伪分布，不能只输出无法结算的宏观叙事。
 
-这里的 4h 是现役短周期研究的 Outcome 时域，不是长期持仓期限，也不因 AI 调用本身授权重做仓位。Forecast 槽按自己的采样合同持续形成样本；只有 `ARCHITECTURE.md` 规定并随资本行为冻结的控制规则，才选择其中哪些 cause 进入 Shadow Portfolio，以及更新 Forecast 是否替代旧目标。此前正式模拟账户按每小时 cadence 与合格材料事件执行过小时级滚动控制，其完整换手与亏损永久保留为负面资本结果；现行 Context、Quant 和 AI + Quant 均只产生研究 Forecast，并在 Evaluation 的独立逻辑账户中按各自实际时延重放，正式模拟账户不再从这些来源新增风险，既有持仓只减不增。该 cohort 只能裁决这项 4h 研究合同及各 producer，不能继承为日度状态、周度或双周再平衡的长期总组合证据。长期主实验必须另用与资本决策区间一致、能联合表达中性风险溢价与条件修正的 ForecastContract。
+这里的 4h 是现役短周期研究的 Outcome 时域，不是长期持仓期限，也不因 AI 调用本身授权重做仓位。Forecast 槽按采样合同持续形成样本；此前正式模拟账户按小时 cadence 与材料事件执行过滚动控制，其换手、费用和亏损永久保留为负面资本结果。现行 Quant 与 AI+Quant 均只产生研究 Forecast，并在 Evaluation 的独立逻辑账户中按各自实际时延重放；业务模拟账户不从这些来源新增风险。该 cohort 只能裁决这项 4h 合同及两个 producer，不能继承为长期总组合证据；长期主实验必须另用与资本决策区间一致、能联合表达中性风险溢价与条件修正的 ForecastContract。
 
 产品表达与资本规则由 [`ARCHITECTURE.md` 第 4.3.4 节](ARCHITECTURE.md#434-现役多资产模拟实验)唯一规定，本文件不复制第二套产品准入或仓位规则。世界认知评价只消费每份 Forecast 的 proper score、校准、方向、覆盖和同槽“读取 WorldModel / 不读取 WorldModel”配对差异；Product residual 只评价标的到产品的映射；Capital choice 先把产品结果重锚到真实决策时点，再用当时冻结的完整未来成本按经济暴露识别捕获、错误入场与错过机会；实际执行损耗由账户 evaluator 归因。未被 Portfolio 选择的产品投影照常结算，因此不需要靠随机交易取得方向和产品反馈，也不能再用“没有订单”回避方向判断失败。
 
-定时槽与材料事件槽始终是独立义务：材料事件不能消费或改写固定 cadence 样本，历史旧行为也不能并入新行为的证据。改变 WorldModel 输入投影、Prompt、结果合同、适用资产、时域或触发规则必须产生新行为身份；漏过截止只记录 `NO_ESTIMATE`，不得在看到后续行情后补跑。WorldModel 配对消融必须在首个前向槽之前预登记；在配对结果形成前，不得把正式 Forecast 相对静态基线的改善归因于世界认知。
+定时槽与材料事件槽始终是独立义务：材料事件不能消费或改写固定 cadence 样本，历史旧行为也不能并入新行为的证据。改变 Quant 制品、WorldModel 输入投影、Prompt、结果合同、适用资产、时域或触发规则必须产生新行为身份；漏过截止只记录 `NO_ESTIMATE`，不得在看到后续行情后补跑。世界认知的增量只由同槽 AI+Quant 相对 Quant 的前瞻配对及其成本后逻辑账户证明，不再维护第三条纯 Context 或消融运行链。
 
 模拟资本不以固定样本数、固定逐资产额度、只许多头或额外主观 bp 门槛阻止现役合同产生反馈；这些限制既不属于认知质量，也不能替代真实成本和账户风险。没有订单必须能被归因为“费用后无正边际”或某个明确链路故障，不能被含混地解释为认知谨慎。短期盈利、少量正确方向或单个资产胜过自身被动暴露仍不能证明稳定资产增值。
 
