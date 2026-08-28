@@ -1,0 +1,76 @@
+{
+  "schema_version": "quant-factor-candidate-result-v1",
+  "plan_id": "btc-funding-state-24h-v1",
+  "plan_commit": "5f0e93c91089b8bbca2871eb5d4f5d9b5108cdf1",
+  "plan_sha256": "64d852ce71c902a7da1a095cc822c07c88c5cbcf8b5333c57021b01946d86f2f",
+  "evaluated_at": "2026-08-28T02:07:00Z",
+  "status": "REJECTED_ON_VALIDATION",
+  "permission": "REJECTION_ONLY",
+  "method": "daily-ordinal-empirical-cells-with-visible-funding-v1",
+  "primary_metric": "normalized_ranked_probability_score",
+  "datasets": {
+    "spot": {
+      "dataset_id": "historical_dataset_2c3d78a5f3d963d50165",
+      "content_hash": "a86fce82aac5781d5149985c4f0e6938bb58e97686068a60dfb0bd8f8cc101fd",
+      "bar_count": 2404
+    },
+    "funding": {
+      "dataset_id": "historical_funding_dataset_61af8fb0f5593a5bf44b",
+      "content_hash": "80a5272cc512fe028c0121743603c4c07f15b97b303efa782dc5485ce31184cc",
+      "observation_count": 7212
+    },
+    "carry": {
+      "dataset_id": "historical_carry_dataset_e605f49c521fdc68e910",
+      "days_hash": "31fdac4f91964f0df2ead102bdd089734cc64963990a292b25f412587e6e718f",
+      "settlements_hash": "cd1b1f127dea4aee841026d9422e067d04c02b029f79b858f1d354bec1157ef4"
+    }
+  },
+  "sample_counts": {
+    "all": 2396,
+    "development": 1437,
+    "validation": 479,
+    "validation_phases": [119, 120, 120, 120],
+    "diagnostic_reserved": 480
+  },
+  "development_thresholds": {
+    "return_7d_low_bps": "-179.1354978044021188395180310915894086520",
+    "return_7d_high_bps": "367.2090520231382702960045447044408713800",
+    "realized_volatility_7d_high_bps": "257.3711046032139429352060130422720184636",
+    "visible_funding_sum_24h_low_bps": "1.68980000",
+    "visible_funding_sum_24h_high_bps": "3.00000000"
+  },
+  "validation": {
+    "unconditional_ranked_probability_scores": [
+      "0.1548635233749271780835450798534990113651",
+      "0.1469216305426376860863286567498107719775",
+      "0.1423736718323616480441110738224157360231",
+      "0.1473384421872677023238605519017476775678"
+    ],
+    "baseline_ranked_probability_scores": [
+      "0.1551163857668661682315401864033532807472",
+      "0.1468721009860441842718311602027203320851",
+      "0.1425747534382099611521725897323036657815",
+      "0.1469243922661530081265123091278152904929"
+    ],
+    "candidate_ranked_probability_scores": [
+      "0.1562644118356908920090689352832216203569",
+      "0.1468449816073633063571735247405423781192",
+      "0.1454124839104309626300417279169628791437",
+      "0.1475159863598427209895442240650459071732"
+    ],
+    "unconditional_mean_ranked_probability_score": "0.1478597257392241723725634622117813875169",
+    "baseline_mean_ranked_probability_score": "0.1478567839438537211808250715439243319667",
+    "candidate_mean_ranked_probability_score": "0.1489943199034731836039464311177651619097",
+    "baseline_mean_absolute_return_error_bps": "198.7228080071676696932387820122520969340",
+    "candidate_mean_absolute_return_error_bps": "200.1067782248876474975101017060339355750",
+    "baseline_expected_realized_return_correlation": "0.01138110235191864311429983223363245119684",
+    "candidate_expected_realized_return_correlation": "-0.002598171154181273426418095568359391499433",
+    "baseline_expected_return_decile_spread_bps": "-51.20720504044569896303727993300594622114",
+    "candidate_expected_return_decile_spread_bps": "-32.82899557388721110844145897493864693360"
+  },
+  "candidate_phase_wins": 1,
+  "required_phase_wins": 4,
+  "diagnostic_revealed": false,
+  "runtime_change": "NONE",
+  "conclusion": "最近24小时可见资金费率总和未在七日趋势与波动价格基线之外提供稳定增量，且平均有序概率误差、连续收益误差和收益相关性均恶化；该 funding 因子不进入 Quant prior。"
+}
