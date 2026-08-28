@@ -255,7 +255,7 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: portfolio-context-forecast-v36
+    version: portfolio-context-forecast-v35
     enabled: false
     # 世界认知保留 high；后验只把已冻结联合解释与量化先验映射为三份概率分布。
     reasoning_effort: medium
