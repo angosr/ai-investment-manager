@@ -1,0 +1,48 @@
+{
+  "schema_version": "quant-factor-candidate-plan-v1",
+  "plan_id": "btc-derivatives-state-4h-v1",
+  "frozen_at": "2026-08-28T17:46:28Z",
+  "base_commit": "47a4862dcf1acd01a776492b02a7a922310cdccb",
+  "permission": "REJECTION_ONLY",
+  "hypothesis": "点时可见的未平仓量变化、USD-M 主动买卖比和大小账户仓位分歧，可能在现有价格动量与波动基线之外改善 BTC 四小时有序收益分布。",
+  "datasets": {
+    "spot": {
+      "dataset_id": "historical_dataset_dbc898af147b44cbe744",
+      "bars_hash": "2798b8ab2e8e13423da73d35f1b1a796e4df55d24ebcdcc54bf05a6392d3f5d0",
+      "interval": "5m"
+    },
+    "derivatives": {
+      "source": "binance-public-data-usdm-daily-metrics",
+      "symbol": "BTCUSDT",
+      "first_day": "2024-08-19",
+      "last_day": "2026-08-18",
+      "archive_count": 730,
+      "checksum_manifest_hash": "95fd27970803334709a002fe7671019e2f8b03db51bef6eb5ad0f6bd3e325331"
+    }
+  },
+  "sample_contract": {
+    "decision_cadence": "hourly",
+    "information_cutoff": "latest metric and closed spot bar at or before the decision hour",
+    "outcome": "BTCUSDT spot close return over the following four hours",
+    "outcome_bucket_contract_id": "forecast_contract_9c23a6a700c6b3d57f1d",
+    "split": "chronological 60/20/20 with a four-hour purge before each boundary",
+    "independent_validation_phases": "decision hour modulo four",
+    "threshold_source": "development only",
+    "probability_estimator": "empirical ordered cells with Dirichlet smoothing 20"
+  },
+  "baseline": "development-frozen momentum_4h tercile by realized_volatility_4h median",
+  "candidate_order": [
+    "baseline_plus_open_interest_change_4h_tercile",
+    "baseline_plus_futures_taker_log_ratio_1h_tercile",
+    "baseline_plus_top_vs_global_positioning_divergence_tercile",
+    "baseline_plus_open_interest_and_futures_taker_terciles"
+  ],
+  "validation_gate": {
+    "primary": "candidate ordinal ranked probability score must beat the baseline in every independent phase",
+    "continuous": "mean absolute return error must not worsen and expected-versus-realized return correlation must be positive and exceed the baseline",
+    "economic": "top-minus-bottom expected-return quintile realized spread must exceed 15 bps in every independent phase",
+    "selection": "first candidate in frozen complexity order satisfying every gate"
+  },
+  "blind_rule": "Do not compute the reserved final 20 percent unless validation passes; a blind pass still grants only a new prospective research behavior, never historical capital permission.",
+  "runtime_change_on_rejection": "NONE"
+}
