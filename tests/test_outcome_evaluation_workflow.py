@@ -20,17 +20,7 @@ def test_outcome_evaluation_poll_uses_absolute_utc_buckets() -> None:
 
 
 def test_outcome_service_keeps_settling_recorded_product_obligations(app_config) -> None:
-    context = app_config.capital.context_forecast
-    assert context is not None
-    config = app_config.model_copy(
-        update={
-            "capital": app_config.capital.model_copy(
-                update={"context_forecast": context.model_copy(update={"product_payoffs": None})}
-            ),
-        }
-    )
-
-    supervisor = assemble_outcome_evaluation(config, "sqlite+pysqlite:///:memory:")
+    supervisor = assemble_outcome_evaluation(app_config, "sqlite+pysqlite:///:memory:")
 
     assert supervisor.product_payoff_settler is not None
 

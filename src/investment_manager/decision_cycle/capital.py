@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
@@ -72,7 +72,7 @@ from investment_manager.risk.portfolio import (
     SleeveRiskProfile,
 )
 from investment_manager.risk.repository import SqlPortfolioRiskStore
-from investment_manager.scheduling.models import AnalysisTriggerType, TriggerBatch
+from investment_manager.scheduling.models import TriggerBatch
 from investment_manager.settings import AppConfig
 
 ForecastProductionResult = BaseForecast | ForecastNoEstimate
@@ -159,29 +159,10 @@ class CapitalForecastSource:
 
 @dataclass(frozen=True, slots=True)
 class CapitalTriggerConsumer:
-    """Own capital on one coordinator and create idempotent Context slots."""
+    """Own portfolio-scoped capital review on exactly one market coordinator."""
 
     capital: CapitalCycleService
-    context_cadence_minutes: int | None = None
-    context_completion_deadline_seconds: int | None = None
-    material_event_slots_enabled: bool = False
-    material_event_slot_policy_version: str | None = None
     owner_symbol: str | None = None
-    context_activation_at: datetime | None = None
-
-    def __post_init__(self) -> None:
-        if (self.context_cadence_minutes is None) != (
-            self.context_completion_deadline_seconds is None
-        ):
-            raise ValueError("Context cadence 与完成截止秒数必须同时配置")
-        if self.material_event_slots_enabled != (
-            self.material_event_slot_policy_version is not None
-        ):
-            raise ValueError("材料事件 Forecast 槽启用状态与政策版本必须同时配置")
-        if self.material_event_slots_enabled and self.context_cadence_minutes is None:
-            raise ValueError("材料事件 Forecast 槽必须复用 Context Forecast 合同")
-        if self.context_activation_at is not None:
-            require_utc(self.context_activation_at)
 
     def consume(
         self,
@@ -192,138 +173,7 @@ class CapitalTriggerConsumer:
         # facts; the assessment path remains free to observe every asset.
         if self.owner_symbol is not None and batch.symbol != self.owner_symbol:
             return None
-        material_triggers = tuple(
-            item
-            for item in batch.triggers
-            if item.trigger_type == AnalysisTriggerType.FORECAST_EVENT_DUE
-        )
-        cadence_due = self.context_cadence_minutes is not None and any(
-            item.trigger_type
-            in {
-                AnalysisTriggerType.HEARTBEAT,
-                AnalysisTriggerType.FORECAST_SLOT_DUE,
-            }
-            for item in batch.triggers
-        )
-        if material_triggers:
-            if not self.material_event_slots_enabled:
-                return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
-            assert self.material_event_slot_policy_version is not None
-            assert self.context_completion_deadline_seconds is not None
-            slot_at = max(item.occurred_at for item in material_triggers)
-            if self.context_activation_at is not None and slot_at < self.context_activation_at:
-                return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
-            trigger_refs = tuple(
-                sorted(
-                    {
-                        *(item.trigger_id for item in material_triggers),
-                        *(
-                            evidence_id
-                            for item in material_triggers
-                            for evidence_id in item.evidence_ids
-                        ),
-                    }
-                )
-            )
-            cause = ForecastSlotCause.material_state(
-                policy_version=self.material_event_slot_policy_version,
-                trigger_refs=trigger_refs,
-            )
-            event_cause_id = stable_id(
-                "context_forecast_material_event",
-                self.capital.portfolio_id,
-                cause.policy_version,
-                *cause.trigger_refs,
-            )
-            if self.capital.cause_completed(event_cause_id):
-                return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
-            outputs_complete = self.capital.forecast_outputs_complete(
-                as_of=slot_at,
-                cause=cause,
-            )
-            if not outputs_complete and batch.created_at > slot_at + timedelta(
-                seconds=self.context_completion_deadline_seconds
-            ):
-                self.capital.record_missed_forecast(
-                    slot_at=slot_at,
-                    completed_at=batch.created_at,
-                    cause=cause,
-                )
-                return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
-            cadence_first = cadence_due and self._cadence_slot_at(batch.created_at) <= slot_at
-            if cadence_first:
-                self._consume_cadence(batch)
-            result = self.capital.produce(
-                as_of=slot_at,
-                decision_at=batch.created_at if outputs_complete else None,
-                cause_id=event_cause_id,
-                trigger_batch_id=batch.batch_id,
-                symbol=batch.symbol,
-                trigger_types=(AnalysisTriggerType.FORECAST_EVENT_DUE.value,),
-                cause=cause,
-            )
-            if cadence_due and not cadence_first:
-                self._consume_cadence(batch)
-            return result
-        if cadence_due:
-            return self._consume_cadence(batch)
         return self.capital.review(batch)
-
-    def _cadence_slot_at(self, at: datetime) -> datetime:
-        assert self.context_cadence_minutes is not None
-        cadence_seconds = self.context_cadence_minutes * 60
-        return datetime.fromtimestamp(
-            int(at.timestamp()) // cadence_seconds * cadence_seconds,
-            tz=UTC,
-        )
-
-    def _cadence_cause_id(self, slot_at: datetime) -> str:
-        assert self.context_cadence_minutes is not None
-        return stable_id(
-            "context_forecast_cadence",
-            self.capital.portfolio_id,
-            self.context_cadence_minutes * 60,
-            slot_at.isoformat(),
-        )
-
-    def _consume_cadence(
-        self,
-        batch: TriggerBatch,
-    ) -> PortfolioPipelineResult | TradePlanExecutionResult | None:
-        assert self.context_cadence_minutes is not None
-        assert self.context_completion_deadline_seconds is not None
-        slot_at = self._cadence_slot_at(batch.created_at)
-        if self.context_activation_at is not None and slot_at < self.context_activation_at:
-            return self.capital.review(batch)
-        cadence_cause_id = self._cadence_cause_id(slot_at)
-        self.capital.recover_missed_forecasts(
-            before_slot_at=slot_at,
-            completed_at=batch.created_at,
-        )
-        if self.capital.cause_completed(cadence_cause_id):
-            return self.capital.review(batch)
-        if self.capital.forecast_outputs_complete(as_of=slot_at):
-            return self.capital.produce(
-                as_of=slot_at,
-                decision_at=batch.created_at,
-                cause_id=cadence_cause_id,
-                trigger_batch_id=batch.batch_id,
-                symbol=batch.symbol,
-                trigger_types=("FORECAST_CADENCE",),
-            )
-        if batch.created_at > slot_at + timedelta(seconds=self.context_completion_deadline_seconds):
-            self.capital.record_missed_forecast(
-                slot_at=slot_at,
-                completed_at=batch.created_at,
-            )
-            return self.capital.review(batch)
-        return self.capital.produce(
-            as_of=slot_at,
-            cause_id=cadence_cause_id,
-            trigger_batch_id=batch.batch_id,
-            symbol=batch.symbol,
-            trigger_types=("FORECAST_CADENCE",),
-        )
 
 
 class CapitalCycleService:
@@ -347,7 +197,6 @@ class CapitalCycleService:
         execution: TradePlanExecutionPipeline,
         cycle_records: SqlCapitalCycleStore,
         cash_yield_observer: CashYieldEvidenceObserver | None = None,
-        context_activation_at: datetime | None = None,
     ) -> None:
         families = tuple(item.contract.outcome_family_id for item in forecast_sources)
         if tuple(sorted(set(families))) != tuple(sorted(families)):
@@ -372,9 +221,6 @@ class CapitalCycleService:
         self._execution = execution
         self._cycle_records = cycle_records
         self._cash_yield_observer = cash_yield_observer
-        self.context_activation_at = (
-            require_utc(context_activation_at) if context_activation_at is not None else None
-        )
 
     @property
     def portfolio_id(self) -> str:

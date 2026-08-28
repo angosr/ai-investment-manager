@@ -355,7 +355,6 @@ class TriggerCoordinatorWorkflow:
     def _enqueue_due(self, now: datetime, started_at: datetime) -> None:
         if self._plan is None or bool(self._plan.get("ai_paused")):
             return
-        self._enqueue_forecast_slot_due(now)
         for wakeup in self._plan.get("scheduled_wakeups", []):
             key = f"{wakeup['wakeup_id']}:{wakeup['wake_at']}"
             if key in self._consumed_wakeups or _parse_time(wakeup["wake_at"]) > now:
@@ -412,28 +411,6 @@ class TriggerCoordinatorWorkflow:
                 durable_heartbeat or unseen
             ):
                 self._pending[trigger.trigger_id] = trigger.model_dump(mode="json")
-
-    def _enqueue_forecast_slot_due(self, now: datetime) -> None:
-        assert self._plan is not None
-        slot = self._current_forecast_slot(now)
-        if slot is None:
-            return
-        cadence_seconds = int(self._settings["context_forecast_cadence_seconds"])
-        dedup_key = self._forecast_slot_dedup_key(slot, cadence_seconds)
-        trigger = build_trigger_event(
-            trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
-            symbol=str(self._plan["symbol"]),
-            pipeline_id=str(self._plan["pipeline_id"]),
-            occurred_at=slot,
-            observed_at=now,
-            priority=100,
-            dedup_key=dedup_key,
-            plan_revision=int(self._plan["revision"]),
-        )
-        if trigger.trigger_id in self._seen:
-            return
-        self._remember(trigger.trigger_id)
-        self._pending[trigger.trigger_id] = trigger.model_dump(mode="json")
 
     def _discard_expired(self, now: datetime) -> None:
         protected = (
@@ -495,57 +472,9 @@ class TriggerCoordinatorWorkflow:
             candidates.append(
                 (self._last_analysis_at or started_at) + timedelta(seconds=int(heartbeat))
             )
-        forecast_wakeup = self._next_forecast_wakeup(now)
-        if forecast_wakeup is not None:
-            candidates.append(forecast_wakeup)
         if not candidates:
             return timedelta(days=1)
         return max(min(candidates) - now, timedelta(0))
-
-    def _current_forecast_slot(self, now: datetime) -> datetime | None:
-        cadence = self._settings.get("context_forecast_cadence_seconds")
-        activation_raw = self._settings.get("context_forecast_activation_at")
-        if not isinstance(cadence, int) or cadence <= 0 or activation_raw is None:
-            return None
-        activation = _parse_time(activation_raw)
-        slot = datetime.fromtimestamp(
-            int(now.timestamp()) // cadence * cadence,
-            tz=now.tzinfo,
-        )
-        return slot if slot >= activation else None
-
-    def _next_forecast_wakeup(self, now: datetime) -> datetime | None:
-        if self._plan is None:
-            return None
-        cadence = self._settings.get("context_forecast_cadence_seconds")
-        activation_raw = self._settings.get("context_forecast_activation_at")
-        if not isinstance(cadence, int) or cadence <= 0 or activation_raw is None:
-            return None
-        activation = _parse_time(activation_raw)
-        current = datetime.fromtimestamp(
-            int(now.timestamp()) // cadence * cadence,
-            tz=now.tzinfo,
-        )
-        if current >= activation:
-            dedup_key = self._forecast_slot_dedup_key(current, cadence)
-            trigger_id = stable_id(
-                "analysis_trigger",
-                AnalysisTriggerType.FORECAST_SLOT_DUE.value,
-                str(self._plan["symbol"]),
-                str(self._plan["pipeline_id"]),
-                dedup_key,
-            )
-            if trigger_id not in self._seen:
-                return now
-        next_epoch = (int(now.timestamp()) // cadence + 1) * cadence
-        activation_epoch = (
-            (int(activation.timestamp()) + cadence - 1) // cadence * cadence
-        )
-        return datetime.fromtimestamp(max(next_epoch, activation_epoch), tz=now.tzinfo)
-
-    @staticmethod
-    def _forecast_slot_dedup_key(slot: datetime, cadence_seconds: int) -> str:
-        return f"forecast-slot:{cadence_seconds}:{slot.isoformat()}"
 
     async def _wait_for_change(self, timeout: timedelta) -> None:
         sequence = self._signal_sequence

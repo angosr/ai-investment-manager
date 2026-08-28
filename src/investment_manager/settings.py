@@ -33,7 +33,6 @@ from investment_manager.information.official.metrics import (
 )
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
-from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
 from investment_manager.portfolio.policy import CapitalPolicy
 from investment_manager.scheduling.policy import TemporalPolicy, TriggerPolicy
@@ -153,7 +152,6 @@ class AppConfig(StrictConfig):
                 raise ValueError(
                     "ContextAssessment 分析截止时间必须覆盖 activity schedule-to-close"
                 )
-        context_forecast = self.capital.context_forecast
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
                 raise ValueError("当前实验候选资本权限只允许 SHADOW")
@@ -169,96 +167,6 @@ class AppConfig(StrictConfig):
                 != self.market_data.maximum_cross_market_quote_skew_seconds
             ):
                 raise ValueError("Capital 风控与行情的跨产品报价偏差上限必须一致")
-            if (
-                context_forecast is not None
-                and context_forecast.enabled
-                and self.market_data.perpetual_instruments
-                and self.market_data.perpetual_poll_seconds * 2
-                >= min(
-                    context_forecast.maximum_quote_age_seconds,
-                    self.capital.risk.maximum_quote_age_seconds,
-                )
-            ):
-                raise ValueError("永续状态轮询必须在资本新鲜度窗口内保留失败恢复余量")
-        context = self.capital.context_forecast
-        if context is not None and context.enabled:
-            execution_by_key = {
-                item.instrument.key: item.instrument for item in self.capital.execution_specs
-            }
-            reference_by_key = {
-                item.key: item for item in self.capital.forecast_reference_instruments
-            }
-            forecast_instruments = {**execution_by_key, **reference_by_key}
-            perpetual_by_key = {item.key: item for item in self.market_data.perpetual_instruments}
-            spot_symbols = set(self.market_data.symbols)
-            for reference in self.capital.forecast_reference_instruments:
-                if (
-                    reference.product == InstrumentProduct.SPOT
-                    and reference.symbol not in spot_symbols
-                ):
-                    raise ValueError("Forecast Spot 只读参考必须属于 MarketData spot universe")
-                if (
-                    reference.product != InstrumentProduct.SPOT
-                    and reference.key not in perpetual_by_key
-                ):
-                    raise ValueError(
-                        "Forecast Derivative 只读参考必须属于 MarketData perpetual universe"
-                    )
-            for target_policy in context.targets:
-                target = forecast_instruments.get(target_policy.reference_instrument_key)
-                if target is None:
-                    raise ValueError("Context Forecast target 必须属于执行产品或只读参考产品")
-                evidence_key = target_policy.derivative_evidence_instrument_key
-                if evidence_key is not None:
-                    evidence = perpetual_by_key.get(evidence_key)
-                    if evidence is None:
-                        raise ValueError(
-                            "Context Forecast 衍生品证据必须属于 MarketData 只读 universe"
-                        )
-                    if (
-                        evidence.base_asset != target.base_asset
-                        or evidence.quote_asset != target.quote_asset
-                    ):
-                        raise ValueError("Context Forecast 证据产品必须与 target 同标的计价")
-                comparison_policy = target_policy.comparison
-                if comparison_policy is not None:
-                    comparison = perpetual_by_key.get(comparison_policy.instrument_key)
-                    if comparison is None:
-                        raise ValueError(
-                            "Context Forecast comparison 必须属于 MarketData perpetual universe"
-                        )
-                    if comparison.key in execution_by_key:
-                        raise ValueError("Context Forecast comparison 必须是观察专用产品")
-                    if target.product != InstrumentProduct.SPOT:
-                        raise ValueError("Context Forecast comparison 只允许比较 Spot Outcome")
-                    if comparison.product == InstrumentProduct.SPOT:
-                        raise ValueError("Context Forecast comparison 必须使用指数化线性产品")
-                    if comparison.quote_asset != target.quote_asset:
-                        raise ValueError(
-                            "Context Forecast comparison 与 Outcome 必须使用同一计价资产"
-                        )
-                payoffs = target_policy.product_payoffs
-                if payoffs is None:
-                    continue
-                perpetual_market_keys = {
-                    item.key for item in self.market_data.perpetual_instruments
-                }
-                payoff_specs = {
-                    item.instrument.key: item.instrument
-                    for item in self.capital.execution_specs
-                    if item.instrument.key in payoffs.instrument_keys
-                }
-                missing_execution_specs = set(payoffs.instrument_keys) - set(payoff_specs)
-                if missing_execution_specs:
-                    raise ValueError("Product payoff products 必须全部属于 Capital execution_specs")
-                missing_market_products = {
-                    key
-                    for key, instrument in payoff_specs.items()
-                    if instrument.product != InstrumentProduct.SPOT
-                    and key not in perpetual_market_keys
-                }
-                if missing_market_products:
-                    raise ValueError("Product payoff 永续产品必须属于 MarketData universe")
         permissions = self.capital.candidate_capital_authorizations
         if permissions and not self.capital.enabled:
             raise ValueError("禁用 Capital 时不得保留 candidate capital authorization")

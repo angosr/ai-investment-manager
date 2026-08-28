@@ -5,7 +5,6 @@ import pytest
 from pydantic import ValidationError
 
 from investment_manager.forecast.context.contract import ASSESS_INSTRUCTIONS
-from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.market.models import InstrumentId, InstrumentProduct
@@ -289,25 +288,6 @@ def test_perpetual_quote_cadence_must_satisfy_cross_market_skew() -> None:
         MarketDataPolicy.model_validate(payload)
 
 
-def test_perpetual_state_cadence_preserves_capital_freshness_recovery() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
-    payload = config.model_dump(mode="python")
-    payload["capital"]["context_forecast"]["enabled"] = True
-    payload["market_data"]["perpetual_poll_seconds"] = (
-        min(
-            config.capital.context_forecast.maximum_quote_age_seconds,
-            config.capital.risk.maximum_quote_age_seconds,
-        )
-        // 2
-    )
-
-    with pytest.raises(
-        ValidationError,
-        match="永续状态轮询必须在资本新鲜度窗口内保留失败恢复余量",
-    ):
-        AppConfig.model_validate(payload)
-
-
 def test_market_observation_domain_may_exceed_assessment_mandate() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
@@ -359,41 +339,6 @@ def test_historical_state_policy_does_not_require_future_source_rules() -> None:
     assert all(
         item.fact_type != "US_DIGITAL_ASSET_RULEMAKING" for item in restored.delta_policy.rules
     )
-
-
-def test_shadow_keeps_one_dormant_multi_asset_forecast_contract() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
-    context = config.capital.context_forecast
-    assert config.capital.enabled
-    assert config.assessment.enabled
-    assert context is not None and not context.enabled
-    assert config.codex_runtime.reasoning_effort == "high"
-    assert context.reasoning_effort == "medium"
-    assert context.horizon_minutes == 240
-    assert context.cadence_minutes == context.validity_minutes == 60
-    assert not hasattr(config.capital.decision, "minimum_conservative_net_bps")
-    assert not hasattr(config.capital.decision, "maximum_orders_per_day")
-    assert not hasattr(config.capital.decision, "cooldown_minutes")
-    assert not hasattr(config.capital.decision, "minimum_sample_size")
-    assert len(context.targets) == 3
-    assert config.capital.candidate_capital_authorizations == ()
-
-    instruments = {item.instrument.key: item.instrument for item in config.capital.execution_specs}
-    instruments.update({item.key: item for item in config.capital.forecast_reference_instruments})
-    contracts = tuple(
-        context_forecast_contract(
-            policy=context,
-            target_policy=target,
-            instrument=instruments[target.reference_instrument_key],
-            cost_semantics_version=config.capital.decision.cost_model_version,
-        )
-        for target in context.targets
-    )
-    fee_bps = {item.instrument.key: item.fee_bps for item in config.capital.execution_specs}
-    assert fee_bps["BINANCE:TRADFI_PERPETUAL:SPYUSDT"] == Decimal("5")
-    assert all(contract.permission_evidence_eligible for contract in contracts)
-    assert contracts[0].settlement_rule.endswith("spot-return-v3")
-    assert contracts[-1].settlement_rule.endswith("perpetual-return-and-funding-v1")
 
 
 def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark() -> None:
@@ -460,32 +405,6 @@ def test_forecast_reference_products_are_not_capital_products() -> None:
     assert all(
         item.instrument.product != InstrumentProduct.SPOT for item in capital.execution_specs
     )
-    assert all(
-        set(target.product_payoffs.instrument_keys) <= execution_keys
-        and set(target.product_payoffs.instrument_keys).isdisjoint(reference_keys)
-        for target in capital.context_forecast.targets
-        if target.product_payoffs is not None
-    )
-
-    payload = capital.model_dump(mode="python")
-    payload["forecast_reference_instruments"] = ()
-    with pytest.raises(ValidationError, match="只读参考必须精确覆盖"):
-        type(capital).model_validate(payload)
-
-
-def test_forecast_comparison_product_remains_observation_only() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
-    payload = config.model_dump(mode="python")
-    payload["capital"]["context_forecast"]["enabled"] = True
-    paxg = next(
-        item
-        for item in payload["capital"]["context_forecast"]["targets"]
-        if item["outcome_family_id"] == "paxg-price-directional-4h"
-    )
-    paxg["comparison"]["instrument_key"] = "BINANCE:USD_M_PERPETUAL:BTCUSDT"
-
-    with pytest.raises(ValidationError, match="comparison 必须是观察专用产品"):
-        AppConfig.model_validate(payload)
 
 
 def test_provisional_mandate_cannot_grant_reference_policy() -> None:
@@ -524,24 +443,6 @@ def test_investable_universe_cannot_exceed_the_owner_mandate() -> None:
 
     with pytest.raises(ValidationError, match="Mandate 未允许"):
         type(config.capital).model_validate(payload)
-
-
-def test_context_forecast_evidence_instrument_is_read_only_and_target_aligned() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
-    payload = config.model_dump(mode="python")
-    payload["capital"]["context_forecast"]["enabled"] = True
-    payload["capital"]["context_forecast"]["targets"][0]["derivative_evidence_instrument_key"] = (
-        "BINANCE:USD_M_PERPETUAL:ETHUSDT"
-    )
-
-    with pytest.raises(ValidationError, match="证据产品必须与 target 同标的计价"):
-        type(config).model_validate(payload)
-
-    payload["capital"]["context_forecast"]["targets"][0]["derivative_evidence_instrument_key"] = (
-        "BINANCE:USD_M_PERPETUAL:SOLUSDT"
-    )
-    with pytest.raises(ValidationError, match="必须属于 MarketData 只读 universe"):
-        type(config).model_validate(payload)
 
 
 def test_capital_quote_alignment_must_cover_spot_freeze_interval() -> None:

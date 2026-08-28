@@ -7,8 +7,6 @@ temporal:
 # 当前 Product Capital 链只拥有 Mock Shadow 权限，不继承到真实 Testnet 下单。
 capital:
   enabled: false
-  context_forecast:
-    enabled: false
   candidate_capital_authorizations: []
 
 cash_yield_evidence:

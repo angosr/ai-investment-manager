@@ -17,15 +17,9 @@ from investment_manager.forecast.context.application import (
 from investment_manager.forecast.context.contract import (
     WorldModelStructuredOutput,
 )
-from investment_manager.forecast.context.estimate import (
-    context_forecast_world_model_projection,
-)
 from investment_manager.forecast.context.executor import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
-)
-from investment_manager.forecast.context.producer import (
-    MarketContextTargetStateProvider,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.service import (
@@ -45,21 +39,10 @@ from investment_manager.forecast.models import (
     ContextVerificationTest,
 )
 from investment_manager.forecast.tables import assessment_executions
-from investment_manager.kernel.identity import stable_id
-from investment_manager.market.models import (
-    ClosedMarketBar,
-    InstrumentId,
-    InstrumentProduct,
-    MarketQuote,
-    MarketTrade,
-)
-from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
-from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.models import build_initial_trigger_plan
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.schema import create_schema
-from investment_manager.settings import load_config
 from investment_manager.state.decision.packet import (
     DecisionPacket,
     MandateExposure,
@@ -178,50 +161,6 @@ def _assessment() -> ContextAssessment:
     )
 
 
-def test_posterior_projection_marks_only_externally_grounded_mechanisms() -> None:
-    packet = _packet()
-    projection = context_forecast_world_model_projection(_assessment(), packet=packet)
-
-    assert projection["mechanisms"][0]["structural_evidence_ids"] == ("delta-1",)
-
-    market_only_delta = packet.deltas[0].model_copy(
-        update={
-            "fact_revision_ids": (),
-            "feature_snapshot_refs": ("market-feature-1",),
-        }
-    )
-    market_only_packet = packet.model_copy(update={"deltas": (market_only_delta,)})
-    market_only = context_forecast_world_model_projection(
-        _assessment(),
-        packet=market_only_packet,
-    )
-
-    assert market_only["mechanisms"][0]["structural_evidence_ids"] == ()
-
-    original_mechanism = _assessment().mechanisms[0]
-    conflicting_only = _assessment().model_copy(
-        update={
-            "mechanisms": (
-                original_mechanism.model_copy(
-                    update={
-                        "causal_chain": tuple(
-                            node.model_copy(update={"evidence_ids": ("market-feature-1",)})
-                            for node in original_mechanism.causal_chain
-                        ),
-                        "conflicting_evidence_ids": ("delta-1",),
-                    }
-                ),
-            )
-        }
-    )
-    conflicting_only_projection = context_forecast_world_model_projection(
-        conflicting_only,
-        packet=packet,
-    )
-
-    assert conflicting_only_projection["mechanisms"][0]["structural_evidence_ids"] == ()
-
-
 def _world_output_payload(claim: str) -> dict:
     return {
         "world_model": {
@@ -328,155 +267,6 @@ class _FailingContextAnalyst:
             output=None,
             reason_code="CODEX_ACCOUNTS_UNAVAILABLE",
         )
-
-
-def test_context_forecast_target_state_includes_optional_economic_comparison() -> None:
-    config = load_config("config/investment-manager.yaml")
-    policy = config.capital.context_forecast
-    assert policy is not None
-    spot = next(
-        item
-        for item in config.capital.forecast_reference_instruments
-        if item.key == policy.targets[1].reference_instrument_key
-    )
-    market = InMemoryMarketDataStore()
-    closes = (Decimal("4588"), Decimal("4590"), Decimal("4593"))
-    for index, close in enumerate(closes):
-        open_at = NOW - timedelta(minutes=15 - index * 5)
-        market.put_bar(
-            ClosedMarketBar(
-                symbol=spot.symbol,
-                interval="5m",
-                open_time=open_at,
-                close_time=open_at + timedelta(minutes=5),
-                observed_at=open_at + timedelta(minutes=5),
-                open=close - Decimal("20"),
-                high=close + Decimal("30"),
-                low=close - Decimal("30"),
-                close=close,
-                volume=Decimal("10") + index,
-                source="test",
-            )
-        )
-    market.put_quote(
-        MarketQuote(
-            quote_id="fresh-target-quote",
-            symbol=spot.symbol,
-            observed_at=NOW,
-            bid=Decimal("4592.9"),
-            bid_quantity=Decimal("2"),
-            ask=Decimal("4593.1"),
-            ask_quantity=Decimal("2"),
-            source="test",
-        )
-    )
-    market.put_trade(
-        MarketTrade(
-            trade_id="fresh-target-trade",
-            symbol=spot.symbol,
-            aggregate_trade_id=1,
-            event_time=NOW,
-            observed_at=NOW,
-            price=Decimal("4593"),
-            quantity=Decimal("0.1"),
-            buyer_is_maker=False,
-            source="test",
-        )
-    )
-    perpetual = InstrumentId(
-        product=InstrumentProduct.USD_M_PERPETUAL,
-        symbol=spot.symbol,
-        base_asset=spot.base_asset,
-        quote_asset=spot.quote_asset,
-        settlement_asset=spot.quote_asset,
-    )
-    exchange_time = NOW - timedelta(seconds=1)
-    market.put_perpetual_state(
-        PerpetualMarketState(
-            state_id=stable_id(
-                "perpetual_market_state",
-                perpetual.key,
-                exchange_time.isoformat(),
-            ),
-            instrument=perpetual,
-            exchange_time=exchange_time,
-            observed_at=NOW,
-            mark_price=Decimal("4591"),
-            index_price=Decimal("4590"),
-            last_funding_rate=Decimal("0.0001"),
-            interest_rate=Decimal("0.0001"),
-            next_funding_time=NOW + timedelta(hours=4),
-            source="test",
-        )
-    )
-    market.put_perpetual_quote(
-        PerpetualQuote(
-            quote_id=stable_id("perpetual_quote", perpetual.key, 42),
-            instrument=perpetual,
-            exchange_time=exchange_time,
-            observed_at=NOW,
-            bid=Decimal("4590.9"),
-            bid_quantity=Decimal("2"),
-            ask=Decimal("4591.1"),
-            ask_quantity=Decimal("2"),
-            update_id=42,
-            source="test",
-        )
-    )
-
-    comparison = next(
-        item
-        for item in config.market_data.perpetual_instruments
-        if item.key == policy.targets[1].comparison.instrument_key
-    )
-    provider = MarketContextTargetStateProvider(
-        market=market,
-        feature_policy=config.feature,
-        reference=spot,
-        perpetual=perpetual,
-        interval="5m",
-        bar_window=3,
-        funding_lookback_hours=24,
-        maximum_quote_skew_seconds=15,
-        comparison=comparison,
-        comparison_price_multiplier=Decimal("1"),
-        maximum_comparison_age_seconds=300,
-    )
-
-    missing = provider.build(as_of=NOW)
-    assert missing.comparison_states == ()
-    assert missing.missing_comparison_instrument_keys == (comparison.key,)
-
-    market.put_perpetual_state(
-        PerpetualMarketState(
-            state_id=stable_id(
-                "perpetual_market_state",
-                comparison.key,
-                exchange_time.isoformat(),
-            ),
-            instrument=comparison,
-            exchange_time=exchange_time,
-            observed_at=NOW,
-            mark_price=Decimal("4600.52"),
-            index_price=Decimal("4598.15"),
-            last_funding_rate=Decimal("0"),
-            interest_rate=Decimal("0"),
-            next_funding_time=NOW + timedelta(hours=4),
-            source="test",
-        )
-    )
-    state = provider.build(as_of=NOW)
-
-    assert state.as_of == NOW
-    assert state.asset_states[0].last == Decimal("4593")
-    assert state.asset_states[0].return_fraction > 0
-    assert state.derivative_states[0].mark_index_premium_bps > 0
-    assert state.missing_comparison_instrument_keys == ()
-    assert state.comparison_states[0].target_reference_deviation_bps < 0
-    assert state.comparison_states[0].mark_index_premium_bps > 0
-    assert state.comparison_states[0].market_session == "SCHEDULE_UNAVAILABLE"
-    assert "asset_state:PAXG.realized_volatility" in state.feature_selectors
-    assert "comparison_state:XAU.target_reference_deviation_bps" in state.feature_selectors
 
 
 def test_assessment_execution_replay_never_calls_codex_twice() -> None:
@@ -614,65 +404,6 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
     )
     assert len(update_messages) == 1
     assert update_messages[0].payload["trigger"]["evidence_ids"] == [world_model.assessment_id]
-
-
-def test_material_world_model_update_creates_one_event_forecast_trigger(app_config) -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    assessments = SqlContextAssessmentStore(engine)
-    packet = _packet()
-    assessment = _assessment()
-    assessments.record_packet(packet)
-    assessments.record_assessment(packet.packet_id, assessment)
-    triggers = SqlTriggerRepository(engine, app_config.trigger)
-    plan = build_initial_trigger_plan(
-        symbol="BTCUSDT",
-        pipeline_id="pipeline-event-forecast-v1",
-        manifest_id="manifest-event-forecast-v1",
-        updated_at=NOW,
-        heartbeat_seconds=900,
-    )
-    triggers.create_plan(plan)
-    scheduler = WorldModelReviewScheduler(
-        assessments=assessments,
-        triggers=triggers,
-        symbol=plan.symbol,
-        pipeline_id=plan.pipeline_id,
-        manifest_id=plan.manifest_id,
-        minimum_call_interval_seconds=app_config.trigger.minimum_call_interval_seconds,
-        trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
-        material_event_slots_enabled=True,
-    )
-
-    scheduler.publish_update(assessment)
-    scheduler.publish_update(assessment)
-
-    replayed_assessment = assessment.model_copy(
-        update={
-            "assessment_id": "assessment-2",
-            "analysis_behavior_hash": "c" * 64,
-            "available_at": assessment.available_at + timedelta(seconds=10),
-        }
-    )
-    assessments.record_assessment(packet.packet_id, replayed_assessment)
-    scheduler.publish_update(replayed_assessment)
-
-    messages = tuple(
-        item
-        for item in triggers.pending_outbox(as_of=assessment.available_at + timedelta(minutes=1))
-        if item.message_kind == "TRIGGER_CREATED"
-    )
-    assert len(messages) == 1
-    trigger = messages[0].payload["trigger"]
-    assert trigger["trigger_type"] == "FORECAST_EVENT_DUE"
-    assert trigger["evidence_ids"] == sorted(
-        [
-            assessment.assessment_id,
-            packet.packet_id,
-            packet.state_id,
-            *(item.delta_id for item in packet.deltas),
-        ]
-    )
 
 
 def test_review_recovery_does_not_crash_before_trigger_plan(app_config) -> None:

@@ -49,7 +49,6 @@ class TriggerServiceAssembly:
 
     repository: SqlTriggerRepository
     activities: TriggerCoordinatorActivities
-    context_forecast_activation_at: datetime | None
 
 
 def assemble_trigger_service(
@@ -83,36 +82,7 @@ def assemble_trigger_service(
             program_batch_consumers=(
                 CapitalTriggerConsumer(
                     capital_consumer,
-                    context_cadence_minutes=(
-                        config.capital.context_forecast.cadence_minutes
-                        if config.assessment.enabled
-                        and config.capital.context_forecast is not None
-                        and config.capital.context_forecast.enabled
-                        else None
-                    ),
-                    context_completion_deadline_seconds=(
-                        config.capital.context_forecast.completion_deadline_seconds
-                        if config.assessment.enabled
-                        and config.capital.context_forecast is not None
-                        and config.capital.context_forecast.enabled
-                        else None
-                    ),
-                    material_event_slots_enabled=(
-                        config.capital.context_forecast.material_event_slots_enabled
-                        if config.assessment.enabled
-                        and config.capital.context_forecast is not None
-                        and config.capital.context_forecast.enabled
-                        else False
-                    ),
-                    material_event_slot_policy_version=(
-                        config.capital.context_forecast.material_event_slot_policy_version
-                        if config.assessment.enabled
-                        and config.capital.context_forecast is not None
-                        and config.capital.context_forecast.enabled
-                        else None
-                    ),
                     owner_symbol=config.assessment.review_trigger_symbol,
-                    context_activation_at=capital_consumer.context_activation_at,
                 )
                 if config.assessment.enabled
                 else capital_consumer,
@@ -124,11 +94,6 @@ def assemble_trigger_service(
     return TriggerServiceAssembly(
         repository=repository,
         activities=activities,
-        context_forecast_activation_at=(
-            capital_consumer.context_activation_at
-            if capital_consumer is not None
-            else None
-        ),
     )
 
 
@@ -165,12 +130,7 @@ def run_trigger_service(
         )
         dispatcher = TriggerOutboxDispatcherService(
             repository=repository,
-            dispatcher=TemporalTriggerDispatcher(
-                client,
-                config,
-                repository,
-                context_forecast_activation_at=assembly.context_forecast_activation_at,
-            ),
+            dispatcher=TemporalTriggerDispatcher(client, config, repository),
             poll_seconds=config.trigger.outbox_fallback_poll_seconds,
             wakeup=wakeup,
         )
