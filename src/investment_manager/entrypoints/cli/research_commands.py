@@ -484,6 +484,59 @@ def fetch_binance_carry_history_command(
     )
 
 
+@app.command("evaluate-slow-trend-candidate")
+def evaluate_slow_trend_candidate_command(
+    plan: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        "."
+    ),
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    result: Annotated[Path, typer.Option(dir_okay=False)] = Path(
+        "evidence/quant-candidates/btc-slow-trend-12w-v1-result.json"
+    ),
+) -> None:
+    """按已提交计划运行一次慢趋势回顾性否决；结果不能授予资本。"""
+
+    from investment_manager.research.carry import HistoricalCarryDatasetCatalog
+    from investment_manager.research.slow_trend import (
+        evaluate_slow_trend_candidate,
+        load_slow_trend_plan,
+        store_slow_trend_result,
+    )
+
+    root = project_root.resolve()
+    registered = load_slow_trend_plan(plan)
+    plan_commit, _ = committed_file_revision(plan, repository_root=root)
+    code_version = current_clean_code_version(repository_root=root)
+    dataset = HistoricalCarryDatasetCatalog(carry_catalog).load(
+        registered.carry_dataset_id
+    )
+    artifact = evaluate_slow_trend_candidate(
+        plan=registered,
+        dataset=dataset,
+        plan_commit=plan_commit,
+        evaluator_code_version=code_version,
+        evaluated_at=datetime.now(UTC),
+    )
+    target = store_slow_trend_result(artifact, result)
+    typer.echo(
+        json.dumps(
+            {
+                "status": artifact["status"],
+                "permission": artifact["permission"],
+                "rejection_reasons": artifact["rejection_reasons"],
+                "strategy": artifact["strategy"],
+                "always_long": artifact["always_long"],
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("freeze-event-history")
 def freeze_event_history_command(
     database_url: Annotated[
