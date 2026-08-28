@@ -1,0 +1,101 @@
+{
+  "schema_version": "portfolio-candidate-result-v1",
+  "plan_id": "diversified-economic-trend-v1",
+  "plan_commit": "07a6b6f85b525570613f391c437954cde21b5962",
+  "plan_sha256": "a9c579b0c6dbca553413946cb3a21bffb48ed069840b34831839e0c3b1a2126a",
+  "evaluated_at": "2026-08-28T23:55:00+00:00",
+  "evaluator_commit": "b50a944fdf9afcf93052f9f72d3fab0bfdc81560",
+  "permission": "NONE",
+  "status": "REJECTED_RETROSPECTIVE",
+  "sample": {
+    "first_month": "2021-10-01",
+    "last_month": "2026-06-01",
+    "month_count": 56
+  },
+  "candidate": {
+    "month_count": 56,
+    "compound_return": "0.4581542737025146",
+    "annualized_return": "0.08417838512030884",
+    "annualized_excess_sharpe": "0.43140113703853683",
+    "maximum_drawdown": "0.11983821715156606",
+    "annualized_turnover": "1.7499999999999998",
+    "real_compound_return": "0.21254168889499425"
+  },
+  "stress_candidate": {
+    "month_count": 56,
+    "compound_return": "0.446438906470106",
+    "annualized_return": "0.08230588609771394",
+    "annualized_excess_sharpe": "0.4167278387353744",
+    "maximum_drawdown": "0.12392102555506923",
+    "annualized_turnover": "1.7499999999999998",
+    "real_compound_return": "0.20279966678786843"
+  },
+  "cash": {
+    "month_count": 56,
+    "compound_return": "0.19110727437715935",
+    "annualized_return": "0.03818604740761189",
+    "annualized_excess_sharpe": null,
+    "maximum_drawdown": "0.0",
+    "annualized_turnover": "0.0",
+    "real_compound_return": "-0.009523716265535387"
+  },
+  "static_diversified": {
+    "month_count": 56,
+    "compound_return": "0.6073862064150493",
+    "annualized_return": "0.10705353298373144",
+    "annualized_excess_sharpe": "0.6092710805943121",
+    "maximum_drawdown": "0.19566522486006133",
+    "annualized_turnover": "0.10714285714285714",
+    "real_compound_return": "0.33663688443891737"
+  },
+  "regimes": [
+    {
+      "start": "2021-10-01",
+      "end": "2022-12-01",
+      "month_count": 14,
+      "candidate_return": "0.057576175922887884",
+      "cash_return": "0.008636652552702184",
+      "candidate_above_cash": true
+    },
+    {
+      "start": "2022-12-01",
+      "end": "2024-02-01",
+      "month_count": 14,
+      "candidate_return": "-0.03826331477171374",
+      "cash_return": "0.060132776128953846",
+      "candidate_above_cash": false
+    },
+    {
+      "start": "2024-02-01",
+      "end": "2025-04-01",
+      "month_count": 14,
+      "candidate_return": "0.30103641943502457",
+      "cash_return": "0.05992079197055977",
+      "candidate_above_cash": true
+    },
+    {
+      "start": "2025-04-01",
+      "end": "2026-07-01",
+      "month_count": 14,
+      "candidate_return": "0.10191014109472163",
+      "cash_return": "0.05095097586609332",
+      "candidate_above_cash": true
+    }
+  ],
+  "gates": {
+    "candidate_compound_above_cash": true,
+    "candidate_sharpe_above_static": false,
+    "candidate_drawdown_below_static": true,
+    "at_least_three_regimes_above_cash": true,
+    "stressed_compound_above_cash": true
+  },
+  "rejection_reasons": [
+    "candidate_sharpe_above_static"
+  ],
+  "capital_change": "NONE",
+  "limitations": [
+    "当前历史代理不证明当时发布日期，只能否决，不能授予资本。",
+    "经济层 SHORT 仅取标的收益相反数；funding、basis、保证金和强平必须在产品层另行否决。",
+    "结果产生后不得搜索相邻窗口、权重、摩擦或阶段边界。"
+  ]
+}
