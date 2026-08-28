@@ -1,0 +1,59 @@
+schema_version: quant-factor-candidate-plan-v1
+plan_id: btc-funding-state-24h-v1
+evaluation_family_id: btc-directional-horizon-research
+
+hypothesis: >-
+  在下一 24 小时 BTC 现货收益问题上，决策时点已经结算并可见的最近 24 小时
+  USD-M 资金费率总和，能够在七日价格趋势和七日实现波动率之外增量刻画杠杆需求与
+  拥挤反转风险；若不能稳定改善价格基线，则 funding 不进入 Quant prior。
+
+research_prior:
+  - https://www.bis.org/publ/work1087.htm
+  - https://www.nber.org/papers/w24877
+  - https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History
+
+data:
+  carry_dataset_id: historical_carry_dataset_e605f49c521fdc68e910
+  spot_dataset_id: historical_dataset_2c3d78a5f3d963d50165
+  funding_dataset_id: historical_funding_dataset_61af8fb0f5593a5bf44b
+  source_window: [2020-01-01T00:00:00Z, 2026-08-01T00:00:00Z]
+  decision_clock: completed_utc_daily_bar
+  funding_availability: frozen_available_at
+
+target:
+  research_outcome_id: btc-price-directional-24h-research-v2
+  horizon_minutes: 1440
+  return_anchor: current_spot_close_to_next_spot_close
+  outcome_encoding:
+    development_quantiles: ["0.05", "0.15", "0.30", "0.45", "0.55", "0.70", "0.85", "0.95"]
+    representatives: development_bucket_means
+
+comparison:
+  common_features:
+    - return_7d_bps
+    - realized_volatility_7d_bps
+  added_feature:
+    name: visible_funding_sum_24h_bps
+    formula: sum(funding_rate * 10000 where available_at <= decision_at and funding_time > decision_at - 24h)
+  baseline_model: momentum_volatility
+  candidate_model: momentum_volatility_funding
+  discretization: development_tertiles_and_volatility_median
+  probability_model: empirical_cells_with_global_dirichlet_prior
+  smoothing_strength: "20"
+
+evaluation:
+  chronology: [development_60pct, validation_20pct, diagnostic_20pct]
+  purge_full_horizon_at_boundaries: true
+  primary_metric: normalized_ranked_probability_score
+  diagnostics: [continuous_return_mae_bps, expected_realized_return_correlation, expected_return_decile_spread_bps]
+  rule: >-
+    只在 development 拟合分箱和条件分布；candidate 必须在四个连续 validation 子段中
+    均优于 baseline，才读取最后 diagnostic 区间。最后区间无论结果如何都不能授予资本权限，
+    只能决定是否建立新的前瞻 RESEARCH Producer。
+
+scope:
+  candidate_count: 1
+  result_permission: REJECTION_OR_FORWARD_RESEARCH_ONLY
+  prohibited_follow_ups: >-
+    结果揭示后不得在相同尾部区间搜索其他 funding 窗口、阈值、交互或时域；失败即删除
+    候选运行代码，只保留计划与不可变否定结果。历史通过也不得修改现役 4h 资本行为。
