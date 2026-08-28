@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 decision_state:
-  version: portfolio-state-v51
+  version: portfolio-state-v52
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v19
@@ -109,7 +109,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v55
+    version: decision-packet-policy-v56
     schema_version: decision-packet-v20
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -121,7 +121,7 @@ decision_state:
     maximum_calendar_context_distance_seconds: 604800
     maximum_intelligence_events: 8
     maximum_intelligence_characters: 3000
-    maximum_characters_per_intelligence_event: 500
+    maximum_characters_per_intelligence_event: 800
     # 低可靠聚合新闻永久入库，但不作为人工复核时的普通背景占用 AI 注意力。
     minimum_background_attention_priority: "0.80"
     minimum_background_source_reliability: "0.70"
@@ -527,7 +527,7 @@ shadow:
   analysis_deadline_seconds: 900
 
 information:
-  version: information-intake-v45
+  version: information-intake-v46
   normalizer_version: trendradar-collector-v12
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444

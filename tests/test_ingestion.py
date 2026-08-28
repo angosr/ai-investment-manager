@@ -326,6 +326,36 @@ def test_official_document_projection_surfaces_material_claim_beyond_opening() -
     assert "Thank you" not in excerpt
 
 
+def test_official_document_projection_prefers_policy_claims_over_metadata_and_citations() -> None:
+    document = parse_official_html_document(
+        """
+        <html><head><meta property="og:title" content="Economic outlook"></head>
+        <body><main><div id="article">
+          <p>Will new technology require more capital, or will it reduce investment needs?</p>
+          <p>Credit spreads are narrow and financial conditions remain supportive.</p>
+          <p>There should be no misunderstanding: price stability at 2 percent is a
+             firm target for monetary policy.</p>
+          <p>Inflation is running at 3.7 percent and remains above target. Several
+             component measures are also elevated. The predominant policy focus
+             should therefore remain on prices.</p>
+          <p>17. See Committee Minutes (2026) for background. Return to text</p>
+        </div></main></body></html>
+        """
+    )
+
+    excerpt = build_official_decision_excerpt(
+        document,
+        source_summary="Speech at an annual economic policy conference.",
+        maximum_length=800,
+    )
+
+    assert "price stability at 2 percent" in excerpt
+    assert "predominant policy focus" in excerpt
+    assert "Speech at an annual" not in excerpt
+    assert "Will new technology" not in excerpt
+    assert "Return to text" not in excerpt
+
+
 def test_official_rss_source_hydrates_bounded_first_party_entry_once() -> None:
     observed_at = datetime(2026, 8, 21, 18, tzinfo=UTC)
     feed_url = "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"

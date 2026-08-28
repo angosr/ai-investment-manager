@@ -73,7 +73,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:SPOT:PAXGUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v17"
-    assert config.information.version == "information-intake-v45"
+    assert config.information.version == "information-intake-v46"
     assert config.information.normalizer_version == "trendradar-collector-v12"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.economic_release_actual_poll_seconds == 15
@@ -89,14 +89,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         if item.immediate_review_eligible
     } == {"fed-speeches", "fed-testimony"}
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v51"
+    assert config.decision_state.version == "portfolio-state-v52"
     assert config.decision_state.official_fact_policy.version == "official-fact-v19"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v55"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v56"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
+    assert config.decision_state.packet_policy.maximum_characters_per_intelligence_event == 800
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
     assert config.decision_state.packet_policy.maximum_market_age_seconds == 180
     assert config.market_data.funding_history_lookback_hours == 720

@@ -16,13 +16,29 @@ _POLICY_ACTION = re.compile(
     r"\b(?:"
     r"adopt\w*|announc\w*|approv\w*|authoriz\w*|begin\w*|bill|codif\w*|"
     r"commenc\w*|commit\w*|decreas\w*|deliver\w*|enact\w*|establish\w*|"
-    r"expect\w*|implement\w*|legislat\w*|"
+    r"expect(?:ed|s|ing)?|implement\w*|legislat\w*|"
     r"increas\w*|intend\w*|issu\w*|launch\w*|must|plan\w*|propos\w*|"
     r"pass\w*|requir\w*|sign\w*|suspend\w*|terminat\w*|will"
     r")\b",
     re.IGNORECASE,
 )
 _QUANTIFIED_CLAIM = re.compile(r"(?:\b20\d{2}\b|\b\d+(?:\.\d+)?%|\$\s?\d)")
+_POLICY_TOPIC = re.compile(
+    r"\b(?:"
+    r"balance sheet|central bank|credit|dollar|employment|federal funds|"
+    r"financial conditions|fiscal|growth|inflation|interest rates?|liquidity|"
+    r"monetary policy|money supply|policy rates?|price stability|regulat\w*|"
+    r"sanction\w*|tariff\w*|treasur\w*|unemployment"
+    r")\b",
+    re.IGNORECASE,
+)
+_POLICY_STANCE = re.compile(
+    r"\b(?:"
+    r"above|anchored|below|concern\w*|elevated|firm|focus|objective|"
+    r"predominant|readiness|restrict\w*|target|tighten\w*|eas\w*"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +268,7 @@ def build_official_decision_excerpt(
     *,
     source_summary: str = "",
     maximum_length: int = 1_200,
-    maximum_fragment_length: int = 360,
+    maximum_fragment_length: int = 240,
 ) -> str:
     """Select source-verbatim claims instead of truncating an article's opening.
 
@@ -350,15 +366,19 @@ def _projection_score(
     title_overlap = _overlap(_words(text), title_tokens)
     action_count = min(4, len(_POLICY_ACTION.findall(text)))
     quantified = 1 if _QUANTIFIED_CLAIM.search(text) else 0
-    source_bonus = 8 if kind == "source-summary" else 2 if kind == "page-description" else 0
+    source_bonus = 0.5 if kind in {"source-summary", "page-description"} else 0
     heading_bonus = 1 if kind == "heading" else 0
     lead_bonus = 0.25 if position == 0 else 0
+    policy_topics = min(5, len(_POLICY_TOPIC.findall(text)))
+    policy_stance = min(3, len(_POLICY_STANCE.findall(text)))
     return (
         source_bonus
         + heading_bonus
         + lead_bonus
         + action_count * 2.5
-        + quantified * 0.5
+        + policy_topics * 1.25
+        + policy_stance * 1.5
+        + quantified * 0.75
         + title_overlap * 2
     )
 
@@ -369,7 +389,14 @@ def _words(value: str) -> set[str]:
 
 def _is_substantive(value: str, *, title: str) -> bool:
     words = _words(value)
-    return len(value) >= 60 and len(words) >= 8 and value.casefold() != title.casefold()
+    folded = value.casefold()
+    return (
+        len(value) >= 60
+        and len(words) >= 8
+        and folded != title.casefold()
+        and "return to text" not in folded
+        and not value.rstrip().endswith("?")
+    )
 
 
 def _overlap(left: set[str], right: set[str]) -> float:
@@ -382,6 +409,10 @@ def _bounded_fragment(value: str, maximum_length: int) -> str:
     if len(value) <= maximum_length:
         return value
     sentences = _SENTENCE_BOUNDARY.split(value)
+    if len(sentences) > 1:
+        head_tail = f"{sentences[0]} … {sentences[-1]}"
+        if len(head_tail) <= maximum_length:
+            return head_tail
     selected: list[str] = []
     used = 0
     for sentence in sentences:

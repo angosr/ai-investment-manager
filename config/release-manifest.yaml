@@ -7,14 +7,14 @@ parent_manifest_id: release-framework-forecast-baseline-v2
 complexity_score: 1
 component_versions:
   - [feature, feature-v1]
-  - [decision_state, portfolio-state-v51]
+  - [decision_state, portfolio-state-v52]
   - [capital, total-portfolio-capital-v79]
   - [outcome_evaluation, typed-outcome-settlement-v54]
   - [trigger, analysis-trigger-v33]
   - [temporal, temporal-analysis-v5]
   - [market_data, binance-public-shadow-v16]
   - [shadow, shadow-simulation-v2]
-  - [information, information-intake-v45]
+  - [information, information-intake-v46]
   - [pipeline, off-pipeline-v8]
   - [codex_runtime, codex-runtime-v10]
   - [assessment, context-assessment-v55]
