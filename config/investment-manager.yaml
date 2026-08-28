@@ -408,7 +408,7 @@ outcome_evaluation:
         artifact_id: quant_forecast_artifact_c730529eb5cd931235d8
         relative_path: evidence/quant-forecasts/quant_forecast_artifact_c730529eb5cd931235d8.json
   quant_context_posterior:
-    version: quant-context-posterior-forward-v13
+    version: quant-context-posterior-forward-v14
     enabled: false
     producer_id: codex-quant-context-posterior
     activated_at: 2026-08-28T10:00:00Z

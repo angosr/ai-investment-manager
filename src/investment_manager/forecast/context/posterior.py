@@ -27,6 +27,8 @@ from investment_manager.forecast.context.estimate import (
     ContextForecastDraft,
     ContextForecastProbabilityDraft,
     ContextForecastStructuredOutput,
+    QuantContextPosteriorDraft,
+    QuantContextPosteriorStructuredOutput,
     context_forecast_output_schema_for_ids,
     context_forecast_runtime,
 )
@@ -97,7 +99,7 @@ def quant_context_posterior_behavior_id(
             "output_version": CONTEXT_FORECAST_OUTPUT_VERSION,
             "finalization_version": POSTERIOR_FINALIZATION_VERSION,
             "instructions": POSTERIOR_INSTRUCTIONS,
-            "output_model": ContextForecastStructuredOutput.model_json_schema(),
+            "output_model": QuantContextPosteriorStructuredOutput.model_json_schema(),
             "contracts": ordered_contracts,
             "formal_producer_behavior_id": context.producer_behavior_id,
             "quant_producer_behavior_id": quant_producer_behavior_id,
@@ -315,10 +317,10 @@ def build_quant_context_posterior_assignment(
 
 def audit_quant_context_posterior_draft(
     *,
-    draft: ContextForecastDraft,
+    draft: ContextForecastDraft | QuantContextPosteriorDraft,
     quant_prior: BaseForecast,
     analysis_input: dict[str, object],
-) -> ContextForecastDraft:
+) -> QuantContextPosteriorDraft:
     """Make the stored posterior match its declared causal use of the Quant prior."""
 
     if draft.decision_slot_id != quant_prior.decision_slot_id:
@@ -369,9 +371,9 @@ def audit_quant_context_posterior_draft(
     if substantive:
         if posterior_probabilities == prior_probabilities:
             raise ValueError("Quant posterior 声明实质影响但未改变 Quant prior")
-        return draft
+        return QuantContextPosteriorDraft.model_validate(draft.model_dump())
 
-    return ContextForecastDraft(
+    return QuantContextPosteriorDraft(
         decision_slot_id=draft.decision_slot_id,
         outcome_probabilities=tuple(
             ContextForecastProbabilityDraft(
@@ -986,7 +988,10 @@ class QuantContextPosteriorRunner:
         if (
             completed_at > assignment.completion_deadline_at
             or not result.success
-            or not isinstance(result.output, ContextForecastStructuredOutput)
+            or not isinstance(
+                result.output,
+                (ContextForecastStructuredOutput, QuantContextPosteriorStructuredOutput),
+            )
         ):
             reason = (
                 ForecastNoEstimateReason.DEADLINE_MISSED
@@ -1255,7 +1260,7 @@ def assemble_quant_context_posterior_runner(
         config,
         leases=SqlAccountLeaseStore(engine),
         audit=SqlCodexAuditStore(engine),
-        output_adapter=TypeAdapter(ContextForecastStructuredOutput),
+        output_adapter=TypeAdapter(QuantContextPosteriorStructuredOutput),
         runtime_policy=runtime,
     )
     stability_policy = config.outcome_evaluation.context_forecast_stability
@@ -1289,7 +1294,7 @@ def _posterior_output_schema(analysis_input: dict[str, object]) -> dict[str, obj
     if not isinstance(targets, (list, tuple)) or not isinstance(world_model, dict):
         raise ValueError("Quant posterior 输入边界非法")
     if not targets:
-        return ContextForecastStructuredOutput.model_json_schema()
+        return QuantContextPosteriorStructuredOutput.model_json_schema()
     decision_slot_ids = []
     bucket_ids = set()
     for target in targets:
@@ -1320,6 +1325,8 @@ def _posterior_output_schema(analysis_input: dict[str, object]) -> dict[str, obj
         bucket_ids=tuple(sorted(bucket_ids)),
         mechanism_ids=mechanism_ids,
         evidence_ids=tuple(sorted(evidence_ids)),
+        output_model_schema=QuantContextPosteriorStructuredOutput.model_json_schema(),
+        draft_definition="QuantContextPosteriorDraft",
     )
 
 

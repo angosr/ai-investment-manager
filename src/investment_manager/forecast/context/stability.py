@@ -27,6 +27,7 @@ from investment_manager.forecast.context.estimate import (
     CONTEXT_FORECAST_INPUT_VERSION,
     CONTEXT_FORECAST_OUTPUT_VERSION,
     ContextForecastStructuredOutput,
+    QuantContextPosteriorStructuredOutput,
     context_forecast_prompt,
     context_forecast_runtime,
 )
@@ -46,6 +47,10 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.settings import AppConfig
+
+_FORECAST_OUTPUT_ADAPTER = TypeAdapter(
+    ContextForecastStructuredOutput | QuantContextPosteriorStructuredOutput
+)
 
 STABILITY_EVALUATION_VERSION = "context-forecast-exact-input-stability-v1"
 
@@ -162,7 +167,7 @@ class ContextForecastStabilityResult(FrozenModel):
             raise ValueError("Context Forecast stability usage 必须唯一且排序")
         if self.output_json is not None:
             output = _canonical_object(self.output_json, "replica output")
-            ContextForecastStructuredOutput.model_validate(output)
+            _FORECAST_OUTPUT_ADAPTER.validate_python(output)
             if content_hash(output) != self.output_hash:
                 raise ValueError("Context Forecast stability output hash 不一致")
         if self.result_id != stable_id(
@@ -635,7 +640,9 @@ def evaluate_context_forecast_stability(
     expected_differences: list[Decimal] = []
     direction_flips = 0
     for assignment in assignments:
-        replicas: list[ContextForecastStructuredOutput] = []
+        replicas: list[
+            ContextForecastStructuredOutput | QuantContextPosteriorStructuredOutput
+        ] = []
         terminal = True
         successful = True
         for replica_index in range(1, assignment.replicas_per_input + 1):
@@ -651,7 +658,7 @@ def evaluate_context_forecast_stability(
             succeeded += 1
             assert result.output_json is not None
             replicas.append(
-                ContextForecastStructuredOutput.model_validate_json(result.output_json)
+                _FORECAST_OUTPUT_ADAPTER.validate_json(result.output_json)
             )
         if not terminal or not successful:
             continue
@@ -774,7 +781,7 @@ def assemble_context_forecast_stability_runner(
         config,
         leases=SqlAccountLeaseStore(engine),
         audit=SqlCodexAuditStore(engine),
-        output_adapter=TypeAdapter(ContextForecastStructuredOutput),
+        output_adapter=_FORECAST_OUTPUT_ADAPTER,
         runtime_policy=runtime,
     )
     return ContextForecastStabilityRunner(
@@ -820,7 +827,10 @@ def _result_from_analyst(
             status=ContextForecastStabilityStatus.FAILED,
             reason_code="STABILITY_REPLICA_DEADLINE_MISSED",
         )
-    if not analyst.success or not isinstance(analyst.output, ContextForecastStructuredOutput):
+    if not analyst.success or not isinstance(
+        analyst.output,
+        (ContextForecastStructuredOutput, QuantContextPosteriorStructuredOutput),
+    ):
         return ContextForecastStabilityResult(
             **common,
             status=ContextForecastStabilityStatus.FAILED,

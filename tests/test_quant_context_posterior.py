@@ -9,6 +9,7 @@ from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.estimate import (
     ContextForecastDraft,
     ContextForecastStructuredOutput,
+    QuantContextPosteriorDraft,
 )
 from investment_manager.forecast.context.posterior import (
     QuantContextPosteriorPreallocator,
@@ -351,7 +352,7 @@ def test_quant_context_posterior_exposes_selected_prior_not_candidate_distributi
 def test_posterior_no_material_effect_uses_exact_quant_prior() -> None:
     *_, quant_forecast, assignment = _fixture()
     model_input = json.loads(assignment.analysis_input_json)
-    draft = ContextForecastDraft.model_validate(
+    draft = QuantContextPosteriorDraft.model_validate(
         {
             "decision_slot_id": quant_forecast.decision_slot_id,
             "outcome_probabilities": [
@@ -369,7 +370,7 @@ def test_posterior_no_material_effect_uses_exact_quant_prior() -> None:
                     "rationale": "当前机制不足以改变历史条件分布。",
                 }
             ],
-            "evidence_refs": ["evidence-1"],
+            "evidence_refs": [],
             "invalidation_conditions": ["资金事实发生可观察反转"],
         }
     )
@@ -383,6 +384,7 @@ def test_posterior_no_material_effect_uses_exact_quant_prior() -> None:
     assert tuple(Decimal(item.probability) for item in audited.outcome_probabilities) == tuple(
         item.probability for item in quant_forecast.outcome_probabilities
     )
+    assert audited.evidence_refs == ()
 
 
 def test_posterior_substantive_adjustment_requires_mechanism_evidence() -> None:

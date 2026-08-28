@@ -69,6 +69,20 @@ class ContextForecastStructuredOutput(FrozenModel):
     forecasts: tuple[ContextForecastDraft, ...] = Field(min_length=1)
 
 
+class QuantContextPosteriorDraft(FrozenModel):
+    """Posterior output; a no-op relative to Quant does not need invented evidence."""
+
+    decision_slot_id: str = Field(min_length=1)
+    outcome_probabilities: tuple[ContextForecastProbabilityDraft, ...] = Field(min_length=3)
+    mechanism_contributions: tuple[ContextForecastContributionDraft, ...] = Field(min_length=1)
+    evidence_refs: tuple[str, ...] = ()
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
+
+
+class QuantContextPosteriorStructuredOutput(FrozenModel):
+    forecasts: tuple[QuantContextPosteriorDraft, ...] = Field(min_length=1)
+
+
 class ContextForecastComparisonState(FrozenModel):
     """Point-in-time economic cross-check; never an Outcome or capital product."""
 
@@ -533,6 +547,8 @@ def context_forecast_output_schema_for_ids(
     bucket_ids: tuple[str, ...],
     mechanism_ids: tuple[str, ...],
     evidence_ids: tuple[str, ...],
+    output_model_schema: dict[str, object] | None = None,
+    draft_definition: str = "ContextForecastDraft",
 ) -> dict[str, object]:
     """Build the shared schema without exposing WorldModel semantic content."""
 
@@ -543,9 +559,13 @@ def context_forecast_output_schema_for_ids(
         for values in (decision_slot_ids, bucket_ids, mechanism_ids, evidence_ids)
     ):
         raise ValueError("Context Forecast 输出枚举不能重复")
-    schema = strict_output_schema(ContextForecastStructuredOutput.model_json_schema())
+    schema = strict_output_schema(
+        ContextForecastStructuredOutput.model_json_schema()
+        if output_model_schema is None
+        else output_model_schema
+    )
     definitions = schema["$defs"]
-    draft = definitions["ContextForecastDraft"]
+    draft = definitions[draft_definition]
     draft["properties"]["decision_slot_id"]["enum"] = list(decision_slot_ids)
     forecasts = schema["properties"]["forecasts"]
     forecasts["minItems"] = len(decision_slot_ids)
