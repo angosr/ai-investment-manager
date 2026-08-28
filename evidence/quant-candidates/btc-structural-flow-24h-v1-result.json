@@ -1,0 +1,41 @@
+{
+  "schema_version": "quant-candidate-result-v1",
+  "plan_id": "btc-structural-flow-24h-v1",
+  "plan_commit": "5802a80a9418506fec640689086c008bd1557964",
+  "plan_sha256": "5f3df857ec9935bb45ae75f75d54f16c424f29583e3e32cd3e54a5db9aa6b4c2",
+  "evaluated_at": "2026-08-28T18:36:00Z",
+  "status": "REJECTED_ON_VALIDATION",
+  "permission": "NO_RUNTIME_OR_CAPITAL_CHANGE",
+  "sample_counts": {
+    "eligible": 453,
+    "development": 225,
+    "validation": 112,
+    "blind_reserved": 114
+  },
+  "sample_ranges": {
+    "development": ["2025-05-22", "2026-01-01"],
+    "validation": ["2026-01-03", "2026-04-24"],
+    "blind_reserved": ["2026-04-26", "2026-08-17"]
+  },
+  "development": {
+    "baseline_probabilities": [0.09130434782608696, 0.23478260869565218, 0.40869565217391307, 0.21739130434782608, 0.04782608695652174],
+    "score_thresholds": [0.4311111111111111, 0.6288888888888888],
+    "cell_sample_counts": [74, 75, 76]
+  },
+  "validation": {
+    "candidate_mean_rps": 0.16803113363424613,
+    "baseline_mean_rps": 0.16724345125573858,
+    "rps_improvement": -0.0007876823785075426,
+    "candidate_mae_bps": 200.08366719742682,
+    "baseline_mae_bps": 198.46980623212175,
+    "expected_realized_pearson": -0.0279984582034755,
+    "high_low_realized_spread_bps": 55.02428915756534,
+    "cell_sample_counts": [73, 30, 9],
+    "phase_rps_improvements": [-0.0009013918079711913, -0.003603556028055066, -0.00011915932777700755, 0.0014733776497731221],
+    "phase_high_low_spreads_bps": [123.83694571679743, -352.42469343083894, 106.34961385441211, 150.51646113205018],
+    "failed_rules": ["OVERALL_RPS_NOT_BETTER", "PHASE_RPS_NOT_STABLE", "MAE_WORSE", "EXPECTED_REALIZED_CORRELATION_NOT_POSITIVE", "PHASE_SPREAD_NOT_STABLE"]
+  },
+  "blind_revealed": false,
+  "runtime_change": "NONE",
+  "conclusion": "保守滞后后的 ETF 净流入强度与稳定币七日供给变化等权分数，没有稳定改善 BTC 后续 24 小时收益分布。总体 HIGH-LOW spread 为正但由少量 HIGH 样本驱动，跨相位不稳定且概率评分、MAE、相关性均失败；不得调权、改滞后或读取 blind 继续搜索同一假设。"
+}
