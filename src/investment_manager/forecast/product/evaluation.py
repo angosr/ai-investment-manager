@@ -20,7 +20,7 @@ from investment_manager.forecast.results import (
 )
 from investment_manager.kernel.identity import content_hash
 
-PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION = "product-payoff-residual-evidence-v3"
+PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION = "product-payoff-residual-evidence-v4"
 
 
 class ProductPayoffEvidenceStatus(StrEnum):
@@ -76,7 +76,7 @@ class ProductPayoffEvidence:
     settled_product_count: int
     unavailable_product_count: int
     source_forecast_count: int
-    independent_source_forecast_count: int
+    non_overlapping_panel_count: int
     mean_absolute_mapping_error_bps: Decimal | None
     mapping_conservative_coverage: Decimal | None
     mapping_residual_sign_accuracy: Decimal | None
@@ -88,6 +88,15 @@ class ProductPayoffEvaluationCase:
     source_outcome: ForecastOutcome
     projection: ProductPayoffProjection
     product_outcome: ProductPayoffOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class _ProductPayoffPanel:
+    producer_behavior_id: str
+    information_cutoff_at: datetime
+    projected_at: datetime
+    evaluation_at: datetime
+    cases: tuple[ProductPayoffEvaluationCase, ...]
 
 
 def evaluate_product_payoff_evidence(
@@ -152,23 +161,67 @@ def evaluate_product_payoff_evidence(
             ),
         )
     )
-    source_groups = tuple(
-        group
-        for group in first_source_groups
-        if all(case in settled for case in group)
+    panel_groups: defaultdict[
+        tuple[str, datetime, datetime],
+        list[ProductPayoffEvaluationCase],
+    ] = defaultdict(list)
+    for group in first_source_groups:
+        source = group[0].source_forecast
+        panel_groups[
+            (
+                source.producer_behavior_id,
+                source.information_cutoff_at,
+                group[0].projection.projected_at,
+            )
+        ].extend(group)
+    settled_ids = {
+        case.product_outcome.outcome_id
+        for case in settled
+    }
+    complete_panels = tuple(
+        _ProductPayoffPanel(
+            producer_behavior_id=producer_behavior_id,
+            information_cutoff_at=information_cutoff_at,
+            projected_at=projected_at,
+            evaluation_at=max(item.projection.evaluation_at for item in group),
+            cases=tuple(
+                sorted(
+                    group,
+                    key=lambda item: (
+                        item.source_forecast.outcome_family_id,
+                        item.projection.projection_id,
+                    ),
+                )
+            ),
+        )
+        for (
+            producer_behavior_id,
+            information_cutoff_at,
+            projected_at,
+        ), group in panel_groups.items()
+        if all(item.product_outcome.outcome_id in settled_ids for item in group)
     )
     independent = []
     previous_evaluation_at = None
-    for group in source_groups:
-        projected_at = min(item.projection.projected_at for item in group)
-        if previous_evaluation_at is not None and projected_at < previous_evaluation_at:
+    for panel in sorted(
+        complete_panels,
+        key=lambda item: (
+            item.projected_at,
+            item.evaluation_at,
+            item.producer_behavior_id,
+            item.information_cutoff_at,
+        ),
+    ):
+        if (
+            previous_evaluation_at is not None
+            and panel.projected_at < previous_evaluation_at
+        ):
             continue
-        independent.append(group)
-        previous_evaluation_at = group[0].projection.evaluation_at
+        independent.append(panel)
+        previous_evaluation_at = panel.evaluation_at
 
-    independent_cases = tuple(case for group in independent for case in group)
-    independent_count = len(independent)
-    if not independent_cases:
+    independent_panels = tuple(independent)
+    if not independent_panels:
         return ProductPayoffEvidence(
             evaluation_version=PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION,
             mapping_cohort=mapping_cohort,
@@ -177,20 +230,41 @@ def evaluate_product_payoff_evidence(
             settled_product_count=len(settled),
             unavailable_product_count=unavailable,
             source_forecast_count=len(first_source_groups),
-            independent_source_forecast_count=0,
+            non_overlapping_panel_count=0,
             mean_absolute_mapping_error_bps=None,
             mapping_conservative_coverage=None,
             mapping_residual_sign_accuracy=None,
         )
-    residuals = tuple(_mapping_residuals(case) for case in independent_cases)
+    panel_residuals = tuple(
+        tuple(_mapping_residuals(case) for case in panel.cases)
+        for panel in independent_panels
+    )
     prediction_errors = tuple(
-        abs(realized - expected) for expected, _conservative, realized in residuals
+        _required_mean(
+            tuple(
+                abs(realized - expected)
+                for expected, _conservative, realized in residuals
+            )
+        )
+        for residuals in panel_residuals
     )
     conservative_hits = tuple(
-        realized >= conservative for _expected, conservative, realized in residuals
+        _required_fraction(
+            tuple(
+                realized >= conservative
+                for _expected, conservative, realized in residuals
+            )
+        )
+        for residuals in panel_residuals
     )
     sign_hits = tuple(
-        _sign(realized) == _sign(expected) for expected, _conservative, realized in residuals
+        _required_fraction(
+            tuple(
+                _sign(realized) == _sign(expected)
+                for expected, _conservative, realized in residuals
+            )
+        )
+        for residuals in panel_residuals
     )
 
     return ProductPayoffEvidence(
@@ -201,7 +275,7 @@ def evaluate_product_payoff_evidence(
         settled_product_count=len(settled),
         unavailable_product_count=unavailable,
         source_forecast_count=len(first_source_groups),
-        independent_source_forecast_count=independent_count,
+        non_overlapping_panel_count=len(independent_panels),
         mean_absolute_mapping_error_bps=_mean(prediction_errors),
         mapping_conservative_coverage=_fraction(conservative_hits),
         mapping_residual_sign_accuracy=_fraction(sign_hits),
@@ -235,6 +309,18 @@ def _fraction(values: tuple[bool, ...]) -> Decimal | None:
     if not values:
         return None
     return Decimal(sum(values)) / Decimal(len(values))
+
+
+def _required_mean(values: tuple[Decimal, ...]) -> Decimal:
+    result = _mean(values)
+    assert result is not None
+    return result
+
+
+def _required_fraction(values: tuple[bool, ...]) -> Decimal:
+    result = _fraction(values)
+    assert result is not None
+    return result
 
 
 __all__ = [

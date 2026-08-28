@@ -206,24 +206,31 @@ class SqlProductPayoffProjectionStore:
             sorted({item.economic_exposure_id for item in mapping_cohort})
         )
         source_outcomes = forecast_outcomes.alias("source_outcomes")
+        product_outcomes = product_payoff_outcomes.alias("mapped_product_outcomes")
         with self._engine.connect() as connection:
             rows = connection.execute(
                 select(
                     forecasts.c.payload,
                     source_outcomes.c.payload,
                     product_payoff_projections.c.payload,
-                    product_payoff_outcomes.c.payload,
+                    product_outcomes.c.payload,
                 )
                 .select_from(
-                    product_payoff_outcomes.join(
-                        product_payoff_projections,
-                        product_payoff_projections.c.projection_id
-                        == product_payoff_outcomes.c.projection_id,
-                    ).join(
+                    product_payoff_projections.join(
                         forecasts,
                         forecasts.c.forecast_id
                         == product_payoff_projections.c.source_forecast_id,
-                    ).join(
+                    )
+                    .outerjoin(
+                        product_outcomes,
+                        and_(
+                            product_outcomes.c.projection_id
+                            == product_payoff_projections.c.projection_id,
+                            product_outcomes.c.evaluation_version
+                            == product_outcome_version,
+                        ),
+                    )
+                    .outerjoin(
                         source_outcomes,
                         and_(
                             source_outcomes.c.decision_slot_id
@@ -234,8 +241,6 @@ class SqlProductPayoffProjectionStore:
                     )
                 )
                 .where(
-                    product_payoff_outcomes.c.evaluation_version
-                    == product_outcome_version,
                     forecasts.c.producer_behavior_id == producer_behavior_id,
                     product_payoff_projections.c.economic_exposure_id.in_(
                         economic_exposure_ids
@@ -247,23 +252,37 @@ class SqlProductPayoffProjectionStore:
                     product_payoff_projections.c.projection_id,
                 )
             ).all()
-        cases = tuple(
-            ProductPayoffEvaluationCase(
-                source_forecast=BaseForecast.model_validate(row[0]),
-                source_outcome=ForecastOutcome.model_validate(row[1]),
-                projection=ProductPayoffProjection.model_validate(row[2]),
-                product_outcome=ProductPayoffOutcome.model_validate(row[3]),
-            )
-            for row in rows
-        )
-        return tuple(
-            case
-            for case in cases
-            if any(
-                item.cohort_id == case.projection.mapping_cohort_id
-                and item.contains(case.projection)
+        grouped = {}
+        for forecast_raw, source_outcome_raw, projection_raw, product_outcome_raw in rows:
+            forecast = BaseForecast.model_validate(forecast_raw)
+            projection = ProductPayoffProjection.model_validate(projection_raw)
+            if not any(
+                item.cohort_id == projection.mapping_cohort_id
+                and item.contains(projection)
                 for item in mapping_cohort
+            ):
+                continue
+            key = (
+                forecast.producer_behavior_id,
+                forecast.information_cutoff_at,
+                projection.projected_at,
             )
+            grouped.setdefault(key, []).append(
+                (forecast, source_outcome_raw, projection, product_outcome_raw)
+            )
+        return tuple(
+            ProductPayoffEvaluationCase(
+                source_forecast=forecast,
+                source_outcome=ForecastOutcome.model_validate(source_outcome_raw),
+                projection=projection,
+                product_outcome=ProductPayoffOutcome.model_validate(product_outcome_raw),
+            )
+            for _key, group in sorted(grouped.items())
+            if all(
+                source_outcome_raw is not None and product_outcome_raw is not None
+                for _forecast, source_outcome_raw, _projection, product_outcome_raw in group
+            )
+            for forecast, source_outcome_raw, projection, product_outcome_raw in group
         )
 
     @staticmethod

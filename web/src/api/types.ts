@@ -248,7 +248,7 @@ export interface ForecastEvaluationEvidence {
     settled_product_count: number;
     unavailable_product_count: number;
     source_forecast_count: number;
-    independent_source_forecast_count: number;
+    non_overlapping_panel_count: number;
     mean_absolute_mapping_error_bps: string | null;
     mapping_conservative_coverage: string | null;
     mapping_residual_sign_accuracy: string | null;

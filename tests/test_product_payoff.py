@@ -1108,6 +1108,28 @@ def test_product_payoff_settlement_uses_executable_exit_and_actual_funding() -> 
     assert settler.settle(
         as_of=projection.evaluation_at + timedelta(minutes=2)
     ).settled == 0
+    pending_projection = project_product_payoff(
+        contract=contract,
+        forecast=forecast,
+        state=_state(
+            instrument=PERPETUAL,
+            direction=ExposureDirection.SHORT,
+            entry="99.9",
+            funding="1",
+            uncertainty="5",
+            margin="0.1",
+        ),
+        economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+        projection_version="linear-product-payoff-v1",
+        mapping_cohort_id=_mapping_cohort(instruments=(PERPETUAL,))[0].cohort_id,
+    )
+    assert store.record(pending_projection)
+    assert store.outcome_cases(
+        product_outcome_version="product-payoff-outcome-v1",
+        forecast_outcome_version=source_outcome_version,
+        producer_behavior_id=forecast.producer_behavior_id,
+        mapping_cohort=_mapping_cohort(instruments=(PERPETUAL,)),
+    ) == ()
 
 
 def test_product_payoff_settlement_waits_for_grace_then_freezes_unavailable() -> None:
@@ -1304,11 +1326,11 @@ def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
     )
 
     assert evidence.status == ProductPayoffEvidenceStatus.OBSERVED
-    assert evidence.evaluation_version == "product-payoff-residual-evidence-v3"
+    assert evidence.evaluation_version == "product-payoff-residual-evidence-v4"
     assert evidence.mapping_cohort == _mapping_cohort()
     assert evidence.source_forecast_count == 1
     assert evidence.settled_product_count == 4
-    assert evidence.independent_source_forecast_count == 1
+    assert evidence.non_overlapping_panel_count == 1
     with pytest.raises(ValueError, match="评价输入身份不一致"):
         evaluate_product_payoff_evidence(
             cases,
@@ -1349,6 +1371,62 @@ def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
             )
         )
     ) / 3
+
+    other_forecast = forecast.model_copy(
+        update={
+            "forecast_id": "joint-panel-other-forecast",
+            "decision_slot_id": "joint-panel-other-slot",
+            "outcome_family_id": "joint-panel-other-family",
+        }
+    )
+    other_source_outcome = source_outcome.model_copy(
+        update={
+            "outcome_id": "joint-panel-other-source-outcome",
+            "decision_slot_id": other_forecast.decision_slot_id,
+        }
+    )
+    other_projection = first.model_copy(
+        update={
+            "projection_id": "joint-panel-other-projection",
+            "source_forecast_id": other_forecast.forecast_id,
+        }
+    )
+    other_realized_residual = Decimal("100")
+    other_case = ProductPayoffEvaluationCase(
+        source_forecast=other_forecast,
+        source_outcome=other_source_outcome,
+        projection=other_projection,
+        product_outcome=outcome(
+            other_projection,
+            source_realized + other_realized_residual,
+        ),
+    )
+
+    joint_evidence = evaluate_product_payoff_evidence(
+        (*cases, other_case),
+        mapping_cohort=_mapping_cohort(),
+        product_outcome_version="product-payoff-outcome-v1",
+        forecast_outcome_version=forecast_outcome_version,
+    )
+    other_expected_residual = (
+        other_projection.expected_gross_bps - other_forecast.expected_gross_bps
+    )
+    assert joint_evidence.source_forecast_count == 2
+    assert joint_evidence.non_overlapping_panel_count == 1
+    assert joint_evidence.mean_absolute_mapping_error_bps == (
+        sum(
+            (
+                abs(realized - expected)
+                for realized, expected in zip(
+                    realized_residuals,
+                    expected_residuals,
+                    strict=True,
+                )
+            ),
+            Decimal("0"),
+        )
+        + abs(other_realized_residual - other_expected_residual)
+    ) / 4
 
 
 class _ProjectionStore:
