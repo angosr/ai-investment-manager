@@ -863,7 +863,7 @@ class MacroOfficialCollectorService:
                 return result
         else:
             raise ValueError(f"未知 Fed official collector kind: {kind}")
-        if not result.records:
+        if kind != "public_calendar" and not result.records:
             raise ValueError(f"Fed official {kind} 响应没有可解析记录")
         return result
 

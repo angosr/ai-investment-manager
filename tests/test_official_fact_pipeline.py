@@ -292,6 +292,34 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
     assert published_at == [OBSERVED_AT]
 
 
+def test_official_collector_accepts_a_valid_calendar_without_future_chair_events() -> None:
+    engine = _engine()
+
+    class Source:
+        def fetch_public_calendar(self):
+            return _public_calendar(include_chair=False)
+
+    service = MacroOfficialCollectorService(
+        source=Source(),
+        ingestor=SqlFedFactIngestor(engine, POLICY),
+        economic_calendar_source=EmptyEconomicCalendarSource(),
+        economic_calendar_ingestor=SqlEconomicReleaseCalendarFactIngestor(
+            engine,
+            POLICY,
+        ),
+        publish_recent=lambda as_of: None,
+        monetary_poll_seconds=15,
+        calendar_poll_seconds=21_600,
+        economic_calendar_poll_seconds=21_600,
+        clock=lambda: OBSERVED_AT,
+    )
+
+    asyncio.run(service._poll("public_calendar"))
+
+    assert service.health.last_public_calendar_success_at == OBSERVED_AT
+    assert service.health.public_calendar_error_class is None
+
+
 def test_official_collector_fails_closed_when_poll_fact_is_not_durable() -> None:
     engine = _engine()
 
