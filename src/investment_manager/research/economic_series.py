@@ -215,7 +215,11 @@ async def fetch_fama_french_us_market_returns(
         timeout_seconds=timeout_seconds,
         transport=transport,
     )
-    observations = _parse_fama_french_daily(payload)
+    rows = _parse_fama_french_daily(payload)
+    observations = tuple(
+        EconomicSeriesObservation(effective_date=item[0], value=item[1])
+        for item in rows
+    )
     return _build_dataset(
         series_id="US_CRSP_VALUE_WEIGHTED_MARKET_TOTAL_RETURN",
         role=EconomicSeriesRole.EXPOSURE_PROXY,
@@ -224,6 +228,41 @@ async def fetch_fama_french_us_market_returns(
         frequency=EconomicSeriesFrequency.DAILY,
         unit="DECIMAL_RETURN",
         source_name="Kenneth French Data Library / CRSP",
+        source_url=FAMA_FRENCH_DAILY_URL,
+        documentation_url=FAMA_FRENCH_DOCUMENTATION_URL,
+        source_payload=payload,
+        collected_at=collected_at,
+        observations=observations,
+    )
+
+
+async def fetch_fama_french_us_one_month_tbill_returns(
+    *,
+    timeout_seconds: int,
+    clock: Callable[[], datetime] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> HistoricalEconomicSeriesDataset:
+    """Freeze the one-month Treasury-bill return carried in the same source."""
+
+    collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
+    payload = await _download(
+        FAMA_FRENCH_DAILY_URL,
+        timeout_seconds=timeout_seconds,
+        transport=transport,
+    )
+    rows = _parse_fama_french_daily(payload)
+    observations = tuple(
+        EconomicSeriesObservation(effective_date=item[0], value=item[2])
+        for item in rows
+    )
+    return _build_dataset(
+        series_id="US_ONE_MONTH_TREASURY_BILL_TOTAL_RETURN",
+        role=EconomicSeriesRole.EXPOSURE_PROXY,
+        economic_exposure=EconomicExposure.CASH,
+        kind=EconomicSeriesKind.TOTAL_RETURN,
+        frequency=EconomicSeriesFrequency.DAILY,
+        unit="DECIMAL_RETURN",
+        source_name="Kenneth French Data Library / Ibbotson and ICE BofA",
         source_url=FAMA_FRENCH_DAILY_URL,
         documentation_url=FAMA_FRENCH_DOCUMENTATION_URL,
         source_payload=payload,
@@ -319,7 +358,9 @@ async def _download(
         return response.content
 
 
-def _parse_fama_french_daily(payload: bytes) -> tuple[EconomicSeriesObservation, ...]:
+def _parse_fama_french_daily(
+    payload: bytes,
+) -> tuple[tuple[date, Decimal, Decimal], ...]:
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             if archive.namelist() != [_FAMA_MEMBER]:
@@ -330,7 +371,7 @@ def _parse_fama_french_daily(payload: bytes) -> tuple[EconomicSeriesObservation,
 
     rows = csv.reader(io.StringIO(raw))
     header_seen = False
-    observations: list[EconomicSeriesObservation] = []
+    observations: list[tuple[date, Decimal, Decimal]] = []
     for row in rows:
         normalized = tuple(item.strip() for item in row)
         if not header_seen:
@@ -345,17 +386,11 @@ def _parse_fama_french_daily(payload: bytes) -> tuple[EconomicSeriesObservation,
             raise ValueError("Fama-French 日频数据列数非法")
         try:
             effective_date = datetime.strptime(normalized[0], "%Y%m%d").date()
-            market_return = (
-                Decimal(normalized[1]) + Decimal(normalized[4])
-            ) / Decimal("100")
+            risk_free_return = Decimal(normalized[4]) / Decimal("100")
+            market_return = Decimal(normalized[1]) / Decimal("100") + risk_free_return
         except (InvalidOperation, ValueError) as exc:
             raise ValueError("Fama-French 日频收益条目非法") from exc
-        observations.append(
-            EconomicSeriesObservation(
-                effective_date=effective_date,
-                value=market_return,
-            )
-        )
+        observations.append((effective_date, market_return, risk_free_return))
     if not header_seen or len(observations) < 252:
         raise ValueError("Fama-French 日频市场收益历史不完整")
     return tuple(observations)

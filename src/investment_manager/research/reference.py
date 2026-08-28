@@ -79,7 +79,12 @@ def evaluate_reference_economics(
             raise ValueError("Reference 候选不得用多个产品重复同一经济暴露")
         weights[exposure] = float(allocation.target_exposure_fraction)
     proxy_exposures = {item for item in datasets if item is not None}
-    if set(weights) - {EconomicExposure.CASH} != proxy_exposures:
+    expected_exposures = (
+        set(weights)
+        if EconomicExposure.CASH in proxy_exposures
+        else set(weights) - {EconomicExposure.CASH}
+    )
+    if expected_exposures != proxy_exposures:
         raise ValueError("Reference 候选与固定经济代理覆盖不一致")
     band = float(candidate.rebalance_band_fraction)
     development = _economic_metrics(
@@ -266,7 +271,7 @@ def _simulate_economic_window(
     for row in selected:
         before = equity
         for exposure in tuple(holdings):
-            if exposure != EconomicExposure.CASH:
+            if exposure in row.returns:
                 holdings[exposure] *= 1 + row.returns[exposure]
         equity = sum(holdings.values())
         current_weights = {
@@ -300,7 +305,7 @@ def _risk_contributions(
     *,
     weights: Mapping[EconomicExposure, float],
 ) -> tuple[ReferenceRiskContribution, ...]:
-    exposures = tuple(sorted(set(weights) - {EconomicExposure.CASH}))
+    exposures = tuple(sorted(set(weights) & set(rows[0].returns)))
     samples = {
         exposure: tuple(item.returns[exposure] for item in rows)
         for exposure in exposures

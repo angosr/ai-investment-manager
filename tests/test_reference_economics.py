@@ -117,6 +117,104 @@ def test_reference_economics_rebalances_and_deflates(monkeypatch) -> None:
     assert result.stress[0].loss_fraction == 0
 
 
+def test_reference_economics_compounds_registered_cash_proxy(monkeypatch) -> None:
+    gold = _dataset(
+        dataset_id="gold",
+        exposure=EconomicExposure.INFLATION_SENSITIVE,
+        monthly_growth=Decimal("1"),
+    )
+    cash = _dataset(
+        dataset_id="cash",
+        exposure=EconomicExposure.CASH,
+        monthly_growth=Decimal("1.003"),
+    )
+    cpi = _dataset(
+        dataset_id="cpi",
+        exposure=None,
+        monthly_growth=Decimal("1.002"),
+    )
+    datasets = {"cash": cash, "gold": gold, "cpi": cpi}
+    monkeypatch.setattr(
+        "investment_manager.research.reference.HistoricalEconomicSeriesCatalog.load",
+        lambda _self, dataset_id: datasets[dataset_id],
+    )
+    candidate = build_reference_candidate(
+        allocations=(
+            ReferenceAllocationPolicy(
+                implementation_key="BINANCE:SPOT:PAXGUSDT",
+                target_exposure_fraction=Decimal("0.30"),
+            ),
+            ReferenceAllocationPolicy(
+                implementation_key="CASH:USDT",
+                target_exposure_fraction=Decimal("0.70"),
+            ),
+        ),
+        rebalance_band_fraction=Decimal("0.05"),
+    )
+    requirements = tuple(
+        ReferenceEvidenceRequirement(
+            layer=(
+                ReferenceEvidenceLayer.OBJECTIVE_DEFLATOR
+                if exposure is None
+                else ReferenceEvidenceLayer.ECONOMIC_PROXY
+            ),
+            scope=dataset_id.upper(),
+            minimum_observation_count=120,
+            minimum_span_days=3650,
+            fixed_evidence_id=dataset_id,
+            fixed_content_hash=content_hash(dataset.manifest),
+        )
+        for dataset_id, exposure, dataset in (
+            ("cash", EconomicExposure.CASH, cash),
+            ("gold", EconomicExposure.INFLATION_SENSITIVE, gold),
+            ("cpi", None, cpi),
+        )
+    )
+    plan = build_reference_selection_plan(
+        registered_at=datetime(2026, 1, 1, tzinfo=UTC),
+        mandate_version="mandate-v1",
+        universe_version="universe-v1",
+        risk_policy_version="risk-v1",
+        cost_model_version="cost-v1",
+        development_start=date(2000, 1, 1),
+        development_end=date(2010, 1, 1),
+        blind_start=date(2010, 1, 1),
+        blind_end=date(2020, 1, 1),
+        evidence_requirements=requirements,
+        stress_windows=(
+            ReferenceStressWindow(
+                stress_id="test-stress",
+                start=date(2005, 1, 1),
+                end=date(2005, 4, 1),
+            ),
+        ),
+        qualification=ReferenceQualificationPolicy(
+            minimum_annualized_real_return_fraction=Decimal("0"),
+            maximum_drawdown_fraction=Decimal("0.10"),
+            maximum_worst_stress_loss_fraction=Decimal("0.10"),
+            maximum_annualized_turnover_fraction=Decimal("0.50"),
+            maximum_annualized_cost_fraction=Decimal("0.01"),
+            maximum_single_risk_contribution_fraction=Decimal("1"),
+        ),
+        candidates=(candidate,),
+    )
+
+    result = evaluate_reference_economics(
+        plan,
+        economic_catalog=Path("."),
+        exposure_by_implementation={
+            "BINANCE:SPOT:PAXGUSDT": EconomicExposure.INFLATION_SENSITIVE
+        },
+    )
+
+    assert result.development.annualized_nominal_return_fraction > Decimal("0.02")
+    assert result.development.annualized_real_return_fraction > 0
+    assert {item.exposure for item in result.development.risk_contributions} == {
+        EconomicExposure.CASH,
+        EconomicExposure.INFLATION_SENSITIVE,
+    }
+
+
 def _dataset(
     *,
     dataset_id: str,

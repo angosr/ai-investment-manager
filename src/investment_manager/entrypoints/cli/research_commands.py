@@ -221,7 +221,10 @@ def fetch_economic_series_command(
     series: Annotated[
         str,
         typer.Option(
-            help="US_EQUITY_TOTAL_RETURN、GOLD_USD_PRICE 或 US_CPI_DEFLATOR"
+            help=(
+                "US_EQUITY_TOTAL_RETURN、US_TBILL_TOTAL_RETURN、"
+                "GOLD_USD_PRICE 或 US_CPI_DEFLATOR"
+            )
         ),
     ],
     catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
@@ -233,6 +236,7 @@ def fetch_economic_series_command(
     from investment_manager.research.economic_series import (
         HistoricalEconomicSeriesCatalog,
         fetch_fama_french_us_market_returns,
+        fetch_fama_french_us_one_month_tbill_returns,
         fetch_fred_us_cpi,
         fetch_world_bank_gold_prices,
     )
@@ -240,6 +244,7 @@ def fetch_economic_series_command(
     loaded = load_config(config)
     fetchers = {
         "US_EQUITY_TOTAL_RETURN": fetch_fama_french_us_market_returns,
+        "US_TBILL_TOTAL_RETURN": fetch_fama_french_us_one_month_tbill_returns,
         "GOLD_USD_PRICE": fetch_world_bank_gold_prices,
         "US_CPI_DEFLATOR": fetch_fred_us_cpi,
     }
@@ -247,7 +252,8 @@ def fetch_economic_series_command(
     fetcher = fetchers.get(normalized)
     if fetcher is None:
         raise typer.BadParameter(
-            "series 只允许 US_EQUITY_TOTAL_RETURN、GOLD_USD_PRICE 或 US_CPI_DEFLATOR"
+            "series 只允许 US_EQUITY_TOTAL_RETURN、US_TBILL_TOTAL_RETURN、"
+            "GOLD_USD_PRICE 或 US_CPI_DEFLATOR"
         )
     dataset = asyncio.run(
         fetcher(timeout_seconds=loaded.market_data.rest_timeout_seconds)

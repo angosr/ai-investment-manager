@@ -21,6 +21,7 @@ from investment_manager.research.economic_series import (
     EconomicSeriesVintagePolicy,
     HistoricalEconomicSeriesCatalog,
     fetch_fama_french_us_market_returns,
+    fetch_fama_french_us_one_month_tbill_returns,
     fetch_fred_us_cpi,
     fetch_world_bank_gold_prices,
 )
@@ -62,6 +63,26 @@ def test_fama_french_history_freezes_total_market_return_without_pretending_vint
     )
     with pytest.raises(ValueError, match="哈希"):
         catalog.load(dataset.manifest.dataset_id)
+
+
+def test_fama_french_history_exposes_tbill_return_as_cash_not_equity() -> None:
+    payload = _fama_zip()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == FAMA_FRENCH_DAILY_URL
+        return httpx.Response(200, content=payload)
+
+    dataset = asyncio.run(
+        fetch_fama_french_us_one_month_tbill_returns(
+            timeout_seconds=5,
+            clock=lambda: datetime(2011, 1, 1, tzinfo=UTC),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    assert dataset.manifest.economic_exposure == EconomicExposure.CASH
+    assert dataset.manifest.kind == EconomicSeriesKind.TOTAL_RETURN
+    assert dataset.observations[0].value == Decimal("0.0001")
 
 
 def test_world_bank_page_resolves_one_current_gold_workbook() -> None:
