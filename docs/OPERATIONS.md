@@ -8,9 +8,9 @@
 
 - `market-stream`：公开市场事实；
 - `information-collector`：新闻、官方文件、日历和连续指标；
-- `outcome-evaluation-service`：以互不阻塞的独立循环完成到期 Forecast/Product 结算、现役配对消融与同输入稳定性复算；
+- `outcome-evaluation-service`：以互不阻塞的独立循环完成到期 Forecast/Product 结算、AI+Quant 任务与其同输入稳定性复算；
 - `trigger-service`：Outbox 投递、TriggerCoordinator 和资本消费者；
-- `assessment-worker`：WorldModel 与 Context Forecast 的 Codex Activity；
+- `assessment-worker`：WorldModel 的 Codex Activity；
 - `dashboard-service`：只读 API 和冻结前端制品。
 
 所有进程共享一个 PostgreSQL 事实库、Temporal namespace、配置和 ReleaseManifest。禁止让不同 Release 的写进程同时消费同一 pipeline。
@@ -28,19 +28,6 @@
 5. 生成包含完整配置哈希、组件版本、代码提交和 `web-dist` ReleaseArtifact 的 Manifest；
 6. 执行 `alembic upgrade head`；
 7. 从该 checkout 启动全部进程。
-
-候选启用了新的 WorldModel 前瞻配对计划时，必须在其首个前向时点前从同一冻结 checkout 显式预登记。该命令只写入不可变治理计划，不启动服务、不调用 AI，也不修改现役 TriggerPlan：
-
-```bash
-PYTHONPATH='<candidate-checkout>/src' \
-INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
-  .venv/bin/investment-manager preregister-world-model-ablation \
-  --project-root '<candidate-checkout>' \
-  --config '<candidate-checkout>/config/investment-manager.shadow.yaml' \
-  --release-manifest '<release-catalog>/release-manifest.yaml'
-```
-
-发布预检保持只读；计划未登记、登记内容与候选不一致或已经到达激活时点时都拒绝发布，禁止用临时 SQL 或内联脚本补写。
 
 运行入口会拒绝以下情况：分支工作树、HEAD 不匹配、运行路径有未提交变化、配置哈希不一致、组件版本不一致、缺少 `web-dist`、制品内容变化或数据库不是迁移 head。Dashboard 只能托管 Manifest 指定的前端目录，不能自动寻找开发目录中的构建结果。
 
@@ -76,7 +63,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-Context Forecast 由 TriggerCoordinator 直接唤醒，不依赖 heartbeat 相位或临时时点。当前槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽；每个槽都保存单一来源、政策和触发引用。两类义务始终独立：材料事件不能消费、提前履行或改写固定 cadence 槽，即使二者时间接近。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
+Quant 由 TriggerCoordinator 直接唤醒，AI+Quant 只在同槽 Quant 形成终态后冻结独立任务，不依赖 heartbeat 相位或纯 AI 前置调用。当前槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽；每个槽都保存单一来源、政策和触发引用。两类义务始终独立：材料事件不能消费、提前履行或改写固定 cadence 槽，即使二者时间接近。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
