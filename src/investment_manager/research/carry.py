@@ -20,7 +20,7 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.research.dataset import HistoricalDataset, HistoricalFundingDataset
 
 _BINANCE_USDM_REST = "https://fapi.binance.com"
-_DAY_MILLISECONDS = 86_400_000
+_CARRY_INTERVAL_MILLISECONDS = {"1h": 3_600_000, "1d": 86_400_000}
 _FUNDING_TIME_TOLERANCE_MILLISECONDS = 5_000
 
 
@@ -50,7 +50,7 @@ class CarryInstrumentSpec(FrozenModel):
         return self
 
 
-class CarryMarketDay(FrozenModel):
+class CarryMarketBar(FrozenModel):
     symbol: str
     open_time: datetime
     close_time: datetime
@@ -77,7 +77,7 @@ class CarryMarketDay(FrozenModel):
     @model_validator(mode="after")
     def candle_bounds_are_valid(self):
         if self.close_time <= self.open_time:
-            raise ValueError("carry 日线收盘时间必须晚于开盘时间")
+            raise ValueError("carry K 线收盘时间必须晚于开盘时间")
         for prefix in ("contract", "mark", "index", "premium"):
             open_price = getattr(self, f"{prefix}_open")
             high = getattr(self, f"{prefix}_high")
@@ -107,29 +107,27 @@ class CarryFundingSettlement(FrozenModel):
 
 
 class HistoricalCarryDatasetManifest(FrozenModel):
-    schema_version: Literal["historical-binance-carry-v1"] = (
-        "historical-binance-carry-v1"
+    schema_version: Literal["historical-binance-carry-v2"] = (
+        "historical-binance-carry-v2"
     )
     dataset_id: str
     source: Literal["binance-usdm-rest-carry"] = "binance-usdm-rest-carry"
     symbol: str
-    interval: Literal["1d"] = "1d"
+    interval: Literal["1h", "1d"]
     collected_at: datetime
     requested_start: datetime
     requested_end: datetime
     spot_dataset_id: str
-    funding_dataset_id: str
+    funding_dataset_id: str | None = None
     first_open_time: datetime
     last_close_time: datetime
-    first_funding_time: datetime
-    last_funding_time: datetime
-    day_count: int = Field(gt=0)
-    settlement_count: int = Field(gt=0)
-    days_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    first_funding_time: datetime | None = None
+    last_funding_time: datetime | None = None
+    bar_count: int = Field(gt=0)
+    settlement_count: int = Field(ge=0)
+    bars_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     settlements_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    settlement_mark_method: Literal["MARK_8H_PRE_SETTLEMENT_CLOSE"] = (
-        "MARK_8H_PRE_SETTLEMENT_CLOSE"
-    )
+    settlement_mark_method: Literal["MARK_8H_PRE_SETTLEMENT_CLOSE"] | None = None
     instrument: CarryInstrumentSpec
 
     _utc_collected_at = field_validator("collected_at")(require_utc)
@@ -137,8 +135,10 @@ class HistoricalCarryDatasetManifest(FrozenModel):
     _utc_requested_end = field_validator("requested_end")(require_utc)
     _utc_first_open = field_validator("first_open_time")(require_utc)
     _utc_last_close = field_validator("last_close_time")(require_utc)
-    _utc_first_funding = field_validator("first_funding_time")(require_utc)
-    _utc_last_funding = field_validator("last_funding_time")(require_utc)
+    @field_validator("first_funding_time", "last_funding_time")
+    @classmethod
+    def optional_funding_times_are_utc(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else require_utc(value)
 
     @model_validator(mode="after")
     def identity_and_bounds_match(self):
@@ -149,8 +149,19 @@ class HistoricalCarryDatasetManifest(FrozenModel):
             < self.last_close_time
             < self.requested_end
         ):
-            raise ValueError("carry 日线边界与请求窗口不一致")
-        if not (
+            raise ValueError("carry K 线边界与请求窗口不一致")
+        funding_fields = (
+            self.funding_dataset_id,
+            self.first_funding_time,
+            self.last_funding_time,
+            self.settlement_mark_method,
+        )
+        if self.settlement_count == 0:
+            if any(item is not None for item in funding_fields):
+                raise ValueError("无 funding 的 carry 数据不得声明结算身份")
+        elif any(item is None for item in funding_fields):
+            raise ValueError("含 funding 的 carry 数据必须声明完整结算身份")
+        elif not (
             self.requested_start <= self.first_funding_time
             <= self.last_funding_time
             < self.requested_end
@@ -166,7 +177,7 @@ class HistoricalCarryDatasetManifest(FrozenModel):
             self.requested_end,
             self.spot_dataset_id,
             self.funding_dataset_id,
-            self.days_hash,
+            self.bars_hash,
             self.settlements_hash,
             self.settlement_mark_method,
             self.instrument,
@@ -179,7 +190,7 @@ class HistoricalCarryDatasetManifest(FrozenModel):
 @dataclass(frozen=True, slots=True)
 class HistoricalCarryDataset:
     manifest: HistoricalCarryDatasetManifest
-    days: tuple[CarryMarketDay, ...]
+    bars: tuple[CarryMarketBar, ...]
     settlements: tuple[CarryFundingSettlement, ...]
 
     def __post_init__(self) -> None:
@@ -201,7 +212,7 @@ class HistoricalCarryDatasetCatalog:
             ) == dataset.manifest
             if (
                 not same_manifest_identity
-                or existing.days != dataset.days
+                or existing.bars != dataset.bars
                 or existing.settlements != dataset.settlements
             ):
                 raise ValueError("同一 carry 数据集 ID 的内容不一致")
@@ -210,7 +221,7 @@ class HistoricalCarryDatasetCatalog:
         self._root.mkdir(parents=True, exist_ok=True)
         temporary = Path(tempfile.mkdtemp(prefix=".carry-dataset-", dir=self._root))
         try:
-            _write_json(temporary / "days.json", [_compact_day(item) for item in dataset.days])
+            _write_json(temporary / "bars.json", [_compact_bar(item) for item in dataset.bars])
             _write_json(
                 temporary / "settlements.json",
                 [_compact_settlement(item) for item in dataset.settlements],
@@ -231,15 +242,15 @@ class HistoricalCarryDatasetCatalog:
     def load(self, dataset_id: str) -> HistoricalCarryDataset:
         target = self._root / dataset_id
         manifest = self.load_manifest(dataset_id)
-        raw_days = json.loads((target / "days.json").read_text(encoding="utf-8"))
+        raw_bars = json.loads((target / "bars.json").read_text(encoding="utf-8"))
         raw_settlements = json.loads(
             (target / "settlements.json").read_text(encoding="utf-8")
         )
-        if not isinstance(raw_days, list) or not isinstance(raw_settlements, list):
+        if not isinstance(raw_bars, list) or not isinstance(raw_settlements, list):
             raise ValueError("carry 数据文件根节点必须是数组")
         return HistoricalCarryDataset(
             manifest=manifest,
-            days=tuple(_day_from_compact(item, manifest.symbol) for item in raw_days),
+            bars=tuple(_bar_from_compact(item, manifest.symbol) for item in raw_bars),
             settlements=tuple(
                 _settlement_from_compact(item, manifest.symbol)
                 for item in raw_settlements
@@ -260,7 +271,7 @@ async def fetch_binance_carry_history(
     *,
     base_url: str,
     spot_dataset: HistoricalDataset,
-    funding_dataset: HistoricalFundingDataset,
+    funding_dataset: HistoricalFundingDataset | None = None,
     timeout_seconds: int,
     clock: Callable[[], datetime] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -270,14 +281,16 @@ async def fetch_binance_carry_history(
     if base_url.rstrip("/") != _BINANCE_USDM_REST:
         raise ValueError("carry 历史只接受 Binance USD-M 官方 REST")
     spot = spot_dataset.manifest
-    funding = funding_dataset.manifest
-    if (
-        spot.interval != "1d"
-        or spot.symbol != funding.symbol
+    interval_milliseconds = _CARRY_INTERVAL_MILLISECONDS.get(spot.interval)
+    if interval_milliseconds is None:
+        raise ValueError("carry 只支持 1h 或 1d 完整 K 线")
+    funding = None if funding_dataset is None else funding_dataset.manifest
+    if funding is not None and (
+        spot.symbol != funding.symbol
         or spot.requested_start != funding.requested_start
         or spot.requested_end != funding.requested_end
     ):
-        raise ValueError("carry 现货与资金费率数据必须同品种、同窗口且为日线")
+        raise ValueError("carry 现货与资金费率数据必须同品种、同窗口")
     collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
     if spot.requested_end > collected_at:
         raise ValueError("carry 数据窗口终点不能晚于冻结时间")
@@ -305,35 +318,37 @@ async def fetch_binance_carry_history(
                 endpoint=endpoint,
                 parameter=parameter,
                 symbol=spot.symbol,
-                interval="1d",
-                interval_milliseconds=_DAY_MILLISECONDS,
+                interval=spot.interval,
+                interval_milliseconds=interval_milliseconds,
                 start=spot.requested_start,
                 end=spot.requested_end,
                 collected_at=collected_at,
             )
-        settlement_marks = await _fetch_kline_series(
-            client,
-            endpoint="/fapi/v1/markPriceKlines",
-            parameter="symbol",
-            symbol=spot.symbol,
-            interval="8h",
-            interval_milliseconds=8 * 60 * 60 * 1000,
-            start=spot.requested_start - timedelta(hours=8),
-            end=spot.requested_end,
-            collected_at=collected_at,
-        )
-        raw_settlements = await _fetch_funding_settlements(
-            client,
-            symbol=spot.symbol,
-            start=spot.requested_start,
-            end=spot.requested_end,
-        )
+        settlement_marks = raw_settlements = ()
+        if funding_dataset is not None:
+            settlement_marks = await _fetch_kline_series(
+                client,
+                endpoint="/fapi/v1/markPriceKlines",
+                parameter="symbol",
+                symbol=spot.symbol,
+                interval="8h",
+                interval_milliseconds=8 * 60 * 60 * 1000,
+                start=spot.requested_start - timedelta(hours=8),
+                end=spot.requested_end,
+                collected_at=collected_at,
+            )
+            raw_settlements = await _fetch_funding_settlements(
+                client,
+                symbol=spot.symbol,
+                start=spot.requested_start,
+                end=spot.requested_end,
+            )
 
     spot_times = tuple(item.open_time for item in spot_dataset.bars)
     if any(tuple(item[0] for item in series[name]) != spot_times for name in series):
-        raise ValueError("carry 衍生日线没有与冻结现货逐日完整对齐")
-    days = tuple(
-        CarryMarketDay(
+        raise ValueError("carry 衍生 K 线没有与冻结现货完整对齐")
+    bars = tuple(
+        CarryMarketBar(
             symbol=spot.symbol,
             open_time=series["contract"][index][0],
             close_time=series["contract"][index][1],
@@ -345,48 +360,56 @@ async def fetch_binance_carry_history(
         )
         for index in range(len(spot_times))
     )
-    settlements = _match_funding_settlements(
-        funding_dataset,
-        raw_settlements,
-        settlement_marks,
+    settlements = (
+        ()
+        if funding_dataset is None
+        else _match_funding_settlements(
+            funding_dataset,
+            raw_settlements,
+            settlement_marks,
+        )
     )
-    days_hash = _days_hash(days)
+    bars_hash = _bars_hash(bars)
     settlements_hash = _settlements_hash(settlements)
     identity = (
-        "historical-binance-carry-v1",
+        "historical-binance-carry-v2",
         "binance-usdm-rest-carry",
         spot.symbol,
-        "1d",
+        spot.interval,
         spot.requested_start,
         spot.requested_end,
         spot.dataset_id,
-        funding.dataset_id,
-        days_hash,
+        None if funding is None else funding.dataset_id,
+        bars_hash,
         settlements_hash,
-        "MARK_8H_PRE_SETTLEMENT_CLOSE",
+        None if funding is None else "MARK_8H_PRE_SETTLEMENT_CLOSE",
         instrument,
     )
     manifest = HistoricalCarryDatasetManifest(
         dataset_id=stable_id("historical_carry_dataset", *identity),
         symbol=spot.symbol,
+        interval=spot.interval,
         collected_at=collected_at,
         requested_start=spot.requested_start,
         requested_end=spot.requested_end,
         spot_dataset_id=spot.dataset_id,
-        funding_dataset_id=funding.dataset_id,
-        first_open_time=days[0].open_time,
-        last_close_time=days[-1].close_time,
-        first_funding_time=settlements[0].funding_time,
-        last_funding_time=settlements[-1].funding_time,
-        day_count=len(days),
+        funding_dataset_id=None if funding is None else funding.dataset_id,
+        first_open_time=bars[0].open_time,
+        last_close_time=bars[-1].close_time,
+        first_funding_time=None if not settlements else settlements[0].funding_time,
+        last_funding_time=None if not settlements else settlements[-1].funding_time,
+        bar_count=len(bars),
         settlement_count=len(settlements),
-        days_hash=days_hash,
+        bars_hash=bars_hash,
         settlements_hash=settlements_hash,
+        settlement_mark_method=(
+            None if funding is None else "MARK_8H_PRE_SETTLEMENT_CLOSE"
+        ),
         instrument=instrument,
     )
     return HistoricalCarryDataset(
         manifest=manifest,
-        days=days,
+        bars=bars,
         settlements=settlements,
     )
 
@@ -578,56 +601,62 @@ def _parse_carry_instrument(raw: Any, symbol: str) -> CarryInstrumentSpec:
 def _validate_carry_dataset(dataset: HistoricalCarryDataset) -> None:
     manifest = dataset.manifest
     if (
-        len(dataset.days) != manifest.day_count
+        len(dataset.bars) != manifest.bar_count
         or len(dataset.settlements) != manifest.settlement_count
     ):
         raise ValueError("carry 数据数量与 Manifest 不一致")
-    if not dataset.days or not dataset.settlements:
+    if not dataset.bars:
         raise ValueError("carry 数据集不能为空")
-    if tuple(item.open_time for item in dataset.days) != tuple(
-        sorted({item.open_time for item in dataset.days})
+    if tuple(item.open_time for item in dataset.bars) != tuple(
+        sorted({item.open_time for item in dataset.bars})
     ):
-        raise ValueError("carry 日线必须严格递增且不重复")
-    for previous, current in zip(dataset.days, dataset.days[1:], strict=False):
-        if current.open_time.timestamp() - previous.open_time.timestamp() != 86_400:
-            raise ValueError("carry 日线存在缺口")
-    if any(item.symbol != manifest.symbol for item in dataset.days + dataset.settlements):
+        raise ValueError("carry K 线必须严格递增且不重复")
+    interval_seconds = _CARRY_INTERVAL_MILLISECONDS[manifest.interval] / 1000
+    for previous, current in zip(dataset.bars, dataset.bars[1:], strict=False):
+        if current.open_time.timestamp() - previous.open_time.timestamp() != interval_seconds:
+            raise ValueError("carry K 线存在缺口")
+    if any(item.symbol != manifest.symbol for item in dataset.bars + dataset.settlements):
         raise ValueError("carry 数据品种与 Manifest 不一致")
     if (
-        dataset.days[0].open_time != manifest.first_open_time
-        or dataset.days[-1].close_time != manifest.last_close_time
-        or dataset.settlements[0].funding_time != manifest.first_funding_time
-        or dataset.settlements[-1].funding_time != manifest.last_funding_time
+        dataset.bars[0].open_time != manifest.first_open_time
+        or dataset.bars[-1].close_time != manifest.last_close_time
+        or (
+            bool(dataset.settlements)
+            and (
+                dataset.settlements[0].funding_time != manifest.first_funding_time
+                or dataset.settlements[-1].funding_time != manifest.last_funding_time
+            )
+        )
     ):
         raise ValueError("carry 数据边界与 Manifest 不一致")
-    if _days_hash(dataset.days) != manifest.days_hash:
-        raise ValueError("carry 日线内容哈希与 Manifest 不一致")
+    if _bars_hash(dataset.bars) != manifest.bars_hash:
+        raise ValueError("carry K 线内容哈希与 Manifest 不一致")
     if _settlements_hash(dataset.settlements) != manifest.settlements_hash:
         raise ValueError("carry 结算内容哈希与 Manifest 不一致")
 
 
-def _compact_day(day: CarryMarketDay) -> list[Any]:
+def _compact_bar(bar: CarryMarketBar) -> list[Any]:
     return [
-        int(day.open_time.timestamp() * 1000),
-        int(day.close_time.timestamp() * 1000),
+        int(bar.open_time.timestamp() * 1000),
+        int(bar.close_time.timestamp() * 1000),
         *(
-            str(getattr(day, f"{prefix}_{field}"))
+            str(getattr(bar, f"{prefix}_{field}"))
             for prefix in ("contract", "mark", "index", "premium")
             for field in ("open", "high", "low", "close")
         ),
     ]
 
 
-def _day_from_compact(raw: Any, symbol: str) -> CarryMarketDay:
+def _bar_from_compact(raw: Any, symbol: str) -> CarryMarketBar:
     if not isinstance(raw, list) or len(raw) != 18:
-        raise ValueError("carry 日线条目必须包含 18 个字段")
+        raise ValueError("carry K 线条目必须包含 18 个字段")
     values = iter(raw[2:])
     prices = {
         f"{prefix}_{field}": Decimal(str(next(values)))
         for prefix in ("contract", "mark", "index", "premium")
         for field in ("open", "high", "low", "close")
     }
-    return CarryMarketDay(
+    return CarryMarketBar(
         symbol=symbol,
         open_time=datetime.fromtimestamp(int(raw[0]) / 1000, tz=UTC),
         close_time=datetime.fromtimestamp(int(raw[1]) / 1000, tz=UTC),
@@ -666,8 +695,8 @@ def _hash_compact(rows: Iterable[list[Any]]) -> str:
     return digest.hexdigest()
 
 
-def _days_hash(days: Iterable[CarryMarketDay]) -> str:
-    return _hash_compact(_compact_day(item) for item in days)
+def _bars_hash(bars: Iterable[CarryMarketBar]) -> str:
+    return _hash_compact(_compact_bar(item) for item in bars)
 
 
 def _settlements_hash(settlements: Iterable[CarryFundingSettlement]) -> str:

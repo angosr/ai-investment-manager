@@ -837,10 +837,10 @@ def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) ->
         )
     )
 
-    assert dataset.manifest.day_count == 2
+    assert dataset.manifest.bar_count == 2
     assert dataset.manifest.settlement_count == 6
     assert dataset.settlements[1].mark_price == Decimal("101")
-    assert dataset.days[0].premium_low == Decimal("-0.003")
+    assert dataset.bars[0].premium_low == Decimal("-0.003")
     catalog = HistoricalCarryDatasetCatalog(tmp_path)
     target = catalog.store(dataset)
     assert catalog.load(dataset.manifest.dataset_id) == dataset
@@ -850,6 +850,83 @@ def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) ->
     (target / "settlements.json").write_text(json.dumps(rows))
     with pytest.raises(ValueError, match="内容哈希"):
         catalog.load(dataset.manifest.dataset_id)
+
+
+def test_hourly_carry_history_does_not_require_unrelated_funding() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    spot_dataset = _dataset(
+        count=2,
+        interval="1h",
+        bar_delta=timedelta(hours=1),
+        initial_price=Decimal("100"),
+    )
+    first_ms = int(start.timestamp() * 1000)
+
+    def carry_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fapi/v1/exchangeInfo":
+            return httpx.Response(
+                200,
+                json={
+                    "symbols": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "pair": "BTCUSDT",
+                            "contractType": "PERPETUAL",
+                            "status": "TRADING",
+                            "baseAsset": "BTC",
+                            "quoteAsset": "USDT",
+                            "marginAsset": "USDT",
+                            "onboardDate": first_ms - 3_600_000,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5"},
+                            ],
+                        }
+                    ]
+                },
+            )
+        assert request.url.path not in {"/fapi/v1/fundingRate"}
+        assert request.url.params["interval"] == "1h"
+        rows = [
+            [first_ms, "100", "102", "99", "101", "0", first_ms + 3_599_999],
+            [
+                first_ms + 3_600_000,
+                "101",
+                "103",
+                "100",
+                "102",
+                "0",
+                first_ms + 7_199_999,
+            ],
+        ]
+        if request.url.path == "/fapi/v1/premiumIndexKlines":
+            rows = [
+                [row[0], "-0.001", "0.002", "-0.003", "0.001", "0", row[6]]
+                for row in rows
+            ]
+        return httpx.Response(200, json=rows)
+
+    dataset = asyncio.run(
+        fetch_binance_carry_history(
+            base_url="https://fapi.binance.com",
+            spot_dataset=spot_dataset,
+            timeout_seconds=1,
+            clock=lambda: spot_dataset.manifest.requested_end + timedelta(hours=1),
+            transport=httpx.MockTransport(carry_handler),
+        )
+    )
+
+    assert dataset.manifest.interval == "1h"
+    assert dataset.manifest.bar_count == 2
+    assert dataset.manifest.funding_dataset_id is None
+    assert dataset.manifest.settlement_count == 0
+    assert dataset.settlements == ()
 
 
 def test_carry_history_rejects_untrusted_source() -> None:

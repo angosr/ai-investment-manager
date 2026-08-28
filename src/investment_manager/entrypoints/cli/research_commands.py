@@ -558,7 +558,7 @@ def fetch_binance_funding_history_command(
 def fetch_binance_carry_history_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     spot_dataset_id: Annotated[str, typer.Option()],
-    funding_dataset_id: Annotated[str, typer.Option()],
+    funding_dataset_id: Annotated[str | None, typer.Option()] = None,
     spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
         ".runtime/datasets"
     ),
@@ -569,7 +569,7 @@ def fetch_binance_carry_history_command(
         ".runtime/carry-datasets"
     ),
 ) -> None:
-    """冻结 carry 所需 USD-M 价格与逐次结算标记价；不创建交易适配器。"""
+    """冻结 carry 的 USD-M 价格；需要时同时校验逐次 funding。"""
 
     from investment_manager.research.carry import (
         HistoricalCarryDatasetCatalog,
@@ -582,8 +582,10 @@ def fetch_binance_carry_history_command(
 
     loaded = load_config(config)
     spot_dataset = HistoricalDatasetCatalog(spot_catalog).load(spot_dataset_id)
-    funding_dataset = HistoricalFundingDatasetCatalog(funding_catalog).load(
-        funding_dataset_id
+    funding_dataset = (
+        None
+        if funding_dataset_id is None
+        else HistoricalFundingDatasetCatalog(funding_catalog).load(funding_dataset_id)
     )
     try:
         dataset = asyncio.run(
@@ -602,9 +604,10 @@ def fetch_binance_carry_history_command(
             {
                 "carry_dataset_id": dataset.manifest.dataset_id,
                 "symbol": dataset.manifest.symbol,
-                "day_count": dataset.manifest.day_count,
+                "interval": dataset.manifest.interval,
+                "bar_count": dataset.manifest.bar_count,
                 "settlement_count": dataset.manifest.settlement_count,
-                "days_hash": dataset.manifest.days_hash,
+                "bars_hash": dataset.manifest.bars_hash,
                 "settlements_hash": dataset.manifest.settlements_hash,
                 "rule_snapshot_as_of": dataset.manifest.collected_at.isoformat(),
                 "path": str(target),
