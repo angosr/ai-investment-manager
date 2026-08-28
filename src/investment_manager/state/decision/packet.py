@@ -1224,6 +1224,26 @@ def _trim_one_packet_input_for_capacity(
     return False
 
 
+def _compact_previous_context(
+    context: PacketPreviousContext | None,
+    *,
+    as_of: datetime,
+) -> PacketPreviousContext | None:
+    """Keep current hypotheses while retiring expired event citations from input."""
+
+    if context is None:
+        return None
+    return context.model_copy(
+        update={
+            "event_references": tuple(
+                item
+                for item in context.event_references
+                if item.stale_at is None or item.stale_at + timedelta(days=1) > as_of
+            )
+        }
+    )
+
+
 def replace_packet_previous_context(
     packet: DecisionPacket,
     previous_context: PacketPreviousContext,
@@ -1257,6 +1277,10 @@ def replace_packet_previous_context(
     selected_intelligence = list(packet.intelligence_events)
     omitted_facts = set(packet.omitted_fact_revision_ids)
     omitted_intelligence = set(packet.omitted_intelligence_event_refs)
+    compact_previous = _compact_previous_context(
+        previous_context,
+        as_of=packet.as_of,
+    )
     while True:
         candidate = DecisionPacket.create(
             **content,
@@ -1264,7 +1288,7 @@ def replace_packet_previous_context(
             intelligence_events=tuple(selected_intelligence),
             omitted_fact_revision_ids=tuple(sorted(omitted_facts)),
             omitted_intelligence_event_refs=tuple(sorted(omitted_intelligence)),
-            previous_context=previous_context,
+            previous_context=compact_previous,
         )
         if (
             len(canonical_json(decision_packet_analysis_projection(candidate)))
@@ -1415,7 +1439,7 @@ class DecisionPacketBuilder:
             "review_requests": ordered_reviews,
             "facts": selected,
             "intelligence_events": selected_events,
-            "previous_context": self._compact_previous_context(
+            "previous_context": _compact_previous_context(
                 previous_context,
                 as_of=state.as_of,
             ),
@@ -1710,23 +1734,6 @@ class DecisionPacketBuilder:
         """
 
         return event.directional_support_eligible
-
-    def _compact_previous_context(
-        self,
-        context: PacketPreviousContext | None,
-        *,
-        as_of: datetime,
-    ) -> PacketPreviousContext | None:
-        if context is None:
-            return None
-        update: dict[str, object] = {
-            "event_references": tuple(
-                item
-                for item in context.event_references
-                if item.stale_at is None or item.stale_at + timedelta(days=1) > as_of
-            ),
-        }
-        return context.model_copy(update=update)
 
     def _select_facts(
         self,

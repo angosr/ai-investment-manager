@@ -1723,6 +1723,51 @@ def test_replacing_previous_context_refreezes_packet_identity(
     assert refrozen.trigger_ids == packet.trigger_ids
 
 
+def test_replacing_verified_context_drops_event_stale_for_one_day(
+    app_config,
+    replay_input,
+) -> None:
+    as_of = replay_input.market.as_of
+    previous = _previous_world_model(
+        as_of,
+        assessment_id="assessment-refrozen-stale-event",
+    ).model_copy(
+        update={
+            "event_references": (
+                PacketPreviousEventReference(
+                    evidence_id="a" * 64,
+                    source="official-source",
+                    title="仍在影响当前判断的事件",
+                    event_time=as_of - timedelta(hours=2),
+                    impact_state="ACTIVE",
+                    rationale="当前机制仍有证据支持。",
+                ),
+                PacketPreviousEventReference(
+                    evidence_id="b" * 64,
+                    source="official-source",
+                    title="影响已经消退的事件",
+                    event_time=as_of - timedelta(days=2),
+                    impact_state="STALE",
+                    rationale="影响已经退出当前判断。",
+                    stale_at=as_of - timedelta(days=1),
+                ),
+            )
+        }
+    )
+    _, packet = _packet(app_config, replay_input)
+
+    refrozen = replace_packet_previous_context(
+        packet,
+        previous,
+        maximum_analysis_characters=16_000,
+    )
+
+    assert refrozen.previous_context is not None
+    assert tuple(
+        item.evidence_id for item in refrozen.previous_context.event_references
+    ) == ("a" * 64,)
+
+
 def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     app_config,
     replay_input,
