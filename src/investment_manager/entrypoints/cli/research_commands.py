@@ -490,6 +490,81 @@ def fetch_binance_carry_history_command(
     )
 
 
+@app.command("evaluate-perpetual-funding-carry")
+def evaluate_perpetual_funding_carry_command(
+    plan: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    carry_dataset_id: Annotated[str, typer.Option()],
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        "."
+    ),
+    spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    result: Annotated[Path, typer.Option(dir_okay=False)] = Path(
+        "evidence/quant-candidates/btc-perpetual-funding-carry-v1-result.json"
+    ),
+) -> None:
+    """按已提交规则评价市场中性 funding carry；验证失败时不读取盲测段。"""
+
+    from investment_manager.research.carry import HistoricalCarryDatasetCatalog
+    from investment_manager.research.dataset import HistoricalDatasetCatalog
+    from investment_manager.research.perpetual_funding_carry import (
+        evaluate_perpetual_funding_carry,
+        load_perpetual_funding_carry_plan,
+        store_perpetual_funding_carry_result,
+    )
+
+    root = project_root.resolve()
+    registered = load_perpetual_funding_carry_plan(plan)
+    plan_commit, _registered_at = committed_file_revision(
+        plan,
+        repository_root=root,
+    )
+    evaluator_commit = current_clean_code_version(repository_root=root)
+    carry = HistoricalCarryDatasetCatalog(carry_catalog).load(carry_dataset_id)
+    spot = HistoricalDatasetCatalog(spot_catalog).load(registered.spot_dataset_id)
+    evaluation = evaluate_perpetual_funding_carry(
+        plan=registered,
+        spot_dataset=spot,
+        carry_dataset=carry,
+        plan_commit=plan_commit,
+        evaluator_commit=evaluator_commit,
+        evaluated_at=datetime.now(UTC),
+        reveal_blind=True,
+    )
+    target = store_perpetual_funding_carry_result(evaluation, target=result)
+    typer.echo(
+        json.dumps(
+            {
+                "result_id": evaluation.result_id,
+                "status": evaluation.status,
+                "reason_codes": evaluation.reason_codes,
+                "blind_revealed": evaluation.blind_revealed,
+                "development_net_return_fraction": str(
+                    evaluation.development.net_return_fraction
+                ),
+                "validation_net_return_fraction": str(
+                    evaluation.validation.net_return_fraction
+                ),
+                "validation_entered_windows": (
+                    evaluation.validation.entered_window_count
+                ),
+                "blind_net_return_fraction": (
+                    None
+                    if evaluation.blind is None
+                    else str(evaluation.blind.net_return_fraction)
+                ),
+                "result_path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("freeze-event-history")
 def freeze_event_history_command(
     database_url: Annotated[
