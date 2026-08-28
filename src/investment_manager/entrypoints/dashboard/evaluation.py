@@ -23,6 +23,7 @@ from investment_manager.forecast.context.evaluation import (
     evaluate_forecast_evidence,
     evaluate_forecast_pair_evidence,
     multiclass_brier_score,
+    ordinal_ranked_probability_score,
 )
 from investment_manager.forecast.context.posterior import (
     quant_context_posterior_behavior_id,
@@ -779,6 +780,14 @@ class EvaluationDashboardReader:
             key = (slot.information_cutoff_at, outcome.evaluation_at, slot.stratum)
             grouped.setdefault(key, []).append(
                 (
+                    ordinal_ranked_probability_score(
+                        candidate_probabilities,
+                        outcome.realized_bucket_id,
+                    ),
+                    ordinal_ranked_probability_score(
+                        comparator_probabilities,
+                        outcome.realized_bucket_id,
+                    ),
                     multiclass_brier_score(
                         candidate_probabilities,
                         outcome.realized_bucket_id,
@@ -811,20 +820,28 @@ class EvaluationDashboardReader:
                     evaluation_at=evaluation_at,
                     source_stratum=stratum,
                     paired_target_count=len(values),
-                    candidate_brier_score=sum(
+                    candidate_ranked_probability_score=sum(
                         (item[0] for item in values), Decimal("0")
                     )
                     / count,
-                    comparator_brier_score=sum(
+                    comparator_ranked_probability_score=sum(
                         (item[1] for item in values), Decimal("0")
                     )
                     / count,
-                    mean_max_bucket_probability_delta=sum(
+                    candidate_brier_score=sum(
                         (item[2] for item in values), Decimal("0")
                     )
                     / count,
-                    mean_expected_gross_bps_delta=sum(
+                    comparator_brier_score=sum(
                         (item[3] for item in values), Decimal("0")
+                    )
+                    / count,
+                    mean_max_bucket_probability_delta=sum(
+                        (item[4] for item in values), Decimal("0")
+                    )
+                    / count,
+                    mean_expected_gross_bps_delta=sum(
+                        (item[5] for item in values), Decimal("0")
                     )
                     / count,
                 )
@@ -924,6 +941,11 @@ def serialize_quant_context_pair_evidence(
             return None
         payload = asdict(value)
         for field_name in (
+            "mean_candidate_ranked_probability_score",
+            "mean_comparator_ranked_probability_score",
+            "mean_ranked_probability_improvement",
+            "ranked_probability_improvement_lower_bound",
+            "ranked_probability_improvement_upper_bound",
             "mean_candidate_brier_score",
             "mean_comparator_brier_score",
             "mean_brier_improvement",
@@ -1077,6 +1099,16 @@ def serialize_world_model_ablation_evidence(
             "failed_controls": report.failed_controls,
             "settled_pairs": report.settled_pairs,
             "conservative_sample_count": report.conservative_sample_count,
+            "mean_ranked_probability_improvement": (
+                None
+                if report.mean_ranked_probability_improvement is None
+                else str(report.mean_ranked_probability_improvement)
+            ),
+            "conservative_mean_ranked_probability_improvement": (
+                None
+                if report.conservative_mean_ranked_probability_improvement is None
+                else str(report.conservative_mean_ranked_probability_improvement)
+            ),
             "mean_brier_improvement": (
                 None
                 if report.mean_brier_improvement is None
@@ -1096,6 +1128,17 @@ def serialize_world_model_ablation_evidence(
 def _serialize_forecast_evidence_payload(evidence: ForecastEvidence) -> dict:
     optional_decimals = (
         "result_coverage",
+        "mean_ranked_probability_score",
+        "benchmark_mean_ranked_probability_score",
+        "ranked_probability_skill",
+        "rolling_benchmark_mean_ranked_probability_score",
+        "rolling_ranked_probability_skill",
+        "rolling_ranked_probability_skill_lower_bound",
+        "rolling_ranked_probability_skill_upper_bound",
+        "market_benchmark_mean_ranked_probability_score",
+        "market_ranked_probability_skill",
+        "market_ranked_probability_skill_lower_bound",
+        "market_ranked_probability_skill_upper_bound",
         "mean_brier_score",
         "benchmark_mean_brier_score",
         "brier_skill",
@@ -1109,6 +1152,8 @@ def _serialize_forecast_evidence_payload(evidence: ForecastEvidence) -> dict:
         "market_brier_skill_upper_bound",
         "mean_expected_gross_bps",
         "mean_realized_gross_bps",
+        "mean_absolute_return_error_bps",
+        "expected_realized_return_correlation",
     )
     payload = asdict(evidence)
     payload.pop("source_evidence", None)

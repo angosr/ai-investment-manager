@@ -9,8 +9,30 @@ from investment_manager.forecast.context.evaluation import (
     ForecastScoringCase,
     evaluate_forecast_evidence,
     evaluate_forecast_pair_evidence,
+    ordinal_ranked_probability_score,
 )
 from investment_manager.forecast.contracts import ForecastSlotStratum
+
+
+def test_ranked_probability_score_penalizes_distant_bucket_errors() -> None:
+    adjacent = (
+        ("LARGE_LOSS", Decimal("0")),
+        ("LOSS", Decimal("1")),
+        ("NEUTRAL", Decimal("0")),
+        ("GAIN", Decimal("0")),
+        ("LARGE_GAIN", Decimal("0")),
+    )
+    distant = (
+        ("LARGE_LOSS", Decimal("1")),
+        ("LOSS", Decimal("0")),
+        ("NEUTRAL", Decimal("0")),
+        ("GAIN", Decimal("0")),
+        ("LARGE_GAIN", Decimal("0")),
+    )
+
+    assert ordinal_ranked_probability_score(
+        adjacent, "NEUTRAL"
+    ) < ordinal_ranked_probability_score(distant, "NEUTRAL")
 
 
 def _case(
@@ -52,6 +74,8 @@ def _pair_case(
         evaluation_at=start + timedelta(hours=4),
         source_stratum=ForecastSlotStratum.CADENCE_ONLY,
         paired_target_count=targets,
+        candidate_ranked_probability_score=Decimal(candidate),
+        comparator_ranked_probability_score=Decimal(comparator),
         candidate_brier_score=Decimal(candidate),
         comparator_brier_score=Decimal(comparator),
         mean_max_bucket_probability_delta=Decimal("0.07"),
@@ -101,6 +125,28 @@ def test_forecast_pair_evidence_scores_only_shared_non_overlapping_panels() -> N
     assert evidence.candidate_better_panel_count == 2
     assert evidence.candidate_worse_panel_count == 0
     assert evidence.mean_max_bucket_probability_delta == Decimal("0.07")
+
+
+def test_forecast_evidence_reports_continuous_return_resolution() -> None:
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    evidence = evaluate_forecast_evidence(
+        (
+            _case("first", start, "UP", (("DOWN", "0.2"), ("UP", "0.8"))),
+            _case(
+                "second",
+                start + timedelta(hours=4),
+                "DOWN",
+                (("DOWN", "0.8"), ("UP", "0.2")),
+            ),
+        ),
+        due_slot_count=2,
+        forecast_count=2,
+        no_estimate_count=0,
+        required_non_overlapping_samples=2,
+    )
+
+    assert evidence.mean_absolute_return_error_bps == Decimal("20")
+    assert evidence.expected_realized_return_correlation is None
 
 
 def test_forecast_evidence_rejects_duplicate_interval_within_source_stratum() -> None:

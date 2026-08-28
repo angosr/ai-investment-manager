@@ -271,6 +271,8 @@ export interface ForecastEvaluationEvidence {
     failed_controls: number;
     settled_pairs: number;
     conservative_sample_count: number;
+    mean_ranked_probability_improvement: string | null;
+    conservative_mean_ranked_probability_improvement: string | null;
     mean_brier_improvement: string | null;
     conservative_improvement_lower_bound: string | null;
     minimum_sample_size: number;
@@ -283,6 +285,11 @@ export interface ForecastPairEvidenceSummary {
   settled_panel_count: number;
   paired_target_count: number;
   non_overlapping_panel_count: number;
+  mean_candidate_ranked_probability_score: string | null;
+  mean_comparator_ranked_probability_score: string | null;
+  mean_ranked_probability_improvement: string | null;
+  ranked_probability_improvement_lower_bound: string | null;
+  ranked_probability_improvement_upper_bound: string | null;
   mean_candidate_brier_score: string | null;
   mean_comparator_brier_score: string | null;
   mean_brier_improvement: string | null;
@@ -318,7 +325,10 @@ export interface ForecastEvidenceSummary {
   non_overlapping_sample_count: number;
   required_non_overlapping_samples: number;
   result_coverage: string | null;
+  mean_ranked_probability_score: string | null;
   mean_brier_score: string | null;
+  mean_absolute_return_error_bps: string | null;
+  expected_realized_return_correlation: string | null;
   source_evidence?: {
     stratum: "CADENCE_ONLY" | "MATERIAL_STATE_ONLY";
     evidence: ForecastEvidenceSummary;

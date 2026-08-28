@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
-from investment_manager.forecast.context.evaluation import multiclass_brier_score
+from investment_manager.forecast.context.evaluation import (
+    multiclass_brier_score,
+    ordinal_ranked_probability_score,
+)
 from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.quant.runtime import (
     QuantCandidateEvaluation,
@@ -33,11 +37,35 @@ _HORIZON_BARS = 48
 _FEATURE_BARS = 49
 _OUTCOME_HORIZON = timedelta(hours=4)
 _NON_OVERLAPPING_PHASES = 4
+_OUTCOME_BUCKET_IDS = (
+    "EXTREME_LOSS",
+    "LARGE_LOSS",
+    "LOSS",
+    "SMALL_LOSS",
+    "NEUTRAL",
+    "SMALL_GAIN",
+    "GAIN",
+    "LARGE_GAIN",
+    "EXTREME_GAIN",
+)
+_OUTCOME_BOUNDARY_QUANTILES = tuple(
+    map(Decimal, ("0.05", "0.15", "0.30", "0.45", "0.55", "0.70", "0.85", "0.95"))
+)
+_OUTCOME_BENCHMARK_PROBABILITIES = tuple(
+    map(Decimal, ("0.05", "0.10", "0.15", "0.15", "0.10", "0.15", "0.15", "0.10", "0.05"))
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _RawTrainingSample:
+    features: QuantFeatureVector
+    realized_bps: Decimal
 
 
 @dataclass(frozen=True, slots=True)
 class _TrainingSample:
     features: QuantFeatureVector
+    realized_bps: Decimal
     realized_bucket_id: str
 
 
@@ -63,22 +91,26 @@ def train_quant_forecast_artifact(
     if contract.target.legs[0].instrument != reference_instrument:
         raise ValueError("Quant 合同与参考产品不一致")
     if contract.horizon_minutes != 240:
-        raise ValueError("Quant artifact v2 只支持 4h ForecastContract")
+        raise ValueError("Quant artifact v6 只支持 4h ForecastContract")
 
-    samples = _training_samples(dataset, contract=contract, cutoff=cutoff)
-    if len(samples) < 1_000:
+    raw_samples = _training_samples(dataset, cutoff=cutoff)
+    if len(raw_samples) < 1_000:
         raise ValueError("Quant baseline 至少需要 1,000 个逐小时可结算样本")
-    development_end = len(samples) * 3 // 5
-    validation_end = len(samples) * 4 // 5
-    development = _purge_before(
-        samples[:development_end],
-        next_period_start=samples[development_end].features.observed_at,
+    development_end = len(raw_samples) * 3 // 5
+    validation_end = len(raw_samples) * 4 // 5
+    raw_development = _purge_before(
+        raw_samples[:development_end],
+        next_period_start=raw_samples[development_end].features.observed_at,
     )
-    validation = _purge_before(
-        samples[development_end:validation_end],
-        next_period_start=samples[validation_end].features.observed_at,
+    raw_validation = _purge_before(
+        raw_samples[development_end:validation_end],
+        next_period_start=raw_samples[validation_end].features.observed_at,
     )
-    blind = samples[validation_end:]
+    raw_blind = raw_samples[validation_end:]
+    _validate_development_bucket_contract(contract, raw_development)
+    development = _label_samples(raw_development, contract)
+    validation = _label_samples(raw_validation, contract)
+    blind = _label_samples(raw_blind, contract)
     if min(len(development), len(validation), len(blind)) < 100:
         raise ValueError("Quant chronological split 样本不足")
 
@@ -96,15 +128,38 @@ def train_quant_forecast_artifact(
     )
     validation_phases = _non_overlapping_phases(validation)
     blind_phases = _non_overlapping_phases(blind)
-    validation_unconditional_phase_briers = _phase_scores_for_distribution(
+    validation_unconditional_phase_ranked_probability_scores = (
+        _phase_ranked_scores_for_distribution(
+            validation_phases,
+            _global_distribution(development, contract=contract).probabilities,
+        )
+    )
+    validation_unconditional_ranked_probability_score = _mean(
+        validation_unconditional_phase_ranked_probability_scores
+    )
+    validation_unconditional_phase_briers = _phase_brier_scores_for_distribution(
         validation_phases,
         _global_distribution(development, contract=contract).probabilities,
     )
     validation_unconditional_brier = _mean(validation_unconditional_phase_briers)
+    eligible = tuple(
+        candidate
+        for candidate in candidate_evaluations
+        if all(
+            model < baseline
+            for model, baseline in zip(
+                candidate.validation_phase_ranked_probability_scores,
+                validation_unconditional_phase_ranked_probability_scores,
+                strict=True,
+            )
+        )
+    )
+    if not eligible:
+        raise ValueError("Quant 候选未在全部非重叠验证相位改善有序分布")
     selected = min(
-        candidate_evaluations,
+        eligible,
         key=lambda item: (
-            item.validation_worst_phase_brier,
+            item.validation_worst_phase_ranked_probability_score,
             _CANDIDATE_MODELS.index(item.model_name),
         ),
     )
@@ -116,14 +171,45 @@ def train_quant_forecast_artifact(
         contract=contract,
         smoothing_strength=smoothing_strength,
     )
-    selected_blind_phase_briers = _phase_scores(
+    selected_blind_phase_ranked_probability_scores = _phase_ranked_scores(
+        blind_phases,
+        model_name=selected.model_name,
+        thresholds=thresholds,
+        distributions=selected_training_distributions,
+    )
+    selected_blind_ranked_probability_score = _mean(
+        selected_blind_phase_ranked_probability_scores
+    )
+    selected_blind_phase_briers = _phase_brier_scores(
         blind_phases,
         model_name=selected.model_name,
         thresholds=thresholds,
         distributions=selected_training_distributions,
     )
     selected_blind_brier = _mean(selected_blind_phase_briers)
-    blind_unconditional_phase_briers = _phase_scores_for_distribution(
+    (
+        selected_blind_phase_mean_absolute_return_errors_bps,
+        selected_blind_phase_return_correlations,
+    ) = _phase_return_diagnostics(
+        blind_phases,
+        model_name=selected.model_name,
+        thresholds=thresholds,
+        distributions=selected_training_distributions,
+        contract=contract,
+    )
+    blind_unconditional_phase_ranked_probability_scores = (
+        _phase_ranked_scores_for_distribution(
+            blind_phases,
+            _global_distribution(
+                development_and_validation,
+                contract=contract,
+            ).probabilities,
+        )
+    )
+    blind_unconditional_ranked_probability_score = _mean(
+        blind_unconditional_phase_ranked_probability_scores
+    )
+    blind_unconditional_phase_briers = _phase_brier_scores_for_distribution(
         blind_phases,
         _global_distribution(
             development_and_validation,
@@ -131,11 +217,24 @@ def train_quant_forecast_artifact(
         ).probabilities,
     )
     blind_unconditional_brier = _mean(blind_unconditional_phase_briers)
+    blind_distribution = _global_distribution(
+        development_and_validation,
+        contract=contract,
+    ).probabilities
+    (
+        blind_unconditional_phase_mean_absolute_return_errors_bps,
+        blind_unconditional_phase_return_correlations,
+    ) = _phase_return_diagnostics_for_distribution(
+        blind_phases,
+        blind_distribution,
+        contract=contract,
+    )
+    all_samples = (*development, *validation, *blind)
     candidates = []
     for candidate in candidate_evaluations:
         distributions = _fit_distributions(
             candidate.model_name,
-            samples,
+            all_samples,
             thresholds=thresholds,
             contract=contract,
             smoothing_strength=smoothing_strength,
@@ -160,18 +259,60 @@ def train_quant_forecast_artifact(
         "candidate_evaluations": tuple(candidates),
         "selected_model": selected.model_name,
         "smoothing_strength": smoothing_strength,
-        "global_distribution": _global_distribution(samples, contract=contract),
+        "global_distribution": _global_distribution(all_samples, contract=contract),
         "development_sample_count": len(development),
         "validation_sample_count": len(validation),
         "blind_sample_count": len(blind),
         "validation_phase_sample_counts": tuple(len(item) for item in validation_phases),
         "blind_phase_sample_counts": tuple(len(item) for item in blind_phases),
+        "validation_unconditional_ranked_probability_score": (
+            validation_unconditional_ranked_probability_score
+        ),
+        "validation_unconditional_phase_ranked_probability_scores": (
+            validation_unconditional_phase_ranked_probability_scores
+        ),
+        "selected_blind_ranked_probability_score": (
+            selected_blind_ranked_probability_score
+        ),
+        "selected_blind_phase_ranked_probability_scores": (
+            selected_blind_phase_ranked_probability_scores
+        ),
+        "blind_unconditional_ranked_probability_score": (
+            blind_unconditional_ranked_probability_score
+        ),
+        "blind_unconditional_phase_ranked_probability_scores": (
+            blind_unconditional_phase_ranked_probability_scores
+        ),
         "validation_unconditional_brier": validation_unconditional_brier,
         "validation_unconditional_phase_briers": validation_unconditional_phase_briers,
         "selected_blind_brier": selected_blind_brier,
         "selected_blind_phase_briers": selected_blind_phase_briers,
         "blind_unconditional_brier": blind_unconditional_brier,
         "blind_unconditional_phase_briers": blind_unconditional_phase_briers,
+        "selected_blind_mean_absolute_return_error_bps": _mean(
+            selected_blind_phase_mean_absolute_return_errors_bps
+        ),
+        "selected_blind_phase_mean_absolute_return_errors_bps": (
+            selected_blind_phase_mean_absolute_return_errors_bps
+        ),
+        "blind_unconditional_mean_absolute_return_error_bps": _mean(
+            blind_unconditional_phase_mean_absolute_return_errors_bps
+        ),
+        "blind_unconditional_phase_mean_absolute_return_errors_bps": (
+            blind_unconditional_phase_mean_absolute_return_errors_bps
+        ),
+        "selected_blind_return_correlation": _mean(
+            selected_blind_phase_return_correlations
+        ),
+        "selected_blind_phase_return_correlations": (
+            selected_blind_phase_return_correlations
+        ),
+        "blind_unconditional_return_correlation": _mean(
+            blind_unconditional_phase_return_correlations
+        ),
+        "blind_unconditional_phase_return_correlations": (
+            blind_unconditional_phase_return_correlations
+        ),
     }
     provisional = QuantForecastArtifact.model_construct(artifact_id="pending", **values)
     artifact_id = stable_id(
@@ -184,9 +325,8 @@ def train_quant_forecast_artifact(
 def _training_samples(
     dataset: HistoricalDataset,
     *,
-    contract: ForecastContract,
     cutoff: datetime,
-) -> tuple[_TrainingSample, ...]:
+) -> tuple[_RawTrainingSample, ...]:
     bars = dataset.bars
     results = []
     for index in range(_FEATURE_BARS - 1, len(bars) - _HORIZON_BARS):
@@ -203,19 +343,67 @@ def _training_samples(
         window = tuple(item.to_market_bar() for item in bars[index - 48 : index + 1])
         features = quant_features_from_bars(window)
         realized_bps = (future.close / current.close - Decimal("1")) * Decimal("10000")
+        results.append(_RawTrainingSample(features=features, realized_bps=realized_bps))
+    return tuple(results)
+
+
+def _validate_development_bucket_contract(
+    contract: ForecastContract,
+    development: tuple[_RawTrainingSample, ...],
+) -> None:
+    """Prevent validation or blind outcomes from leaking through target encoding."""
+
+    if tuple(item.bucket_id for item in contract.outcome_buckets) != _OUTCOME_BUCKET_IDS:
+        raise ValueError("Quant v6 合同必须使用唯一九档有序收益编码")
+    realized = tuple(item.realized_bps for item in development)
+    expected_boundaries = tuple(
+        _whole_bps_quantile(realized, probability)
+        for probability in _OUTCOME_BOUNDARY_QUANTILES
+    )
+    actual_boundaries = tuple(
+        bucket.upper_bps for bucket in contract.outcome_buckets[:-1]
+    )
+    if actual_boundaries != expected_boundaries:
+        raise ValueError("Quant v6 bucket 边界必须只由 development 分布冻结")
+    expected_representatives = _development_bucket_means(
+        realized,
+        expected_boundaries,
+    )
+    if tuple(item.representative_bps for item in contract.outcome_buckets) != (
+        expected_representatives
+    ):
+        raise ValueError("Quant v6 bucket 代表值必须只由 development 分布冻结")
+    if tuple(item.probability for item in contract.forecast_benchmark) != (
+        _OUTCOME_BENCHMARK_PROBABILITIES
+    ):
+        raise ValueError("Quant v6 基准概率与冻结开发分位不一致")
+
+
+def _label_samples(
+    samples: tuple[_RawTrainingSample, ...],
+    contract: ForecastContract,
+) -> tuple[_TrainingSample, ...]:
+    labeled = []
+    for sample in samples:
         bucket_id = next(
             (
                 bucket.bucket_id
                 for bucket in contract.outcome_buckets
-                if (bucket.lower_bps is None or realized_bps >= bucket.lower_bps)
-                and (bucket.upper_bps is None or realized_bps < bucket.upper_bps)
+                if (bucket.lower_bps is None or sample.realized_bps >= bucket.lower_bps)
+                and (bucket.upper_bps is None or sample.realized_bps < bucket.upper_bps)
             ),
             None,
         )
         if bucket_id is None:
             raise ValueError("Quant 训练收益未落入 ForecastContract bucket")
-        results.append(_TrainingSample(features=features, realized_bucket_id=bucket_id))
-    return tuple(results)
+        labeled.append(
+            _TrainingSample(
+                features=sample.features,
+                realized_bps=sample.realized_bps,
+                realized_bucket_id=bucket_id,
+            )
+        )
+    return tuple(labeled)
 
 
 def _feature_thresholds(samples: tuple[_TrainingSample, ...]) -> QuantFeatureThresholds:
@@ -247,27 +435,50 @@ def _candidate_evaluation(
         contract=contract,
         smoothing_strength=smoothing_strength,
     )
-    phase_briers = _phase_scores(
-        _non_overlapping_phases(evaluation),
+    phases = _non_overlapping_phases(evaluation)
+    phase_ranked_probability_scores = _phase_ranked_scores(
+        phases,
         model_name=model_name,
         thresholds=thresholds,
         distributions=distributions,
     )
+    phase_briers = _phase_brier_scores(
+        phases,
+        model_name=model_name,
+        thresholds=thresholds,
+        distributions=distributions,
+    )
+    phase_return_errors, phase_return_correlations = _phase_return_diagnostics(
+        phases,
+        model_name=model_name,
+        thresholds=thresholds,
+        distributions=distributions,
+        contract=contract,
+    )
     return QuantCandidateEvaluation(
         model_name=model_name,
         cell_count=len(distributions) - 1,
+        validation_ranked_probability_score=_mean(phase_ranked_probability_scores),
+        validation_worst_phase_ranked_probability_score=max(
+            phase_ranked_probability_scores
+        ),
+        validation_phase_ranked_probability_scores=phase_ranked_probability_scores,
         validation_brier=_mean(phase_briers),
         validation_worst_phase_brier=max(phase_briers),
         validation_phase_briers=phase_briers,
+        validation_mean_absolute_return_error_bps=_mean(phase_return_errors),
+        validation_phase_mean_absolute_return_errors_bps=phase_return_errors,
+        validation_return_correlation=_mean(phase_return_correlations),
+        validation_phase_return_correlations=phase_return_correlations,
         cells=tuple(distributions[key] for key in sorted(distributions) if key != "GLOBAL"),
     )
 
 
 def _purge_before(
-    samples: tuple[_TrainingSample, ...],
+    samples: tuple[_RawTrainingSample, ...],
     *,
     next_period_start: datetime,
-) -> tuple[_TrainingSample, ...]:
+) -> tuple[_RawTrainingSample, ...]:
     """Exclude labels whose economic horizon reaches into the next split."""
 
     return tuple(
@@ -295,7 +506,7 @@ def _non_overlapping_phases(
     return phases
 
 
-def _phase_scores(
+def _phase_ranked_scores(
     phases: tuple[tuple[_TrainingSample, ...], ...],
     *,
     model_name: str,
@@ -308,18 +519,149 @@ def _phase_scores(
             model_name=model_name,
             thresholds=thresholds,
             distributions=distributions,
+            score=ordinal_ranked_probability_score,
         )
         for phase in phases
     )
     return values
 
 
-def _phase_scores_for_distribution(
+def _phase_brier_scores(
+    phases: tuple[tuple[_TrainingSample, ...], ...],
+    *,
+    model_name: str,
+    thresholds: QuantFeatureThresholds,
+    distributions: dict[str, QuantCellDistribution],
+) -> tuple[Decimal, ...]:
+    return tuple(
+        _score(
+            phase,
+            model_name=model_name,
+            thresholds=thresholds,
+            distributions=distributions,
+            score=multiclass_brier_score,
+        )
+        for phase in phases
+    )
+
+
+def _phase_ranked_scores_for_distribution(
     phases: tuple[tuple[_TrainingSample, ...], ...],
     probabilities: tuple[ForecastBucketProbability, ...],
 ) -> tuple[Decimal, ...]:
-    values = tuple(_score_distribution(phase, probabilities) for phase in phases)
-    return values
+    return tuple(
+        _score_distribution(
+            phase,
+            probabilities,
+            score=ordinal_ranked_probability_score,
+        )
+        for phase in phases
+    )
+
+
+def _phase_brier_scores_for_distribution(
+    phases: tuple[tuple[_TrainingSample, ...], ...],
+    probabilities: tuple[ForecastBucketProbability, ...],
+) -> tuple[Decimal, ...]:
+    return tuple(
+        _score_distribution(phase, probabilities, score=multiclass_brier_score)
+        for phase in phases
+    )
+
+
+def _phase_return_diagnostics(
+    phases: tuple[tuple[_TrainingSample, ...], ...],
+    *,
+    model_name: str,
+    thresholds: QuantFeatureThresholds,
+    distributions: dict[str, QuantCellDistribution],
+    contract: ForecastContract,
+) -> tuple[tuple[Decimal, ...], tuple[Decimal, ...]]:
+    expected_by_bucket = {
+        item.bucket_id: item.representative_bps for item in contract.outcome_buckets
+    }
+    pairs = tuple(
+        tuple(
+            (
+                _expected_return_bps(
+                    distributions.get(
+                        quant_cell_key(model_name, sample.features, thresholds),
+                        distributions["GLOBAL"],
+                    ).probabilities,
+                    expected_by_bucket,
+                ),
+                sample.realized_bps,
+            )
+            for sample in phase
+        )
+        for phase in phases
+    )
+    return (
+        tuple(_mean_absolute_error(values) for values in pairs),
+        tuple(_pearson_correlation(values) for values in pairs),
+    )
+
+
+def _phase_return_diagnostics_for_distribution(
+    phases: tuple[tuple[_TrainingSample, ...], ...],
+    probabilities: tuple[ForecastBucketProbability, ...],
+    *,
+    contract: ForecastContract,
+) -> tuple[tuple[Decimal, ...], tuple[Decimal, ...]]:
+    expected = _expected_return_bps(
+        probabilities,
+        {item.bucket_id: item.representative_bps for item in contract.outcome_buckets},
+    )
+    pairs = tuple(
+        tuple((expected, sample.realized_bps) for sample in phase) for phase in phases
+    )
+    return (
+        tuple(_mean_absolute_error(values) for values in pairs),
+        tuple(_pearson_correlation(values) for values in pairs),
+    )
+
+
+def _expected_return_bps(
+    probabilities: tuple[ForecastBucketProbability, ...],
+    representatives: dict[str, Decimal],
+) -> Decimal:
+    return sum(
+        (
+            item.probability * representatives[item.bucket_id]
+            for item in probabilities
+        ),
+        Decimal("0"),
+    )
+
+
+def _mean_absolute_error(values: tuple[tuple[Decimal, Decimal], ...]) -> Decimal:
+    return sum((abs(expected - realized) for expected, realized in values), Decimal("0")) / Decimal(
+        len(values)
+    )
+
+
+def _pearson_correlation(values: tuple[tuple[Decimal, Decimal], ...]) -> Decimal:
+    expected_mean = sum((item[0] for item in values), Decimal("0")) / Decimal(len(values))
+    realized_mean = sum((item[1] for item in values), Decimal("0")) / Decimal(len(values))
+    expected_variance = sum(
+        ((expected - expected_mean) ** 2 for expected, _ in values),
+        Decimal("0"),
+    )
+    realized_variance = sum(
+        ((realized - realized_mean) ** 2 for _, realized in values),
+        Decimal("0"),
+    )
+    if expected_variance == 0 or realized_variance == 0:
+        return Decimal("0")
+    covariance = sum(
+        (
+            (expected - expected_mean) * (realized - realized_mean)
+            for expected, realized in values
+        ),
+        Decimal("0"),
+    )
+    correlation = covariance / (expected_variance * realized_variance).sqrt()
+    return max(Decimal("-1"), min(Decimal("1"), correlation))
 
 
 def _mean(values: tuple[Decimal, ...]) -> Decimal:
@@ -389,10 +731,11 @@ def _score(
     model_name: str,
     thresholds: QuantFeatureThresholds,
     distributions: dict[str, QuantCellDistribution],
+    score: Callable[[tuple[tuple[str, Decimal], ...], str], Decimal],
 ) -> Decimal:
     return sum(
         (
-            multiclass_brier_score(
+            score(
                 tuple(
                     (item.bucket_id, item.probability)
                     for item in distributions.get(
@@ -411,10 +754,12 @@ def _score(
 def _score_distribution(
     samples: tuple[_TrainingSample, ...],
     probabilities: tuple[ForecastBucketProbability, ...],
+    *,
+    score: Callable[[tuple[tuple[str, Decimal], ...], str], Decimal],
 ) -> Decimal:
     values = tuple((item.bucket_id, item.probability) for item in probabilities)
     return sum(
-        (multiclass_brier_score(values, sample.realized_bucket_id) for sample in samples),
+        (score(values, sample.realized_bucket_id) for sample in samples),
         Decimal("0"),
     ) / Decimal(len(samples))
 
@@ -444,6 +789,34 @@ def _quantile(values: tuple[Decimal, ...], probability: Decimal) -> Decimal:
     ordered = sorted(values)
     index = int(Decimal(len(ordered) - 1) * probability)
     return ordered[index]
+
+
+def _whole_bps_quantile(values: tuple[Decimal, ...], probability: Decimal) -> Decimal:
+    return _quantile(values, probability).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
+def _development_bucket_means(
+    values: tuple[Decimal, ...],
+    boundaries: tuple[Decimal, ...],
+) -> tuple[Decimal, ...]:
+    buckets = tuple(
+        tuple(
+            value
+            for value in values
+            if (index == 0 or value >= boundaries[index - 1])
+            and (index == len(boundaries) or value < boundaries[index])
+        )
+        for index in range(len(boundaries) + 1)
+    )
+    if any(not bucket for bucket in buckets):
+        raise ValueError("Quant development bucket 不能为空")
+    return tuple(
+        (sum(bucket, Decimal("0")) / Decimal(len(bucket))).quantize(
+            Decimal("1"),
+            rounding=ROUND_HALF_UP,
+        )
+        for bucket in buckets
+    )
 
 
 __all__ = ["train_quant_forecast_artifact"]

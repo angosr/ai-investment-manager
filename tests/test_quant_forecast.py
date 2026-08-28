@@ -22,7 +22,7 @@ from investment_manager.settings import load_config
 
 
 def _artifact_path(
-    artifact_id: str = "quant_forecast_artifact_f54ca8ba93572cffb9a7",
+    artifact_id: str = "quant_forecast_artifact_0f13b2c1a895e8e84fba",
 ) -> Path:
     return (
         Path(__file__).resolve().parents[1] / "evidence" / "quant-forecasts" / f"{artifact_id}.json"
@@ -71,27 +71,27 @@ def _bars(*, gap_at: int | None = None) -> tuple[MarketBar, ...]:
 
 
 @pytest.mark.parametrize(
-    ("artifact_id", "selected_model", "validation_brier", "blind_brier"),
+    ("artifact_id", "selected_model", "validation_ranked", "blind_ranked"),
     (
         (
-            "quant_forecast_artifact_f54ca8ba93572cffb9a7",
-            "momentum_volatility",
-            Decimal("0.7481319435395957882535566185"),
-            Decimal("0.6967686389832213831948912625"),
+            "quant_forecast_artifact_0f13b2c1a895e8e84fba",
+            "momentum_reversal_volatility",
+            Decimal("0.1661304515248757521337836794"),
+            Decimal("0.1450763213148655395553939982"),
         ),
         (
-            "quant_forecast_artifact_6d7056cb69ff71e482a9",
-            "momentum_reversal_volatility",
-            Decimal("0.7560608068182079093004624352"),
-            Decimal("0.7217308508029654243724052422"),
+            "quant_forecast_artifact_91a5e3fdce4ca68d0818",
+            "momentum_volatility",
+            Decimal("0.1853700710590541054562921038"),
+            Decimal("0.1757957198816177466228240011"),
         ),
     ),
 )
 def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
     artifact_id: str,
     selected_model: str,
-    validation_brier: Decimal,
-    blind_brier: Decimal,
+    validation_ranked: Decimal,
+    blind_ranked: Decimal,
 ) -> None:
     artifact = load_quant_forecast_artifact(
         _artifact_path(artifact_id),
@@ -103,14 +103,23 @@ def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
         for item in artifact.candidate_evaluations
         if item.model_name == artifact.selected_model
     )
-    assert selected.validation_brier < artifact.validation_unconditional_brier
-    assert artifact.selected_blind_brier < artifact.blind_unconditional_brier
-    assert selected.validation_brier == validation_brier
-    assert artifact.selected_blind_brier == blind_brier
+    assert (
+        selected.validation_ranked_probability_score
+        < artifact.validation_unconditional_ranked_probability_score
+    )
+    assert (
+        artifact.selected_blind_ranked_probability_score
+        < artifact.blind_unconditional_ranked_probability_score
+    )
+    assert selected.validation_ranked_probability_score == validation_ranked
+    assert artifact.selected_blind_ranked_probability_score == blind_ranked
     assert artifact.selected_model == selected_model
-    assert selected.validation_worst_phase_brier == max(selected.validation_phase_briers)
-    assert selected.validation_worst_phase_brier == min(
-        item.validation_worst_phase_brier for item in artifact.candidate_evaluations
+    assert selected.validation_worst_phase_ranked_probability_score == max(
+        selected.validation_phase_ranked_probability_scores
+    )
+    assert selected.validation_worst_phase_ranked_probability_score == min(
+        item.validation_worst_phase_ranked_probability_score
+        for item in artifact.candidate_evaluations
     )
     assert artifact.development_sample_count == 10_504
     assert artifact.validation_sample_count == 3_499
@@ -125,8 +134,8 @@ def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
     assert all(
         selected_score < baseline_score
         for selected_score, baseline_score in zip(
-            artifact.selected_blind_phase_briers,
-            artifact.blind_unconditional_phase_briers,
+            artifact.selected_blind_phase_ranked_probability_scores,
+            artifact.blind_unconditional_phase_ranked_probability_scores,
             strict=True,
         )
     )
@@ -136,6 +145,10 @@ def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
         "momentum_reversal_volatility",
     )
     assert all(item.cells for item in artifact.candidate_evaluations)
+    assert selected.validation_mean_absolute_return_error_bps > 0
+    assert Decimal("-1") <= selected.validation_return_correlation <= Decimal("1")
+    assert artifact.selected_blind_mean_absolute_return_error_bps > 0
+    assert Decimal("-1") <= artifact.selected_blind_return_correlation <= Decimal("1")
 
 
 def test_quant_features_and_cell_are_deterministic_and_point_in_time() -> None:
@@ -166,9 +179,11 @@ def test_quant_features_and_cell_are_deterministic_and_point_in_time() -> None:
     assert panel["decision_slot_id"] == "test-slot"
     assert len(panel["candidate_predictions"]) == 3
     assert panel["maximum_bucket_probability_range"] > 0
-    assert panel["panel_version"] == "quant-reliability-panel-v2"
+    assert panel["panel_version"] == "quant-reliability-panel-v5"
     assert panel["quant_prior"]["cell_sample_count"] > 0
-    assert panel["quant_prior"]["reliability"]["blind_brier_skill"] > 0
+    assert panel["quant_prior"]["reliability"]["blind_ranked_skill"] > 0
+    assert panel["quant_prior"]["reliability"]["blind_mean_absolute_return_error_bps"] > 0
+    assert "blind_return_correlation" in panel["quant_prior"]["reliability"]
 
     with pytest.raises(PointInTimeInputUnavailable, match="时间缺口"):
         quant_features_from_bars(_bars(gap_at=20))

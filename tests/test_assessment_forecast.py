@@ -323,11 +323,15 @@ class _FixedProbabilityAnalyst:
                         {
                             "decision_slot_id": target.slot.slot_id,
                             "outcome_probabilities": [
-                                {"bucket_id": "LARGE_LOSS", "probability": "0.05"},
-                                {"bucket_id": "LOSS", "probability": "0.10"},
-                                {"bucket_id": "FLAT", "probability": "0.20"},
-                                {"bucket_id": "GAIN", "probability": "0.35"},
-                                {"bucket_id": "LARGE_GAIN", "probability": "0.30"},
+                                {"bucket_id": "EXTREME_LOSS", "probability": "0.02"},
+                                {"bucket_id": "LARGE_LOSS", "probability": "0.04"},
+                                {"bucket_id": "LOSS", "probability": "0.06"},
+                                {"bucket_id": "SMALL_LOSS", "probability": "0.08"},
+                                {"bucket_id": "NEUTRAL", "probability": "0.10"},
+                                {"bucket_id": "SMALL_GAIN", "probability": "0.15"},
+                                {"bucket_id": "GAIN", "probability": "0.20"},
+                                {"bucket_id": "LARGE_GAIN", "probability": "0.20"},
+                                {"bucket_id": "EXTREME_GAIN", "probability": "0.15"},
                             ],
                             "mechanism_contributions": [
                                 {
@@ -379,7 +383,17 @@ class _SharedProbabilityAnalyst:
                         }
                         for item, probability in zip(
                             target.contract.outcome_buckets,
-                            ("0.10", "0.20", "0.40", "0.20", "0.10"),
+                            (
+                                "0.05",
+                                "0.10",
+                                "0.15",
+                                "0.15",
+                                "0.10",
+                                "0.15",
+                                "0.15",
+                                "0.10",
+                                "0.05",
+                            ),
                             strict=True,
                         )
                     ],
@@ -553,7 +567,7 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert isinstance(first, BaseForecast)
     assert replayed == first
     assert first.world_model_id == assessment.assessment_id
-    assert first.expected_gross_bps == Decimal("50.55")
+    assert first.expected_gross_bps == Decimal("56.80")
     assert first.mechanism_contributions[0].mechanism_id == "mechanism-1"
     assert first.evidence_refs == ("delta-1",)
     assert first.analysis_input_json is not None

@@ -44,7 +44,7 @@ from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
-NOW = datetime(2026, 8, 27, 17, tzinfo=UTC)
+NOW = datetime(2026, 8, 28, 3, tzinfo=UTC)
 
 
 class _PosteriorAnalyst:
@@ -63,11 +63,15 @@ class _PosteriorAnalyst:
                         {
                             "decision_slot_id": target.slot.slot_id,
                             "outcome_probabilities": [
+                                {"bucket_id": "EXTREME_LOSS", "probability": "0.04"},
                                 {"bucket_id": "LARGE_LOSS", "probability": "0.08"},
-                                {"bucket_id": "LOSS", "probability": "0.17"},
-                                {"bucket_id": "FLAT", "probability": "0.35"},
-                                {"bucket_id": "GAIN", "probability": "0.25"},
-                                {"bucket_id": "LARGE_GAIN", "probability": "0.15"},
+                                {"bucket_id": "LOSS", "probability": "0.12"},
+                                {"bucket_id": "SMALL_LOSS", "probability": "0.13"},
+                                {"bucket_id": "NEUTRAL", "probability": "0.13"},
+                                {"bucket_id": "SMALL_GAIN", "probability": "0.16"},
+                                {"bucket_id": "GAIN", "probability": "0.16"},
+                                {"bucket_id": "LARGE_GAIN", "probability": "0.11"},
+                                {"bucket_id": "EXTREME_GAIN", "probability": "0.07"},
                             ],
                             "mechanism_contributions": [
                                 {
@@ -145,13 +149,13 @@ def _fixture():
         )
         for item, probability in zip(
             contract.outcome_buckets,
-            (Decimal("0.10"), Decimal("0.20"), Decimal("0.40"), Decimal("0.20"), Decimal("0.10")),
+            tuple(item.probability for item in contract.forecast_benchmark),
             strict=True,
         )
     )
     panel = {
         "purpose": "PROGRAM_QUANT_FORECAST",
-        "panel_version": "quant-reliability-panel-v2",
+        "panel_version": "quant-reliability-panel-v5",
         "artifact_id": "artifact-1",
         "inference_version": "conditional-empirical-dirichlet-v1",
         "decision_slot_id": slot.slot_id,
@@ -497,10 +501,10 @@ def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> No
     assert pair is not None
     assert pair.settled_panel_count == 1
     assert pair.paired_target_count == 1
-    assert pair.mean_candidate_brier_score == Decimal("0.9428")
-    assert pair.mean_comparator_brier_score == Decimal("1.06")
-    assert pair.mean_brier_improvement == Decimal("0.1172")
-    assert pair.mean_max_bucket_probability_delta == Decimal("0.05")
+    assert pair.mean_candidate_brier_score == Decimal("0.9044")
+    assert pair.mean_comparator_brier_score == Decimal("0.9250")
+    assert pair.mean_brier_improvement == Decimal("0.0206")
+    assert pair.mean_max_bucket_probability_delta == Decimal("0.03")
 
 
 def test_quant_context_posterior_records_missing_prior_without_calling_ai() -> None:

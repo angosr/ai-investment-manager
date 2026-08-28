@@ -11,8 +11,8 @@ from enum import StrEnum
 from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.kernel.time import require_utc
 
-FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v5"
-FORECAST_PAIR_EVALUATION_VERSION = "context-forecast-pair-evidence-v1"
+FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v6"
+FORECAST_PAIR_EVALUATION_VERSION = "context-forecast-pair-evidence-v2"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
 PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")
@@ -74,6 +74,17 @@ class ForecastEvidence:
     non_overlapping_sample_count: int
     required_non_overlapping_samples: int
     permission_evidence_eligible: bool
+    mean_ranked_probability_score: Decimal | None
+    benchmark_mean_ranked_probability_score: Decimal | None
+    ranked_probability_skill: Decimal | None
+    rolling_benchmark_mean_ranked_probability_score: Decimal | None
+    rolling_ranked_probability_skill: Decimal | None
+    rolling_ranked_probability_skill_lower_bound: Decimal | None
+    rolling_ranked_probability_skill_upper_bound: Decimal | None
+    market_benchmark_mean_ranked_probability_score: Decimal | None
+    market_ranked_probability_skill: Decimal | None
+    market_ranked_probability_skill_lower_bound: Decimal | None
+    market_ranked_probability_skill_upper_bound: Decimal | None
     mean_brier_score: Decimal | None
     benchmark_mean_brier_score: Decimal | None
     brier_skill: Decimal | None
@@ -89,6 +100,8 @@ class ForecastEvidence:
     market_baseline_ready_count: int
     mean_expected_gross_bps: Decimal | None
     mean_realized_gross_bps: Decimal | None
+    mean_absolute_return_error_bps: Decimal | None
+    expected_realized_return_correlation: Decimal | None
     source_evidence: tuple[ForecastSourceEvidence, ...] = ()
 
     @property
@@ -113,6 +126,8 @@ class ForecastPairPanelCase:
     evaluation_at: datetime
     source_stratum: ForecastSlotStratum
     paired_target_count: int
+    candidate_ranked_probability_score: Decimal
+    comparator_ranked_probability_score: Decimal
     candidate_brier_score: Decimal
     comparator_brier_score: Decimal
     mean_max_bucket_probability_delta: Decimal
@@ -125,8 +140,13 @@ class ForecastPairPanelCase:
         require_utc(self.evaluation_at)
         if self.information_cutoff_at >= self.evaluation_at:
             raise ValueError("Forecast 配对面板截止时间必须早于评价时间")
-        if min(self.candidate_brier_score, self.comparator_brier_score) < 0:
-            raise ValueError("Forecast 配对 Brier 不能为负数")
+        if min(
+            self.candidate_ranked_probability_score,
+            self.comparator_ranked_probability_score,
+            self.candidate_brier_score,
+            self.comparator_brier_score,
+        ) < 0:
+            raise ValueError("Forecast 配对 proper score 不能为负数")
         if not Decimal("0") <= self.mean_max_bucket_probability_delta <= Decimal("1"):
             raise ValueError("Forecast 配对概率变化必须位于 [0, 1]")
 
@@ -136,6 +156,15 @@ class ForecastPairPanelCase:
 
         return self.comparator_brier_score - self.candidate_brier_score
 
+    @property
+    def ranked_probability_improvement(self) -> Decimal:
+        """Positive means the candidate beat the comparator on ordered distance."""
+
+        return (
+            self.comparator_ranked_probability_score
+            - self.candidate_ranked_probability_score
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ForecastPairEvidence:
@@ -143,6 +172,11 @@ class ForecastPairEvidence:
     settled_panel_count: int
     paired_target_count: int
     non_overlapping_panel_count: int
+    mean_candidate_ranked_probability_score: Decimal | None
+    mean_comparator_ranked_probability_score: Decimal | None
+    mean_ranked_probability_improvement: Decimal | None
+    ranked_probability_improvement_lower_bound: Decimal | None
+    ranked_probability_improvement_upper_bound: Decimal | None
     mean_candidate_brier_score: Decimal | None
     mean_comparator_brier_score: Decimal | None
     mean_brier_improvement: Decimal | None
@@ -167,6 +201,20 @@ def evaluate_forecast_pair_evidence(
         evaluation_at=lambda item: item.evaluation_at,
         stratum=lambda item: item.source_stratum.value,
     )
+    candidate_ranked_scores = tuple(
+        item.candidate_ranked_probability_score for item in independent
+    )
+    comparator_ranked_scores = tuple(
+        item.comparator_ranked_probability_score for item in independent
+    )
+    ranked_improvements = tuple(
+        item.ranked_probability_improvement for item in independent
+    )
+    ranked_interval = (
+        _mean_confidence_interval(ranked_improvements)
+        if len(ranked_improvements) >= 2
+        else None
+    )
     candidate_scores = tuple(item.candidate_brier_score for item in independent)
     comparator_scores = tuple(item.comparator_brier_score for item in independent)
     improvements = tuple(item.brier_improvement for item in independent)
@@ -176,14 +224,23 @@ def evaluate_forecast_pair_evidence(
         settled_panel_count=len(cases),
         paired_target_count=sum(item.paired_target_count for item in cases),
         non_overlapping_panel_count=len(independent),
+        mean_candidate_ranked_probability_score=_mean(candidate_ranked_scores),
+        mean_comparator_ranked_probability_score=_mean(comparator_ranked_scores),
+        mean_ranked_probability_improvement=_mean(ranked_improvements),
+        ranked_probability_improvement_lower_bound=(
+            None if ranked_interval is None else ranked_interval[0]
+        ),
+        ranked_probability_improvement_upper_bound=(
+            None if ranked_interval is None else ranked_interval[1]
+        ),
         mean_candidate_brier_score=_mean(candidate_scores),
         mean_comparator_brier_score=_mean(comparator_scores),
         mean_brier_improvement=_mean(improvements),
         brier_improvement_lower_bound=None if interval is None else interval[0],
         brier_improvement_upper_bound=None if interval is None else interval[1],
-        candidate_better_panel_count=sum(item > 0 for item in improvements),
-        equal_panel_count=sum(item == 0 for item in improvements),
-        candidate_worse_panel_count=sum(item < 0 for item in improvements),
+        candidate_better_panel_count=sum(item > 0 for item in ranked_improvements),
+        equal_panel_count=sum(item == 0 for item in ranked_improvements),
+        candidate_worse_panel_count=sum(item < 0 for item in ranked_improvements),
         mean_max_bucket_probability_delta=_mean(
             tuple(item.mean_max_bucket_probability_delta for item in independent)
         ),
@@ -225,6 +282,17 @@ def evaluate_forecast_evidence(
             non_overlapping_sample_count=0,
             required_non_overlapping_samples=required_non_overlapping_samples,
             permission_evidence_eligible=permission_evidence_eligible,
+            mean_ranked_probability_score=None,
+            benchmark_mean_ranked_probability_score=None,
+            ranked_probability_skill=None,
+            rolling_benchmark_mean_ranked_probability_score=None,
+            rolling_ranked_probability_skill=None,
+            rolling_ranked_probability_skill_lower_bound=None,
+            rolling_ranked_probability_skill_upper_bound=None,
+            market_benchmark_mean_ranked_probability_score=None,
+            market_ranked_probability_skill=None,
+            market_ranked_probability_skill_lower_bound=None,
+            market_ranked_probability_skill_upper_bound=None,
             mean_brier_score=None,
             benchmark_mean_brier_score=None,
             brier_skill=None,
@@ -240,8 +308,28 @@ def evaluate_forecast_evidence(
             market_baseline_ready_count=0,
             mean_expected_gross_bps=None,
             mean_realized_gross_bps=None,
+            mean_absolute_return_error_bps=None,
+            expected_realized_return_correlation=None,
         )
 
+    model_ranked = _mean(
+        tuple(
+            ordinal_ranked_probability_score(
+                item.probabilities,
+                item.realized_bucket_id,
+            )
+            for item in independent
+        )
+    )
+    benchmark_ranked = _mean(
+        tuple(
+            ordinal_ranked_probability_score(
+                item.benchmark_probabilities,
+                item.realized_bucket_id,
+            )
+            for item in independent
+        )
+    )
     model_brier = _mean(
         tuple(
             multiclass_brier_score(item.probabilities, item.realized_bucket_id)
@@ -257,12 +345,45 @@ def evaluate_forecast_evidence(
             for item in independent
         )
     )
-    assert model_brier is not None and benchmark_brier is not None
+    assert (
+        model_ranked is not None
+        and benchmark_ranked is not None
+        and model_brier is not None
+        and benchmark_brier is not None
+    )
+    model_ranked_scores = tuple(
+        ordinal_ranked_probability_score(item.probabilities, item.realized_bucket_id)
+        for item in independent
+    )
     model_scores = tuple(
         multiclass_brier_score(item.probabilities, item.realized_bucket_id) for item in independent
     )
     rolling_cases = _dynamic_benchmarks(cases, independent, condition_on_market=False)
     market_cases = _dynamic_benchmarks(cases, independent, condition_on_market=True)
+    rolling_ranked_scores = tuple(
+        (
+            ordinal_ranked_probability_score(probabilities, item.realized_bucket_id),
+            model_score,
+        )
+        for (item, probabilities, ready), model_score in zip(
+            rolling_cases,
+            model_ranked_scores,
+            strict=True,
+        )
+        if ready
+    )
+    market_ranked_scores = tuple(
+        (
+            ordinal_ranked_probability_score(probabilities, item.realized_bucket_id),
+            model_score,
+        )
+        for (item, probabilities, ready), model_score in zip(
+            market_cases,
+            model_ranked_scores,
+            strict=True,
+        )
+        if ready
+    )
     rolling_scores = tuple(
         (
             multiclass_brier_score(probabilities, item.realized_bucket_id),
@@ -286,6 +407,36 @@ def evaluate_forecast_evidence(
             strict=True,
         )
         if ready
+    )
+    rolling_ranked = _mean(
+        tuple(baseline for baseline, _model in rolling_ranked_scores)
+    )
+    market_ranked = _mean(tuple(baseline for baseline, _model in market_ranked_scores))
+    rolling_ranked_differences = tuple(
+        baseline - model for baseline, model in rolling_ranked_scores
+    )
+    market_ranked_differences = tuple(
+        baseline - model for baseline, model in market_ranked_scores
+    )
+    rolling_ranked_skill = _mean(rolling_ranked_differences)
+    market_ranked_skill = _mean(market_ranked_differences)
+    rolling_ranked_interval = _optional_mean_confidence_interval(
+        rolling_ranked_differences
+    )
+    market_ranked_interval = _optional_mean_confidence_interval(
+        market_ranked_differences
+    )
+    rolling_ranked_lower = (
+        None if rolling_ranked_interval is None else rolling_ranked_interval[0]
+    )
+    rolling_ranked_upper = (
+        None if rolling_ranked_interval is None else rolling_ranked_interval[1]
+    )
+    market_ranked_lower = (
+        None if market_ranked_interval is None else market_ranked_interval[0]
+    )
+    market_ranked_upper = (
+        None if market_ranked_interval is None else market_ranked_interval[1]
     )
     rolling_brier = _mean(tuple(baseline for baseline, _model in rolling_scores))
     market_brier = _mean(tuple(baseline for baseline, _model in market_scores))
@@ -312,15 +463,15 @@ def evaluate_forecast_evidence(
         )
         else ForecastEvidenceStatus.ABOVE_BENCHMARK
         if (
-            rolling_lower is not None
-            and market_lower is not None
-            and rolling_lower > 0
-            and market_lower > 0
+            rolling_ranked_lower is not None
+            and market_ranked_lower is not None
+            and rolling_ranked_lower > 0
+            and market_ranked_lower > 0
         )
         else ForecastEvidenceStatus.BELOW_BENCHMARK
         if (
-            (rolling_upper is not None and rolling_upper < 0)
-            or (market_upper is not None and market_upper < 0)
+            (rolling_ranked_upper is not None and rolling_ranked_upper < 0)
+            or (market_ranked_upper is not None and market_ranked_upper < 0)
         )
         else ForecastEvidenceStatus.INCONCLUSIVE
     )
@@ -335,6 +486,17 @@ def evaluate_forecast_evidence(
         non_overlapping_sample_count=len(independent),
         required_non_overlapping_samples=required_non_overlapping_samples,
         permission_evidence_eligible=permission_evidence_eligible,
+        mean_ranked_probability_score=model_ranked,
+        benchmark_mean_ranked_probability_score=benchmark_ranked,
+        ranked_probability_skill=benchmark_ranked - model_ranked,
+        rolling_benchmark_mean_ranked_probability_score=rolling_ranked,
+        rolling_ranked_probability_skill=rolling_ranked_skill,
+        rolling_ranked_probability_skill_lower_bound=rolling_ranked_lower,
+        rolling_ranked_probability_skill_upper_bound=rolling_ranked_upper,
+        market_benchmark_mean_ranked_probability_score=market_ranked,
+        market_ranked_probability_skill=market_ranked_skill,
+        market_ranked_probability_skill_lower_bound=market_ranked_lower,
+        market_ranked_probability_skill_upper_bound=market_ranked_upper,
         mean_brier_score=model_brier,
         benchmark_mean_brier_score=benchmark_brier,
         brier_skill=benchmark_brier - model_brier,
@@ -350,7 +512,47 @@ def evaluate_forecast_evidence(
         market_baseline_ready_count=market_ready_count,
         mean_expected_gross_bps=_mean(tuple(item.expected_gross_bps for item in independent)),
         mean_realized_gross_bps=_mean(tuple(item.realized_gross_bps for item in independent)),
+        mean_absolute_return_error_bps=_mean(
+            tuple(
+                abs(item.expected_gross_bps - item.realized_gross_bps)
+                for item in independent
+            )
+        ),
+        expected_realized_return_correlation=_return_correlation(independent),
     )
+
+
+def _return_correlation(
+    cases: tuple[ForecastScoringCase, ...],
+) -> Decimal | None:
+    if len(cases) < 2:
+        return None
+    expected_mean = sum(
+        (item.expected_gross_bps for item in cases), Decimal("0")
+    ) / Decimal(len(cases))
+    realized_mean = sum(
+        (item.realized_gross_bps for item in cases), Decimal("0")
+    ) / Decimal(len(cases))
+    expected_variance = sum(
+        ((item.expected_gross_bps - expected_mean) ** 2 for item in cases),
+        Decimal("0"),
+    )
+    realized_variance = sum(
+        ((item.realized_gross_bps - realized_mean) ** 2 for item in cases),
+        Decimal("0"),
+    )
+    if expected_variance == 0 or realized_variance == 0:
+        return None
+    covariance = sum(
+        (
+            (item.expected_gross_bps - expected_mean)
+            * (item.realized_gross_bps - realized_mean)
+            for item in cases
+        ),
+        Decimal("0"),
+    )
+    correlation = covariance / (expected_variance * realized_variance).sqrt()
+    return max(Decimal("-1"), min(Decimal("1"), correlation))
 
 
 def _non_overlapping(cases: tuple[ForecastScoringCase, ...]) -> tuple[ForecastScoringCase, ...]:
@@ -420,6 +622,27 @@ def multiclass_brier_score(
         ),
         Decimal("0"),
     )
+
+
+def ordinal_ranked_probability_score(
+    probabilities: tuple[tuple[str, Decimal], ...],
+    realized: str,
+) -> Decimal:
+    """Normalized ranked probability score for an ordered outcome contract."""
+
+    bucket_ids = tuple(bucket_id for bucket_id, _probability in probabilities)
+    if realized not in bucket_ids:
+        raise ValueError("有序概率真实 bucket 不属于预测分布")
+    if len(bucket_ids) < 2:
+        raise ValueError("有序概率评分至少需要两个 bucket")
+    realized_index = bucket_ids.index(realized)
+    cumulative = Decimal("0")
+    score = Decimal("0")
+    for index, (_bucket_id, probability) in enumerate(probabilities[:-1]):
+        cumulative += probability
+        observed_cumulative = Decimal("1") if realized_index <= index else Decimal("0")
+        score += (cumulative - observed_cumulative) ** 2
+    return score / Decimal(len(bucket_ids) - 1)
 
 
 def _dynamic_benchmarks(

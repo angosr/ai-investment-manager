@@ -251,7 +251,7 @@ WorldModel 保存组合级完整联合解释，Context Forecast 不重复执行�
 
 Context Forecast 与无技巧分布、简单程序基线以及存在时的 Program Forecast 使用同一合同、同一 Outcome 和同口径损失比较。所有预登记槽都计入覆盖率、延迟、失败和结算；不能只统计成功输出或只看最终成交。
 
-静态无技巧概率只证明最弱的分布能力。正式评价同时包含滚动无条件分布和至少一个不使用 WorldModel 的简单市场基线，避免把学会总体 bucket 频率误认为时变 Alpha。`model_mean_score < benchmark_mean_score` 只能描述点估计，不能单独标记为已证明胜出或授予权限。
+静态无技巧概率只证明最弱的分布能力。正式评价同时包含滚动无条件分布和至少一个不使用 WorldModel 的简单市场基线，避免把学会总体 bucket 频率误认为时变 Alpha。有序收益桶必须按 [`ARCHITECTURE.md` 的唯一 ForecastContract](ARCHITECTURE.md#42-世界认知与预测) 使用距离敏感 proper score 并结算连续真实收益；`model_mean_score < benchmark_mean_score` 只能描述点估计，不能单独标记为已证明胜出或授予权限。
 
 Quant panel 是 State 到 Forecast 的确定性高密度投影，不是第二个世界认知、策略引擎或数据仓库。完整审计投影对每个目标/时域保存冻结特征值及可见时间、指定 Quant prior、候选模型分布与分歧、训练制品身份、程序计算的适用状态、当前条件样本量、跨阶段可靠性和按合同代表值计算的预期毛收益；模型可见投影只保留胜出 prior、实际特征值、可靠性及候选分歧的标量摘要，不重复发送已落选候选的完整概率表。常规 regime、模型适用度和候选权重由冻结程序决定；AI 不得按本轮叙事点名启停算法或另做一次模型选择。所有值都可点时回放，AI 不读取训练数据或 raw data，也不能在输出中自行改写这些值。产品 break-even、手续费、basis、funding、滑点与预测延迟只在后续统一 Product/Portfolio 映射中出现一次，不进入 AI 输入。
 

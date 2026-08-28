@@ -9,7 +9,7 @@ component_versions:
   - [feature, feature-v1]
   - [decision_state, portfolio-state-v49]
   - [capital, total-portfolio-capital-v76]
-  - [outcome_evaluation, typed-outcome-settlement-v47]
+  - [outcome_evaluation, typed-outcome-settlement-v48]
   - [trigger, analysis-trigger-v32]
   - [temporal, temporal-analysis-v5]
   - [market_data, binance-public-shadow-v16]

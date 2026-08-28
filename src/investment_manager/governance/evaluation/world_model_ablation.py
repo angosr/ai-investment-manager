@@ -37,6 +37,7 @@ from investment_manager.forecast.context.estimate import (
 )
 from investment_manager.forecast.context.evaluation import (
     multiclass_brier_score,
+    ordinal_ranked_probability_score,
     select_non_overlapping_intervals,
 )
 from investment_manager.forecast.contracts import ForecastContract, ForecastDecisionSlot
@@ -77,6 +78,7 @@ CONTROL_CALL_ORDER = "PREASSIGNED_INDEPENDENT_WORKERS"
 SAMPLE_SELECTION_RULE = "GREEDY_NON_OVERLAPPING_INFORMATION_CUTOFF_TO_EVALUATION_V1"
 UNCERTAINTY_METHOD = "NEWEY_WEST_LAG_1_ON_NON_OVERLAPPING_V1"
 _MAXIMUM_MULTICLASS_BRIER_SCORE = Decimal("2")
+_MAXIMUM_RANKED_PROBABILITY_SCORE = Decimal("1")
 CONTROL_INSTRUCTIONS = (
     "你是组合概率预测员。输入保留正式调用的全部预登记目标、合同和点时市场状态，只移除了共享世界模型。",
     "必须为每个可见 decision_slot_id 恰好输出一份合同终点收益概率，不得使用外部信息，"
@@ -275,6 +277,10 @@ class WorldModelAblationReport(FrozenModel):
     failed_controls: int = Field(ge=0)
     settled_pairs: int = Field(ge=0)
     conservative_sample_count: int = Field(ge=0)
+    formal_mean_ranked_probability_score: Decimal | None = None
+    control_mean_ranked_probability_score: Decimal | None = None
+    mean_ranked_probability_improvement: Decimal | None = None
+    conservative_mean_ranked_probability_improvement: Decimal | None = None
     formal_mean_brier: Decimal | None = None
     control_mean_brier: Decimal | None = None
     mean_brier_improvement: Decimal | None = None
@@ -291,9 +297,12 @@ class _AblationScoreCase:
     identity: str
     information_cutoff_at: datetime
     evaluation_at: datetime
-    conservative_improvement: Decimal
-    formal_score: Decimal | None = None
-    control_score: Decimal | None = None
+    conservative_ranked_improvement: Decimal
+    conservative_brier_improvement: Decimal
+    formal_ranked_score: Decimal | None = None
+    control_ranked_score: Decimal | None = None
+    formal_brier_score: Decimal | None = None
+    control_brier_score: Decimal | None = None
 
 
 def world_model_ablation_behavior_hash(
@@ -859,24 +868,35 @@ class SqlWorldModelAblationRepository:
                 if outcome is None or outcome.status != ForecastOutcomeStatus.SETTLED:
                     continue
                 formal = formal_by_id.get(target.formal_forecast_id)
-                formal_score = None
+                formal_ranked_score = None
+                formal_brier_score = None
                 if formal is not None:
                     assert outcome.realized_bucket_id is not None
-                    formal_score = multiclass_brier_score(
-                        tuple(
-                            (item.bucket_id, item.probability)
-                            for item in formal.outcome_probabilities
-                        ),
+                    formal_probabilities = tuple(
+                        (item.bucket_id, item.probability)
+                        for item in formal.outcome_probabilities
+                    )
+                    formal_ranked_score = ordinal_ranked_probability_score(
+                        formal_probabilities,
+                        outcome.realized_bucket_id,
+                    )
+                    formal_brier_score = multiclass_brier_score(
+                        formal_probabilities,
                         outcome.realized_bucket_id,
                     )
                 draft = control_by_slot.get(target.decision_slot_id)
-                if formal_score is not None and draft is not None:
+                if formal_ranked_score is not None and draft is not None:
                     assert outcome.realized_bucket_id is not None
-                    control_score = multiclass_brier_score(
-                        tuple(
-                            (item.bucket_id, Decimal(item.probability))
-                            for item in draft.outcome_probabilities
-                        ),
+                    control_probabilities = tuple(
+                        (item.bucket_id, Decimal(item.probability))
+                        for item in draft.outcome_probabilities
+                    )
+                    control_ranked_score = ordinal_ranked_probability_score(
+                        control_probabilities,
+                        outcome.realized_bucket_id,
+                    )
+                    control_brier_score = multiclass_brier_score(
+                        control_probabilities,
                         outcome.realized_bucket_id,
                     )
                     settled_pairs += 1
@@ -885,20 +905,33 @@ class SqlWorldModelAblationRepository:
                             identity=target.decision_slot_id,
                             information_cutoff_at=assignment.information_cutoff_at,
                             evaluation_at=assignment.evaluation_at,
-                            formal_score=formal_score,
-                            control_score=control_score,
-                            conservative_improvement=control_score - formal_score,
+                            formal_ranked_score=formal_ranked_score,
+                            control_ranked_score=control_ranked_score,
+                            formal_brier_score=formal_brier_score,
+                            control_brier_score=control_brier_score,
+                            conservative_ranked_improvement=(
+                                control_ranked_score - formal_ranked_score
+                            ),
+                            conservative_brier_improvement=(
+                                control_brier_score - formal_brier_score
+                            ),
                         )
                     )
                 else:
+                    assert (formal_ranked_score is None) == (formal_brier_score is None)
                     target_cases.append(
                         _AblationScoreCase(
                             identity=target.decision_slot_id,
                             information_cutoff_at=assignment.information_cutoff_at,
                             evaluation_at=assignment.evaluation_at,
-                            conservative_improvement=(
-                                -formal_score
-                                if formal_score is not None
+                            conservative_ranked_improvement=(
+                                -formal_ranked_score
+                                if formal_ranked_score is not None
+                                else -_MAXIMUM_RANKED_PROBABILITY_SCORE
+                            ),
+                            conservative_brier_improvement=(
+                                -formal_brier_score
+                                if formal_brier_score is not None
                                 else -_MAXIMUM_MULTICLASS_BRIER_SCORE
                             ),
                         )
@@ -907,21 +940,32 @@ class SqlWorldModelAblationRepository:
                 paired_target_cases = tuple(
                     item
                     for item in target_cases
-                    if item.formal_score is not None and item.control_score is not None
+                    if item.formal_ranked_score is not None
+                    and item.control_ranked_score is not None
                 )
                 score_cases.append(
                     _AblationScoreCase(
                         identity=assignment.assignment_id,
                         information_cutoff_at=assignment.information_cutoff_at,
                         evaluation_at=assignment.evaluation_at,
-                        formal_score=_mean(
-                            [item.formal_score for item in paired_target_cases]
+                        formal_ranked_score=_mean(
+                            [item.formal_ranked_score for item in paired_target_cases]
                         ),
-                        control_score=_mean(
-                            [item.control_score for item in paired_target_cases]
+                        control_ranked_score=_mean(
+                            [item.control_ranked_score for item in paired_target_cases]
                         ),
-                        conservative_improvement=_mean(
-                            [item.conservative_improvement for item in target_cases]
+                        formal_brier_score=_mean(
+                            [item.formal_brier_score for item in paired_target_cases]
+                        ),
+                        control_brier_score=_mean(
+                            [item.control_brier_score for item in paired_target_cases]
+                        ),
+                        conservative_ranked_improvement=_mean(
+                            [item.conservative_ranked_improvement for item in target_cases]
+                        )
+                        or Decimal("0"),
+                        conservative_brier_improvement=_mean(
+                            [item.conservative_brier_improvement for item in target_cases]
                         )
                         or Decimal("0"),
                     )
@@ -936,14 +980,16 @@ class SqlWorldModelAblationRepository:
                 continue
             # The formal side supplied no distribution.  For a lower bound on
             # WorldModel skill, assume the absent formal forecast was maximally
-            # wrong and the unobserved control was perfect.  This is the exact
-            # multiclass Brier range, not an operational failure-rate threshold.
+            # wrong and the unobserved control was perfect under both proper scores.
             score_cases.append(
                 _AblationScoreCase(
                     identity=result_id,
                     information_cutoff_at=outcome.information_cutoff_at,
                     evaluation_at=outcome.evaluation_at,
-                    conservative_improvement=-_MAXIMUM_MULTICLASS_BRIER_SCORE,
+                    conservative_ranked_improvement=(
+                        -_MAXIMUM_RANKED_PROBABILITY_SCORE
+                    ),
+                    conservative_brier_improvement=-_MAXIMUM_MULTICLASS_BRIER_SCORE,
                 )
             )
         independent = select_non_overlapping_intervals(
@@ -956,33 +1002,49 @@ class SqlWorldModelAblationRepository:
         paired = tuple(
             item
             for item in independent
-            if item.formal_score is not None and item.control_score is not None
+            if item.formal_ranked_score is not None
+            and item.control_ranked_score is not None
         )
-        resolved_pairs: list[tuple[Decimal, Decimal]] = []
+        ranked_pairs: list[tuple[Decimal, Decimal]] = []
+        brier_pairs: list[tuple[Decimal, Decimal]] = []
         for item in paired:
-            assert item.formal_score is not None
-            assert item.control_score is not None
-            resolved_pairs.append((item.formal_score, item.control_score))
-        resolved_formal_scores = [formal for formal, _control in resolved_pairs]
-        resolved_control_scores = [control for _formal, control in resolved_pairs]
-        improvements = [
+            assert item.formal_ranked_score is not None
+            assert item.control_ranked_score is not None
+            assert item.formal_brier_score is not None
+            assert item.control_brier_score is not None
+            ranked_pairs.append((item.formal_ranked_score, item.control_ranked_score))
+            brier_pairs.append((item.formal_brier_score, item.control_brier_score))
+        formal_ranked_scores = [formal for formal, _control in ranked_pairs]
+        control_ranked_scores = [control for _formal, control in ranked_pairs]
+        ranked_improvements = [
             control - formal
             for formal, control in zip(
-                resolved_formal_scores,
-                resolved_control_scores,
+                formal_ranked_scores,
+                control_ranked_scores,
                 strict=True,
             )
         ]
-        formal_mean = _mean(resolved_formal_scores)
-        control_mean = _mean(resolved_control_scores)
-        improvement_mean = _mean(improvements)
-        conservative_values = tuple(item.conservative_improvement for item in independent)
-        conservative_mean = _mean(list(conservative_values))
+        formal_brier_scores = [formal for formal, _control in brier_pairs]
+        control_brier_scores = [control for _formal, control in brier_pairs]
+        brier_improvements = [
+            control - formal
+            for formal, control in zip(
+                formal_brier_scores,
+                control_brier_scores,
+                strict=True,
+            )
+        ]
+        conservative_ranked_values = tuple(
+            item.conservative_ranked_improvement for item in independent
+        )
+        conservative_brier_values = tuple(
+            item.conservative_brier_improvement for item in independent
+        )
         lower_bound = (
             None
-            if len(conservative_values) < 2
+            if len(conservative_ranked_values) < 2
             else conservative_newey_west_lower_bound(
-                conservative_values,
+                conservative_ranked_values,
                 z=Decimal("1.96"),
                 lag=1,
             )
@@ -997,15 +1059,23 @@ class SqlWorldModelAblationRepository:
             successful_controls=succeeded,
             failed_controls=failed,
             settled_pairs=settled_pairs,
-            conservative_sample_count=len(conservative_values),
-            formal_mean_brier=formal_mean,
-            control_mean_brier=control_mean,
-            mean_brier_improvement=improvement_mean,
-            conservative_mean_brier_improvement=conservative_mean,
+            conservative_sample_count=len(conservative_ranked_values),
+            formal_mean_ranked_probability_score=_mean(formal_ranked_scores),
+            control_mean_ranked_probability_score=_mean(control_ranked_scores),
+            mean_ranked_probability_improvement=_mean(ranked_improvements),
+            conservative_mean_ranked_probability_improvement=_mean(
+                list(conservative_ranked_values)
+            ),
+            formal_mean_brier=_mean(formal_brier_scores),
+            control_mean_brier=_mean(control_brier_scores),
+            mean_brier_improvement=_mean(brier_improvements),
+            conservative_mean_brier_improvement=_mean(
+                list(conservative_brier_values)
+            ),
             conservative_improvement_lower_bound=lower_bound,
             minimum_sample_size=minimum_sample_size,
             evidence_sufficient=(
-                len(conservative_values) >= minimum_sample_size
+                len(conservative_ranked_values) >= minimum_sample_size
                 and lower_bound is not None
                 and lower_bound > 0
             ),

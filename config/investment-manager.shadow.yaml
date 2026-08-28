@@ -5,21 +5,21 @@ capital:
   context_forecast:
     enabled: true
   candidate_capital_authorizations:
-    - version: btc-context-candidate-v32
+    - version: btc-context-candidate-v34
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
+      producer_behavior_id: "7537b907c1099b18c8efd72193860bf6d7402c3801e04ca209c408e54f0add9c"
       outcome_family_id: btc-price-directional-4h
-      hypothesis_fingerprint: "88e784ff0bf1e3f87b7e1f9a0c3609baeb4b34707f2e369b7fdbb85bde11168b"
-    - version: paxg-context-candidate-v10
+      hypothesis_fingerprint: "37a77ac6acea42c04b4ae9cd0fa1d1ef685347c96e6d612e3cb6fe38e562d874"
+    - version: paxg-context-candidate-v12
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
+      producer_behavior_id: "7537b907c1099b18c8efd72193860bf6d7402c3801e04ca209c408e54f0add9c"
       outcome_family_id: paxg-price-directional-4h
-      hypothesis_fingerprint: "a7872af9f99c48f186a00a3bfee34cf3234958a03c68c389b5699096b546b5d0"
-    - version: spy-context-candidate-v10
+      hypothesis_fingerprint: "9d5b867fafe2dd4b383c550e4bb45aa2a48484c6475e8e953d4527f29c12a0ac"
+    - version: spy-context-candidate-v12
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
+      producer_behavior_id: "7537b907c1099b18c8efd72193860bf6d7402c3801e04ca209c408e54f0add9c"
       outcome_family_id: spy-price-directional-4h
-      hypothesis_fingerprint: "bd6c2656efb3108ff2a42aa48dd3fc3ba169893d853cc49d92130e4dd3be06e5"
+      hypothesis_fingerprint: "770800b68218746967ab8c73eee330833fd7c31fc7b361303d62fc2faafb18d0"
 
 outcome_evaluation:
   world_model_ablation:
@@ -54,7 +54,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-product-capital-shadow-v70
+  version: world-forecast-product-capital-shadow-v74
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

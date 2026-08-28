@@ -259,7 +259,7 @@ capital:
     enabled: false
     producer_id: codex-world-model-forecast
     # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
-    producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
+    producer_behavior_id: "7537b907c1099b18c8efd72193860bf6d7402c3801e04ca209c408e54f0add9c"
     # 世界认知保留 high；这里只把已冻结的联合解释映射为三份概率分布。
     reasoning_effort: medium
     horizon_minutes: 240
@@ -275,7 +275,7 @@ capital:
     maximum_reanchor_move_bps: "100"
     targets:
       - outcome_family_id: btc-price-directional-4h
-        contract_version: btc-price-directional-4h-v2
+        contract_version: btc-price-directional-4h-v4
         reference_instrument_key: BINANCE:SPOT:BTCUSDT
         derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
         required_feature_keys: [asset_state:BTC.realized_volatility, asset_state:BTC.return_fraction]
@@ -284,22 +284,30 @@ capital:
           economic_exposure_id: CRYPTO_NETWORK:BTC:USDT
           instrument_keys: [BINANCE:USD_M_PERPETUAL:BTCUSDT]
           maximum_rule_age_seconds: 900
-        # 2024-08-26..2026-08-26 Binance Spot 1h 收盘价滚动 4h 收益的
-        # 10/30/70/90 分位边界；代表值为桶内中位数。合同激活后不可追改。
+        # 仅用冻结 development 带定义的 5/15/30/45/55/70/85/95
+        # 分位边界与桶内条件均值；验证和盲测不参与标签定义。
         outcome_buckets:
-          - {bucket_id: LARGE_LOSS, upper_bps: "-97", representative_bps: "-149"}
-          - {bucket_id: LOSS, lower_bps: "-97", upper_bps: "-29", representative_bps: "-53"}
-          - {bucket_id: FLAT, lower_bps: "-29", upper_bps: "32", representative_bps: "1"}
-          - {bucket_id: GAIN, lower_bps: "32", upper_bps: "98", representative_bps: "56"}
-          - {bucket_id: LARGE_GAIN, lower_bps: "98", representative_bps: "145"}
+          - {bucket_id: EXTREME_LOSS, upper_bps: "-146", representative_bps: "-225"}
+          - {bucket_id: LARGE_LOSS, lower_bps: "-146", upper_bps: "-67", representative_bps: "-98"}
+          - {bucket_id: LOSS, lower_bps: "-67", upper_bps: "-28", representative_bps: "-45"}
+          - {bucket_id: SMALL_LOSS, lower_bps: "-28", upper_bps: "-5", representative_bps: "-16"}
+          - {bucket_id: NEUTRAL, lower_bps: "-5", upper_bps: "9", representative_bps: "2"}
+          - {bucket_id: SMALL_GAIN, lower_bps: "9", upper_bps: "34", representative_bps: "21"}
+          - {bucket_id: GAIN, lower_bps: "34", upper_bps: "76", representative_bps: "53"}
+          - {bucket_id: LARGE_GAIN, lower_bps: "76", upper_bps: "146", representative_bps: "103"}
+          - {bucket_id: EXTREME_GAIN, lower_bps: "146", representative_bps: "231"}
         forecast_benchmark:
+          - {bucket_id: EXTREME_LOSS, probability: "0.05"}
           - {bucket_id: LARGE_LOSS, probability: "0.10"}
-          - {bucket_id: LOSS, probability: "0.20"}
-          - {bucket_id: FLAT, probability: "0.40"}
-          - {bucket_id: GAIN, probability: "0.20"}
+          - {bucket_id: LOSS, probability: "0.15"}
+          - {bucket_id: SMALL_LOSS, probability: "0.15"}
+          - {bucket_id: NEUTRAL, probability: "0.10"}
+          - {bucket_id: SMALL_GAIN, probability: "0.15"}
+          - {bucket_id: GAIN, probability: "0.15"}
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
+          - {bucket_id: EXTREME_GAIN, probability: "0.05"}
       - outcome_family_id: paxg-price-directional-4h
-        contract_version: paxg-price-directional-4h-v2
+        contract_version: paxg-price-directional-4h-v4
         reference_instrument_key: BINANCE:SPOT:PAXGUSDT
         derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:PAXGUSDT
         comparison:
@@ -311,21 +319,29 @@ capital:
           economic_exposure_id: INFLATION_SENSITIVE:PAXG:USDT
           instrument_keys: [BINANCE:USD_M_PERPETUAL:PAXGUSDT]
           maximum_rule_age_seconds: 900
-        # 同一冻结方法和截止时点，使用 PAXG 自身分布，避免继承 BTC 波动尺度。
+        # 同一 development-only 方法使用 PAXG 自身分布，不继承 BTC 波动尺度。
         outcome_buckets:
-          - {bucket_id: LARGE_LOSS, upper_bps: "-42", representative_bps: "-68"}
-          - {bucket_id: LOSS, lower_bps: "-42", upper_bps: "-11", representative_bps: "-22"}
-          - {bucket_id: FLAT, lower_bps: "-11", upper_bps: "15", representative_bps: "1"}
-          - {bucket_id: GAIN, lower_bps: "15", upper_bps: "48", representative_bps: "26"}
-          - {bucket_id: LARGE_GAIN, lower_bps: "48", representative_bps: "71"}
+          - {bucket_id: EXTREME_LOSS, upper_bps: "-54", representative_bps: "-94"}
+          - {bucket_id: LARGE_LOSS, lower_bps: "-54", upper_bps: "-25", representative_bps: "-36"}
+          - {bucket_id: LOSS, lower_bps: "-25", upper_bps: "-9", representative_bps: "-16"}
+          - {bucket_id: SMALL_LOSS, lower_bps: "-9", upper_bps: "0", representative_bps: "-5"}
+          - {bucket_id: NEUTRAL, lower_bps: "0", upper_bps: "4", representative_bps: "2"}
+          - {bucket_id: SMALL_GAIN, lower_bps: "4", upper_bps: "15", representative_bps: "10"}
+          - {bucket_id: GAIN, lower_bps: "15", upper_bps: "30", representative_bps: "21"}
+          - {bucket_id: LARGE_GAIN, lower_bps: "30", upper_bps: "57", representative_bps: "41"}
+          - {bucket_id: EXTREME_GAIN, lower_bps: "57", representative_bps: "86"}
         forecast_benchmark:
+          - {bucket_id: EXTREME_LOSS, probability: "0.05"}
           - {bucket_id: LARGE_LOSS, probability: "0.10"}
-          - {bucket_id: LOSS, probability: "0.20"}
-          - {bucket_id: FLAT, probability: "0.40"}
-          - {bucket_id: GAIN, probability: "0.20"}
+          - {bucket_id: LOSS, probability: "0.15"}
+          - {bucket_id: SMALL_LOSS, probability: "0.15"}
+          - {bucket_id: NEUTRAL, probability: "0.10"}
+          - {bucket_id: SMALL_GAIN, probability: "0.15"}
+          - {bucket_id: GAIN, probability: "0.15"}
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
+          - {bucket_id: EXTREME_GAIN, probability: "0.05"}
       - outcome_family_id: spy-price-directional-4h
-        contract_version: spy-price-directional-4h-v2
+        contract_version: spy-price-directional-4h-v4
         reference_instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
         derivative_evidence_instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
         required_feature_keys: [derivative_state:SPY.mark_index_premium_bps]
@@ -334,23 +350,31 @@ capital:
           economic_exposure_id: US_EQUITY:SPY:USDT
           instrument_keys: [BINANCE:TRADFI_PERPETUAL:SPYUSDT]
           maximum_rule_age_seconds: 900
-        # Binance TradFi Perp 自 2026-04-06 起至冻结时点的 1h 数据，方法同上；
-        # 样本较短，因此只作为前瞻合同基线，不冒充已证明 Alpha。
+        # Binance TradFi Perp 自 2026-04-06 起的 5m 成交价按真实 4h
+        # 时钟间隔结算，仅 development 带定义编码；短历史不冒充 Alpha。
         outcome_buckets:
-          - {bucket_id: LARGE_LOSS, upper_bps: "-26", representative_bps: "-39"}
-          - {bucket_id: LOSS, lower_bps: "-26", upper_bps: "-7", representative_bps: "-14"}
-          - {bucket_id: FLAT, lower_bps: "-7", upper_bps: "11", representative_bps: "2"}
-          - {bucket_id: GAIN, lower_bps: "11", upper_bps: "30", representative_bps: "17"}
-          - {bucket_id: LARGE_GAIN, lower_bps: "30", representative_bps: "45"}
+          - {bucket_id: EXTREME_LOSS, upper_bps: "-42", representative_bps: "-70"}
+          - {bucket_id: LARGE_LOSS, lower_bps: "-42", upper_bps: "-21", representative_bps: "-30"}
+          - {bucket_id: LOSS, lower_bps: "-21", upper_bps: "-7", representative_bps: "-13"}
+          - {bucket_id: SMALL_LOSS, lower_bps: "-7", upper_bps: "0", representative_bps: "-3"}
+          - {bucket_id: NEUTRAL, lower_bps: "0", upper_bps: "5", representative_bps: "2"}
+          - {bucket_id: SMALL_GAIN, lower_bps: "5", upper_bps: "12", representative_bps: "9"}
+          - {bucket_id: GAIN, lower_bps: "12", upper_bps: "26", representative_bps: "18"}
+          - {bucket_id: LARGE_GAIN, lower_bps: "26", upper_bps: "50", representative_bps: "35"}
+          - {bucket_id: EXTREME_GAIN, lower_bps: "50", representative_bps: "75"}
         forecast_benchmark:
+          - {bucket_id: EXTREME_LOSS, probability: "0.05"}
           - {bucket_id: LARGE_LOSS, probability: "0.10"}
-          - {bucket_id: LOSS, probability: "0.20"}
-          - {bucket_id: FLAT, probability: "0.40"}
-          - {bucket_id: GAIN, probability: "0.20"}
+          - {bucket_id: LOSS, probability: "0.15"}
+          - {bucket_id: SMALL_LOSS, probability: "0.15"}
+          - {bucket_id: NEUTRAL, probability: "0.10"}
+          - {bucket_id: SMALL_GAIN, probability: "0.15"}
+          - {bucket_id: GAIN, probability: "0.15"}
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
+          - {bucket_id: EXTREME_GAIN, probability: "0.05"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v47
+  version: typed-outcome-settlement-v48
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
@@ -361,11 +385,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v39
+    version: world-model-ablation-forward-v40
     enabled: false
-    plan_id: world-model-ablation-forward-v39
+    plan_id: world-model-ablation-forward-v40
     # 从预登记后的首个整点滚动槽计数；相互重叠的 4h 结果窗只构成一个独立样本。
-    activated_at: 2026-08-27T12:00:00Z
+    activated_at: 2026-08-28T03:00:00Z
     minimum_sample_size: 30
   context_forecast_stability:
     version: context-forecast-stability-forward-v1
@@ -374,21 +398,21 @@ outcome_evaluation:
     activated_at: 2026-08-27T12:00:00Z
     replicas_per_input: 1
   quant_baseline:
-    version: transparent-conditional-quant-v4
+    version: transparent-ordinal-quant-v7
     enabled: false
     producer_id: program-quant-baseline
     artifacts:
       - outcome_family_id: btc-price-directional-4h
-        artifact_id: quant_forecast_artifact_f54ca8ba93572cffb9a7
-        relative_path: evidence/quant-forecasts/quant_forecast_artifact_f54ca8ba93572cffb9a7.json
+        artifact_id: quant_forecast_artifact_0f13b2c1a895e8e84fba
+        relative_path: evidence/quant-forecasts/quant_forecast_artifact_0f13b2c1a895e8e84fba.json
       - outcome_family_id: paxg-price-directional-4h
-        artifact_id: quant_forecast_artifact_6d7056cb69ff71e482a9
-        relative_path: evidence/quant-forecasts/quant_forecast_artifact_6d7056cb69ff71e482a9.json
+        artifact_id: quant_forecast_artifact_91a5e3fdce4ca68d0818
+        relative_path: evidence/quant-forecasts/quant_forecast_artifact_91a5e3fdce4ca68d0818.json
   quant_context_posterior:
-    version: quant-context-posterior-forward-v5
+    version: quant-context-posterior-forward-v9
     enabled: false
     producer_id: codex-quant-context-posterior
-    activated_at: 2026-08-27T16:00:00Z
+    activated_at: 2026-08-28T03:00:00Z
     assignment_poll_seconds: 5
 
 governance:

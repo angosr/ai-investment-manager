@@ -101,7 +101,7 @@ Reference beta、主动偏离以及 Risk/Execution/成本造成的保留或损�
 | Evidence/State | 点时完整性、准确性和相对无该输入的增量 |
 | WorldModel | 同槽、同模型、同截止的有/无认知前瞻配对 |
 | TriggerPolicy | cadence-only 与 cadence+event 的同风险费用后逻辑账户 |
-| Forecast | proper score、校准、覆盖率和动态简单基线 |
+| Forecast | 有序收益的距离敏感 proper score、校准、连续幅度、覆盖率和动态简单基线 |
 | Product mapping | 消去规范经济参考实际收益后的 basis、funding 与规则残差 |
 | Portfolio | 相对不含该复杂组件的最简单可执行组合政策 |
 | Execution | 从冻结目标和决策价格开始的 implementation shortfall |

@@ -39,7 +39,7 @@ from investment_manager.market.repository import MarketDataStore
 
 QUANT_FEATURE_VERSION = "hourly-5m-momentum-volatility-v1"
 QUANT_INFERENCE_VERSION = "conditional-empirical-dirichlet-v1"
-QUANT_PANEL_VERSION = "quant-reliability-panel-v2"
+QUANT_PANEL_VERSION = "quant-reliability-panel-v5"
 _FIVE_MINUTES = timedelta(minutes=5)
 _FEATURE_BARS = 49
 
@@ -88,31 +88,62 @@ class QuantCellDistribution(FrozenModel):
 class QuantCandidateEvaluation(FrozenModel):
     model_name: str = Field(min_length=1)
     cell_count: int = Field(gt=0)
+    validation_ranked_probability_score: Decimal = Field(ge=0)
+    validation_worst_phase_ranked_probability_score: Decimal = Field(ge=0)
+    validation_phase_ranked_probability_scores: tuple[Decimal, ...]
     validation_brier: Decimal = Field(ge=0)
     validation_worst_phase_brier: Decimal = Field(ge=0)
     validation_phase_briers: tuple[Decimal, ...]
+    validation_mean_absolute_return_error_bps: Decimal = Field(ge=0)
+    validation_phase_mean_absolute_return_errors_bps: tuple[Decimal, ...]
+    validation_return_correlation: Decimal = Field(ge=-1, le=1)
+    validation_phase_return_correlations: tuple[Decimal, ...]
     cells: tuple[QuantCellDistribution, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validation_summary_matches_phases(self):
-        if len(self.validation_phase_briers) != 4:
+        if (
+            len(self.validation_phase_ranked_probability_scores) != 4
+            or len(self.validation_phase_briers) != 4
+            or len(self.validation_phase_mean_absolute_return_errors_bps) != 4
+            or len(self.validation_phase_return_correlations) != 4
+        ):
             raise ValueError("Quant validation 必须保存四个非重叠相位")
+        if self.validation_ranked_probability_score != sum(
+            self.validation_phase_ranked_probability_scores,
+            Decimal("0"),
+        ) / Decimal(len(self.validation_phase_ranked_probability_scores)):
+            raise ValueError("Quant validation ranked score 必须等于非重叠相位均值")
+        if self.validation_worst_phase_ranked_probability_score != max(
+            self.validation_phase_ranked_probability_scores
+        ):
+            raise ValueError("Quant validation 最差相位 ranked score 与明细不一致")
         if self.validation_brier != sum(self.validation_phase_briers, Decimal("0")) / Decimal(
             len(self.validation_phase_briers)
         ):
             raise ValueError("Quant validation Brier 必须等于非重叠相位均值")
         if self.validation_worst_phase_brier != max(self.validation_phase_briers):
             raise ValueError("Quant validation 最差相位 Brier 与相位明细不一致")
+        if self.validation_mean_absolute_return_error_bps != sum(
+            self.validation_phase_mean_absolute_return_errors_bps,
+            Decimal("0"),
+        ) / Decimal(len(self.validation_phase_mean_absolute_return_errors_bps)):
+            raise ValueError("Quant validation 连续收益绝对误差必须等于非重叠相位均值")
+        if self.validation_return_correlation != sum(
+            self.validation_phase_return_correlations,
+            Decimal("0"),
+        ) / Decimal(len(self.validation_phase_return_correlations)):
+            raise ValueError("Quant validation 收益相关性必须等于非重叠相位均值")
         return self
 
 
 class QuantForecastArtifact(FrozenModel):
     """Content-addressed training result; runtime inference performs no fitting."""
 
-    schema_version: Literal["quant-forecast-artifact-v3"] = "quant-forecast-artifact-v3"
+    schema_version: Literal["quant-forecast-artifact-v6"] = "quant-forecast-artifact-v6"
     artifact_id: str = Field(min_length=1)
-    training_method_version: Literal["purged-non-overlap-cell-panel-selection-v3"] = (
-        "purged-non-overlap-cell-panel-selection-v3"
+    training_method_version: Literal["purged-ordinal-panel-selection-v6"] = (
+        "purged-ordinal-panel-selection-v6"
     )
     inference_version: Literal["conditional-empirical-dirichlet-v1"] = QUANT_INFERENCE_VERSION
     contract_id: str = Field(min_length=1)
@@ -133,12 +164,26 @@ class QuantForecastArtifact(FrozenModel):
     blind_sample_count: int = Field(gt=0)
     validation_phase_sample_counts: tuple[int, ...]
     blind_phase_sample_counts: tuple[int, ...]
+    validation_unconditional_ranked_probability_score: Decimal = Field(ge=0)
+    validation_unconditional_phase_ranked_probability_scores: tuple[Decimal, ...]
+    selected_blind_ranked_probability_score: Decimal = Field(ge=0)
+    selected_blind_phase_ranked_probability_scores: tuple[Decimal, ...]
+    blind_unconditional_ranked_probability_score: Decimal = Field(ge=0)
+    blind_unconditional_phase_ranked_probability_scores: tuple[Decimal, ...]
     validation_unconditional_brier: Decimal = Field(ge=0)
     validation_unconditional_phase_briers: tuple[Decimal, ...]
     selected_blind_brier: Decimal = Field(ge=0)
     selected_blind_phase_briers: tuple[Decimal, ...]
     blind_unconditional_brier: Decimal = Field(ge=0)
     blind_unconditional_phase_briers: tuple[Decimal, ...]
+    selected_blind_mean_absolute_return_error_bps: Decimal = Field(ge=0)
+    selected_blind_phase_mean_absolute_return_errors_bps: tuple[Decimal, ...]
+    blind_unconditional_mean_absolute_return_error_bps: Decimal = Field(ge=0)
+    blind_unconditional_phase_mean_absolute_return_errors_bps: tuple[Decimal, ...]
+    selected_blind_return_correlation: Decimal = Field(ge=-1, le=1)
+    selected_blind_phase_return_correlations: tuple[Decimal, ...]
+    blind_unconditional_return_correlation: Decimal = Field(ge=-1, le=1)
+    blind_unconditional_phase_return_correlations: tuple[Decimal, ...]
 
     _utc_training_cutoff_at = field_validator("training_cutoff_at")(require_utc)
     _utc_dataset_last_close_at = field_validator("dataset_last_close_at")(require_utc)
@@ -150,15 +195,29 @@ class QuantForecastArtifact(FrozenModel):
         names = tuple(item.model_name for item in self.candidate_evaluations)
         if len(set(names)) != len(names) or self.selected_model not in names:
             raise ValueError("Quant candidate/selected model 身份非法")
+        eligible = tuple(
+            (index, candidate)
+            for index, candidate in enumerate(self.candidate_evaluations)
+            if all(
+                model < baseline
+                for model, baseline in zip(
+                    candidate.validation_phase_ranked_probability_scores,
+                    self.validation_unconditional_phase_ranked_probability_scores,
+                    strict=True,
+                )
+            )
+        )
+        if not eligible:
+            raise ValueError("Quant artifact 没有全相位优于基准的候选")
         selected = min(
-            enumerate(self.candidate_evaluations),
+            eligible,
             key=lambda indexed: (
-                indexed[1].validation_worst_phase_brier,
+                indexed[1].validation_worst_phase_ranked_probability_score,
                 indexed[0],
             ),
         )[1]
         if selected.model_name != self.selected_model:
-            raise ValueError("Quant selected model 未按最差非重叠相位与复杂度排序")
+            raise ValueError("Quant selected model 未按最差有序分布相位与复杂度排序")
         expected_ids = tuple(item.bucket_id for item in self.global_distribution.probabilities)
         for candidate in self.candidate_evaluations:
             cell_keys = tuple(item.cell_key for item in candidate.cells)
@@ -180,9 +239,37 @@ class QuantForecastArtifact(FrozenModel):
         if sum(self.blind_phase_sample_counts) != self.blind_sample_count:
             raise ValueError("Quant blind 相位样本数与总数不一致")
         for summary_name, phase_name in (
+            (
+                "validation_unconditional_ranked_probability_score",
+                "validation_unconditional_phase_ranked_probability_scores",
+            ),
+            (
+                "selected_blind_ranked_probability_score",
+                "selected_blind_phase_ranked_probability_scores",
+            ),
+            (
+                "blind_unconditional_ranked_probability_score",
+                "blind_unconditional_phase_ranked_probability_scores",
+            ),
             ("validation_unconditional_brier", "validation_unconditional_phase_briers"),
             ("selected_blind_brier", "selected_blind_phase_briers"),
             ("blind_unconditional_brier", "blind_unconditional_phase_briers"),
+            (
+                "selected_blind_mean_absolute_return_error_bps",
+                "selected_blind_phase_mean_absolute_return_errors_bps",
+            ),
+            (
+                "blind_unconditional_mean_absolute_return_error_bps",
+                "blind_unconditional_phase_mean_absolute_return_errors_bps",
+            ),
+            (
+                "selected_blind_return_correlation",
+                "selected_blind_phase_return_correlations",
+            ),
+            (
+                "blind_unconditional_return_correlation",
+                "blind_unconditional_phase_return_correlations",
+            ),
         ):
             phases = getattr(self, phase_name)
             if len(phases) != 4:
@@ -323,25 +410,34 @@ def quant_panel_projection(
             "expected_gross_bps": expected_gross_bps,
             "outcome_probabilities": selected_probabilities,
             "reliability": {
-                "validation_min_phase_brier_skill": min(
+                "validation_min_phase_ranked_skill": min(
                     baseline - model
                     for baseline, model in zip(
-                        artifact.validation_unconditional_phase_briers,
-                        selected.validation_phase_briers,
+                        artifact.validation_unconditional_phase_ranked_probability_scores,
+                        selected.validation_phase_ranked_probability_scores,
                         strict=True,
                     )
                 ),
-                "blind_brier_skill": (
-                    artifact.blind_unconditional_brier - artifact.selected_blind_brier
+                "blind_ranked_skill": (
+                    artifact.blind_unconditional_ranked_probability_score
+                    - artifact.selected_blind_ranked_probability_score
                 ),
-                "blind_min_phase_brier_skill": min(
+                "blind_min_phase_ranked_skill": min(
                     baseline - model
                     for baseline, model in zip(
-                        artifact.blind_unconditional_phase_briers,
-                        artifact.selected_blind_phase_briers,
+                        artifact.blind_unconditional_phase_ranked_probability_scores,
+                        artifact.selected_blind_phase_ranked_probability_scores,
                         strict=True,
                     )
                 ),
+                "blind_mean_absolute_return_error_bps": (
+                    artifact.selected_blind_mean_absolute_return_error_bps
+                ),
+                "blind_mean_absolute_return_error_skill_bps": (
+                    artifact.blind_unconditional_mean_absolute_return_error_bps
+                    - artifact.selected_blind_mean_absolute_return_error_bps
+                ),
+                "blind_return_correlation": artifact.selected_blind_return_correlation,
             },
         },
         "candidate_predictions": tuple(

@@ -52,7 +52,7 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
 
     assert serialize_forecast_evidence(evidence) == {
         "forecast_evidence": {
-            "evaluation_version": "context-forecast-evidence-v5",
+            "evaluation_version": "context-forecast-evidence-v6",
             "status": "NO_SETTLED_SAMPLES",
             "terminal_result_count": 1,
             "due_slot_count": 1,
@@ -62,6 +62,17 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
             "non_overlapping_sample_count": 0,
             "required_non_overlapping_samples": 30,
             "permission_evidence_eligible": True,
+            "mean_ranked_probability_score": None,
+            "benchmark_mean_ranked_probability_score": None,
+            "ranked_probability_skill": None,
+            "rolling_benchmark_mean_ranked_probability_score": None,
+            "rolling_ranked_probability_skill": None,
+            "rolling_ranked_probability_skill_lower_bound": None,
+            "rolling_ranked_probability_skill_upper_bound": None,
+            "market_benchmark_mean_ranked_probability_score": None,
+            "market_ranked_probability_skill": None,
+            "market_ranked_probability_skill_lower_bound": None,
+            "market_ranked_probability_skill_upper_bound": None,
             "mean_brier_score": None,
             "benchmark_mean_brier_score": None,
             "brier_skill": None,
@@ -77,6 +88,8 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
             "market_baseline_ready_count": 0,
             "mean_expected_gross_bps": None,
             "mean_realized_gross_bps": None,
+            "mean_absolute_return_error_bps": None,
+            "expected_realized_return_correlation": None,
             "result_coverage": "1",
         }
     }
@@ -206,6 +219,8 @@ def test_world_model_ablation_has_a_compact_audit_projection() -> None:
         failed_controls=0,
         settled_pairs=1,
         conservative_sample_count=2,
+        mean_ranked_probability_improvement=Decimal("0.025"),
+        conservative_mean_ranked_probability_improvement=Decimal("0.020"),
         mean_brier_improvement=Decimal("0.125"),
         conservative_improvement_lower_bound=None,
         minimum_sample_size=30,
@@ -224,6 +239,8 @@ def test_world_model_ablation_has_a_compact_audit_projection() -> None:
             "failed_controls": 0,
             "settled_pairs": 1,
             "conservative_sample_count": 2,
+            "mean_ranked_probability_improvement": "0.025",
+            "conservative_mean_ranked_probability_improvement": "0.020",
             "mean_brier_improvement": "0.125",
             "conservative_improvement_lower_bound": None,
             "minimum_sample_size": 30,

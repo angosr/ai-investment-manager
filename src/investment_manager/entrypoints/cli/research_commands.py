@@ -383,6 +383,11 @@ def train_quant_baseline_command(
         prefix=".quant-forecast-",
         payload=artifact,
     )
+    selected = next(
+        item
+        for item in artifact.candidate_evaluations
+        if item.model_name == artifact.selected_model
+    )
     typer.echo(
         json.dumps(
             {
@@ -392,19 +397,32 @@ def train_quant_baseline_command(
                 "development_sample_count": artifact.development_sample_count,
                 "validation_sample_count": artifact.validation_sample_count,
                 "blind_sample_count": artifact.blind_sample_count,
+                "selected_validation_ranked_probability_score": str(
+                    selected.validation_ranked_probability_score
+                ),
+                "selected_validation_worst_phase_ranked_probability_score": str(
+                    selected.validation_worst_phase_ranked_probability_score
+                ),
+                "validation_unconditional_ranked_probability_score": str(
+                    artifact.validation_unconditional_ranked_probability_score
+                ),
+                "selected_blind_ranked_probability_score": str(
+                    artifact.selected_blind_ranked_probability_score
+                ),
+                "blind_unconditional_ranked_probability_score": str(
+                    artifact.blind_unconditional_ranked_probability_score
+                ),
                 "selected_validation_brier": str(
-                    next(
-                        item.validation_brier
-                        for item in artifact.candidate_evaluations
-                        if item.model_name == artifact.selected_model
-                    )
+                    selected.validation_brier
                 ),
                 "selected_validation_worst_phase_brier": str(
-                    next(
-                        item.validation_worst_phase_brier
-                        for item in artifact.candidate_evaluations
-                        if item.model_name == artifact.selected_model
-                    )
+                    selected.validation_worst_phase_brier
+                ),
+                "selected_validation_mean_absolute_return_error_bps": str(
+                    selected.validation_mean_absolute_return_error_bps
+                ),
+                "selected_validation_return_correlation": str(
+                    selected.validation_return_correlation
                 ),
                 "validation_phase_sample_counts": artifact.validation_phase_sample_counts,
                 "validation_unconditional_brier": str(
@@ -413,6 +431,15 @@ def train_quant_baseline_command(
                 "selected_blind_brier": str(artifact.selected_blind_brier),
                 "blind_phase_sample_counts": artifact.blind_phase_sample_counts,
                 "blind_unconditional_brier": str(artifact.blind_unconditional_brier),
+                "selected_blind_mean_absolute_return_error_bps": str(
+                    artifact.selected_blind_mean_absolute_return_error_bps
+                ),
+                "blind_unconditional_mean_absolute_return_error_bps": str(
+                    artifact.blind_unconditional_mean_absolute_return_error_bps
+                ),
+                "selected_blind_return_correlation": str(
+                    artifact.selected_blind_return_correlation
+                ),
                 "path": str(target),
             },
             ensure_ascii=False,

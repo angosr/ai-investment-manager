@@ -64,11 +64,15 @@ class _FixedControlAnalyst:
                         {
                             "decision_slot_id": target.decision_slot_id,
                             "outcome_probabilities": [
+                                {"bucket_id": "EXTREME_LOSS", "probability": "0.05"},
                                 {"bucket_id": "LARGE_LOSS", "probability": "0.10"},
-                                {"bucket_id": "LOSS", "probability": "0.20"},
-                                {"bucket_id": "FLAT", "probability": "0.40"},
-                                {"bucket_id": "GAIN", "probability": "0.20"},
+                                {"bucket_id": "LOSS", "probability": "0.15"},
+                                {"bucket_id": "SMALL_LOSS", "probability": "0.15"},
+                                {"bucket_id": "NEUTRAL", "probability": "0.10"},
+                                {"bucket_id": "SMALL_GAIN", "probability": "0.15"},
+                                {"bucket_id": "GAIN", "probability": "0.15"},
                                 {"bucket_id": "LARGE_GAIN", "probability": "0.10"},
+                                {"bucket_id": "EXTREME_GAIN", "probability": "0.05"},
                             ],
                         }
                         for target in assignment.targets
@@ -207,11 +211,15 @@ def _seed(engine, *, record_formal: bool = True):
     probabilities = tuple(
         ForecastBucketProbability(bucket_id=bucket_id, probability=probability)
         for bucket_id, probability in (
-            ("LARGE_LOSS", Decimal("0.05")),
-            ("LOSS", Decimal("0.10")),
-            ("FLAT", Decimal("0.20")),
-            ("GAIN", Decimal("0.35")),
-            ("LARGE_GAIN", Decimal("0.30")),
+            ("EXTREME_LOSS", Decimal("0.02")),
+            ("LARGE_LOSS", Decimal("0.04")),
+            ("LOSS", Decimal("0.06")),
+            ("SMALL_LOSS", Decimal("0.08")),
+            ("NEUTRAL", Decimal("0.10")),
+            ("SMALL_GAIN", Decimal("0.15")),
+            ("GAIN", Decimal("0.20")),
+            ("LARGE_GAIN", Decimal("0.20")),
+            ("EXTREME_GAIN", Decimal("0.15")),
         )
     )
     formal = BaseForecast(
@@ -242,7 +250,7 @@ def _seed(engine, *, record_formal: bool = True):
         available_at=formal_available,
         valid_until=formal_available + timedelta(minutes=60),
         outcome_probabilities=probabilities,
-        expected_gross_bps=Decimal("50.55"),
+        expected_gross_bps=Decimal("56.80"),
         input_refs=("evidence-1", "mechanism-1", "world-model-1"),
         world_model_id="world-model-1",
         mechanism_contributions=(
@@ -290,6 +298,13 @@ def _preassign(repository, config, plan, slot, formal, *, assigned_at=None):
 
 
 def _gain_outcome(config, contract, slot) -> ForecastOutcome:
+    realized_bps = Decimal("100")
+    realized_bucket_id = next(
+        item.bucket_id
+        for item in contract.outcome_buckets
+        if (item.lower_bps is None or realized_bps >= item.lower_bps)
+        and (item.upper_bps is None or realized_bps < item.upper_bps)
+    )
     return ForecastOutcome(
         outcome_id=stable_id(
             "forecast_outcome",
@@ -314,8 +329,8 @@ def _gain_outcome(config, contract, slot) -> ForecastOutcome:
                 price_return_bps=Decimal("100"),
             ),
         ),
-        gross_target_return_bps=Decimal("100"),
-        realized_bucket_id="LARGE_GAIN",
+        gross_target_return_bps=realized_bps,
+        realized_bucket_id=realized_bucket_id,
         reason_code="SETTLED",
     )
 
@@ -626,6 +641,12 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
     assert report.formal_no_estimate_count == 0
     assert report.successful_controls == 1
     assert report.conservative_sample_count == 1
+    assert report.mean_ranked_probability_improvement is not None
+    assert report.mean_ranked_probability_improvement > 0
+    assert (
+        report.conservative_mean_ranked_probability_improvement
+        == report.mean_ranked_probability_improvement
+    )
     assert report.mean_brier_improvement is not None
     assert report.mean_brier_improvement > 0
     assert report.conservative_mean_brier_improvement == report.mean_brier_improvement
@@ -670,6 +691,8 @@ def test_late_control_is_counted_as_failure_without_post_outcome_retry() -> None
 
     assert report.settled_pairs == 0
     assert report.conservative_sample_count == 1
+    assert report.conservative_mean_ranked_probability_improvement is not None
+    assert report.conservative_mean_ranked_probability_improvement < 0
     assert report.conservative_mean_brier_improvement is not None
     assert report.conservative_mean_brier_improvement < 0
     assert not report.evidence_sufficient
