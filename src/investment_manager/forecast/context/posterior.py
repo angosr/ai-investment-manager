@@ -399,18 +399,14 @@ def audit_quant_context_posterior_draft(
             evidence_ids.update(values)
         evidence_by_mechanism[mechanism_id] = evidence_ids
         structural_values = mechanism.get("structural_evidence_ids")
-        if structural_values is None:
-            # Historical assignments predate the explicit responsibility boundary.
-            structural_evidence_by_mechanism[mechanism_id] = evidence_ids
-        else:
-            if not isinstance(structural_values, (list, tuple)) or not all(
-                isinstance(item, str) for item in structural_values
-            ):
-                raise ValueError("Quant posterior structural evidence 结构非法")
-            structural_evidence = set(structural_values)
-            if not structural_evidence.issubset(evidence_ids):
-                raise ValueError("Quant posterior structural evidence 不属于 mechanism")
-            structural_evidence_by_mechanism[mechanism_id] = structural_evidence
+        if not isinstance(structural_values, (list, tuple)) or not all(
+            isinstance(item, str) for item in structural_values
+        ):
+            raise ValueError("Quant posterior structural evidence 结构非法")
+        structural_evidence = set(structural_values)
+        if not structural_evidence.issubset(evidence_ids):
+            raise ValueError("Quant posterior structural evidence 不属于 mechanism")
+        structural_evidence_by_mechanism[mechanism_id] = structural_evidence
 
     substantive = tuple(
         item

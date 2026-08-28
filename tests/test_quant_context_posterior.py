@@ -278,6 +278,7 @@ def _fixture():
                     "transmission_stage": "PROPAGATING",
                     "evidence_ids": ("evidence-1",),
                     "conflicting_evidence_ids": (),
+                    "structural_evidence_ids": ("evidence-1",),
                 },
             ),
         },
