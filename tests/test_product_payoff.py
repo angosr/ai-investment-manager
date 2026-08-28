@@ -1707,6 +1707,7 @@ def test_producer_logical_account_reuses_cost_after_capital_and_paper_execution(
     assert step.target is not None
     assert step.risk_decision is not None
     assert step.trade_plan is not None
+    assert step.forecast_ids == (forecast.forecast_id,)
     assert len(step.execution_groups) == 1
     assert step.execution_groups[0].terminal
     assert len(step.account.positions) == 1

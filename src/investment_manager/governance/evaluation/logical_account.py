@@ -82,6 +82,12 @@ class LogicalAccountStep(FrozenModel):
     execution_groups: tuple[ExecutionGroup, ...]
     account: PortfolioAccountSnapshot
 
+    @model_validator(mode="after")
+    def forecast_references_are_unique_and_sorted(self):
+        if tuple(sorted(set(self.forecast_ids))) != self.forecast_ids:
+            raise ValueError("逻辑账户 Forecast 引用必须唯一且排序")
+        return self
+
 
 class LogicalAccountPath(FrozenModel):
     """Content-addressed accumulated result, not a second business ledger."""
@@ -411,11 +417,12 @@ class ProducerLogicalAccount:
         self._require_chronological(as_of)
         self._require_path_forecasts(sleeves)
         self._merge_funding(funding_settlements, as_of=as_of)
+        forecast_ids = tuple(sorted({item.forecast.forecast_id for item in sleeves}))
         cycle_id = stable_id(
             "producer_logical_account_cycle",
             self._path_id,
             as_of.isoformat(),
-            tuple(sorted(item.forecast.forecast_id for item in sleeves)),
+            forecast_ids,
             self._account.snapshot_id if self._account is not None else "INITIAL",
         )
         account = self._project_account(
@@ -475,7 +482,7 @@ class ProducerLogicalAccount:
             "producer_behavior_id": self._behavior_id,
             "cycle_id": cycle_id,
             "as_of": as_of,
-            "forecast_ids": tuple(sorted(item.forecast.forecast_id for item in sleeves)),
+            "forecast_ids": forecast_ids,
             "target": target,
             "risk_decision": risk_decision,
             "trade_plan": trade_plan,
