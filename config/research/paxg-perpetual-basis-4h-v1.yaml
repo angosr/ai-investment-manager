@@ -1,0 +1,76 @@
+schema_version: product-mapping-candidate-plan-v1
+plan_id: paxg-perpetual-basis-4h-v1
+evaluation_family_id: paxg-product-mapping-4h
+
+hypothesis: >-
+  在 PAXG 现货到同名 USD-M 永续的四小时产品映射中，决策时已知的永续相对现货
+  basis 会在终点收敛到零；若该假设不能稳定优于“终点 basis 等于当前 basis”的
+  无收敛基线，则现役产品映射不得继续把 basis 收敛计为预期收益。
+
+motivation:
+  excluded_live_window_end: 2026-08-28T23:59:59Z
+  reason: >-
+    2026-08-28 的单次 PAXG 模拟获利暴露了 basis 归因问题；该窗口只用于提出假设，
+    不进入本计划历史评价，也不作为通过证据。
+
+data:
+  sources:
+    - https://api.binance.com/api/v3/klines
+    - https://fapi.binance.com/fapi/v1/klines
+    - https://fapi.binance.com/fapi/v1/markPriceKlines
+    - https://fapi.binance.com/fapi/v1/indexPriceKlines
+    - https://fapi.binance.com/fapi/v1/premiumIndexKlines
+  symbol: PAXGUSDT
+  interval: 1h
+  source_window: [2025-04-01T00:00:00Z, 2026-08-01T00:00:00Z]
+  availability: completed_kline_close
+  required_alignment: exact_open_time_across_spot_contract_mark_index_premium
+  execution_limit: >-
+    历史没有 PAXG 可执行 top-of-book，因此只能进行映射假设否决和保守成本筛选，
+    不能形成精确成交回放或资本授权。
+
+target:
+  horizon_minutes: 240
+  decision_cadence_minutes: 60
+  entry_basis: contract_close / spot_close - 1
+  exit_basis: contract_close_at_horizon / spot_close_at_horizon - 1
+  realized_mapping_residual: >-
+    永续价格收益减去同方向现货价格收益；funding 单独结算，不混入 basis 标签。
+
+comparison:
+  baseline:
+    name: basis_persistence
+    expected_exit_basis: entry_basis
+  candidate:
+    name: full_basis_convergence
+    expected_exit_basis: 0
+  fitted_parameters: none
+  prohibited_alternatives: >-
+    不在看完结果后搜索半衰期、阈值、分段、方向、波动状态或其他收敛目标。
+
+evaluation:
+  chronological_split: [development_60pct, validation_20pct, blind_20pct]
+  purge_full_horizon_at_boundaries: true
+  non_overlapping_phases: four_hour_of_sequence_phases
+  primary_metric: exit_basis_mae_bps
+  diagnostics:
+    - signed_mapping_residual_mae_bps
+    - signed_mapping_residual_sign_accuracy
+    - conservative_edge_after_production_uncertainty_and_fixed_taker_fees
+  validation_rule: >-
+    candidate 必须在 validation 总体及四个非重叠相位的每一个都严格优于 baseline，
+    才允许一次性读取 blind；任一相位失败即拒绝且 blind 保持未读取。
+  blind_rule: >-
+    揭盲后 candidate 仍须在总体和四个非重叠相位全部优于 baseline；通过只允许发布
+    新的前瞻 RESEARCH 映射版本，不能授予资本。
+  cost_rule: >-
+    生产配置的逐边 taker fee、映射不确定性和可得 spread 只作为额外否决条件；
+    缺少历史可执行深度不得用固定滑点补成资本回放。
+
+result_policy:
+  rejected: >-
+    后续映射使用更简单的 basis persistence 作为新研究版本，并从零积累前瞻产品残差；
+    不继承现役 full-convergence 的结果。
+  accepted: >-
+    full-convergence 只获得新前瞻 RESEARCH 映射资格，仍须由产品残差和费用后逻辑账户验证。
+  permission: REJECTION_OR_FORWARD_RESEARCH_ONLY
