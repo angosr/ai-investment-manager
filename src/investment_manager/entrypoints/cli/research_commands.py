@@ -618,6 +618,74 @@ def fetch_binance_carry_history_command(
     )
 
 
+@app.command("evaluate-basis-mapping")
+def evaluate_basis_mapping_command(
+    plan: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    spot_dataset_id: Annotated[str, typer.Option()],
+    carry_dataset_id: Annotated[str, typer.Option()],
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        "."
+    ),
+    spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    result_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        "evidence/product-mapping"
+    ),
+) -> None:
+    """Evaluate one preregistered basis mapping; never grants capital permission."""
+
+    from investment_manager.platform.artifacts import write_json_artifact
+    from investment_manager.research.basis import (
+        evaluate_basis_mapping,
+        load_basis_mapping_plan,
+    )
+    from investment_manager.research.carry import HistoricalCarryDatasetCatalog
+    from investment_manager.research.dataset import HistoricalDatasetCatalog
+
+    root = project_root.resolve()
+    registered = load_basis_mapping_plan(plan)
+    registration_commit, registration_time = committed_file_revision(
+        plan,
+        repository_root=root,
+    )
+    artifact = evaluate_basis_mapping(
+        plan=registered,
+        plan_registration_commit=registration_commit,
+        plan_registered_at=registration_time,
+        evaluator_code_version=current_clean_code_version(repository_root=root),
+        spot=HistoricalDatasetCatalog(spot_catalog).load(spot_dataset_id),
+        carry=HistoricalCarryDatasetCatalog(carry_catalog).load(carry_dataset_id),
+    )
+    target_root = result_catalog.resolve() / artifact.artifact_id
+    target = write_json_artifact(
+        root=target_root,
+        target=target_root / "result.json",
+        prefix=".basis-mapping-",
+        payload=artifact,
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "artifact_id": artifact.artifact_id,
+                "status": artifact.status.value,
+                "blind_evaluated": artifact.blind_evaluated,
+                "validation_sample_count": artifact.validation.overall.sample_count,
+                "validation_candidate_improvement_bps": str(
+                    artifact.validation.overall.candidate_exit_basis_mae_improvement_bps
+                ),
+                "reason_codes": artifact.reason_codes,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("freeze-event-history")
 def freeze_event_history_command(
     database_url: Annotated[
