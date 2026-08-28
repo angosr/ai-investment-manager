@@ -50,7 +50,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v74"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v75"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -124,11 +124,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v53"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v48"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v49"
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
-        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v40"
+        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v41"
     )
     assert config.outcome_evaluation.context_forecast_stability is not None
     assert config.outcome_evaluation.context_forecast_stability.enabled

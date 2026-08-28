@@ -363,7 +363,7 @@ def ensure_world_model_ablation_plan(
             "UNPAIRED_STATE_FAILURES_ARE_DIAGNOSTIC_ONLY"
         ),
         "missing_score_rule": (
-            "LOWER_BOUND_MISSING_CONTROL_AS_PERFECT_AND_FORMAL_NO_ESTIMATE_AS_WORST"
+            "LOWER_BOUND_RPS_MISSING_CONTROL_AS_PERFECT_AND_FORMAL_NO_ESTIMATE_AS_WORST"
         ),
         "permission_rule": "ALL_SETTLED_PREASSIGNED_TARGETS_ENTER_CONSERVATIVE_BOUND",
         "sample_selection": SAMPLE_SELECTION_RULE,
@@ -379,7 +379,7 @@ def ensure_world_model_ablation_plan(
         plan_id=policy.plan_id,
         registered_at=now,
         base_manifest_id=release.manifest_id,
-        primary_metric="PAIRED_BRIER_CONTROL_MINUS_FORMAL",
+        primary_metric="PAIRED_RANKED_PROBABILITY_SCORE_CONTROL_MINUS_FORMAL",
         minimum_sample_size=policy.minimum_sample_size,
         hard_guardrails=(
             "CONTROL_NEVER_ENTERS_CAPITAL",

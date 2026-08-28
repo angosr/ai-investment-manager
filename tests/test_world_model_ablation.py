@@ -590,6 +590,13 @@ def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:
 
     assert repeated == first
     assert repeated.base_manifest_id == "release-ablation-v1"
+    assert repeated.primary_metric == (
+        "PAIRED_RANKED_PROBABILITY_SCORE_CONTROL_MINUS_FORMAL"
+    )
+    assert repeated.candidate_spec_snapshot is not None
+    assert repeated.candidate_spec_snapshot["missing_score_rule"].startswith(
+        "LOWER_BOUND_RPS_"
+    )
 
 
 def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> None:
