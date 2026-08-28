@@ -1,0 +1,59 @@
+{
+  "schema_version": "cash-yield-product-feasibility-v1",
+  "evaluated_at": "2026-08-28T21:50:15Z",
+  "scope": "read_only_same_account_feasibility",
+  "not_an_alpha_or_forecast": true,
+  "sources": {
+    "rwusd_faq": "https://www.binance.com/en-BH/support/faq/detail/62626eed1296460eaa5c0f8e70085389",
+    "rwusd_api": "https://developers.binance.com/docs/simple_earn/rwusd/earn",
+    "flexible_product_api": "https://developers.binance.com/docs/simple_earn/flexible-locked/earn/Get-Simple-Earn-Flexible-Product-List",
+    "flexible_redemption_api": "https://developers.binance.com/docs/simple_earn/flexible-locked/earn/Redeem-Flexible-Product",
+    "flexible_product_faq": "https://www.binance.info/en/support/faq/detail/3bd1a6eba20a445da1e94bf6cfa52e80"
+  },
+  "account_probe": {
+    "authenticated_read_only": true,
+    "secrets_or_balances_persisted": false,
+    "rwusd_account_http_status": 200,
+    "rwusd_quota_http_status": 200,
+    "rwusd_subscribe_enabled": true,
+    "rwusd_redeem_enabled": true,
+    "rwusd_quota_sufficient_for_10000_usdt": true,
+    "usdt_flexible_can_purchase": true,
+    "usdt_flexible_can_redeem": true,
+    "usdt_flexible_quota_sufficient_for_10000_usdt": true
+  },
+  "candidates": [
+    {
+      "product": "USDT Simple Earn Flexible",
+      "product_id": "USDT001",
+      "point_in_time_list_apr": 0.0281079,
+      "subscription_preview_amount_usdt": 10000.0,
+      "subscription_preview_daily_reward_usdt": 0.77,
+      "subscription_preview_implied_apr": 0.028105,
+      "settlement_asset": "USDT",
+      "ordinary_redemption": "immediate_to_spot_subject_to_platform_liquidity_and_limits",
+      "decision": "SELECTED_FOR_MOCK_PRODUCT_DESIGN"
+    },
+    {
+      "product": "RWUSD",
+      "point_in_time_apr": 0.0336,
+      "rate_observation_count": 402,
+      "rate_observation_min_apr": 0.0336,
+      "rate_observation_max_apr": 0.042,
+      "subscription_fee_fraction": 0.0,
+      "standard_redemption_fee_fraction": 0.0005,
+      "standard_redemption_timing": "T+3_by_10:00_UTC",
+      "fast_redemption_fee_fraction": 0.001,
+      "fast_redemption_timing": "instant_subject_to_quota",
+      "decision": "CHALLENGER_FOR_DEMONSTRABLY_LONG_IDLE_CASH"
+    }
+  ],
+  "decision": "NO_RUNTIME_ADMISSION_YET",
+  "reason": "USDT Flexible has the simpler current liquidity and settlement semantics, but neither candidate yet has a point-in-time Mock accounting, redemption, reconciliation and stress-liquidity implementation.",
+  "required_next_evidence": [
+    "paginate_and_manifest_point_in_time_rate_history",
+    "mock_subscription_accrual_redemption_and_account_reconciliation",
+    "stress_delayed_or_unavailable_redemption",
+    "compare_realized_net_yield_and_opportunity_cost_before_runtime_admission"
+  ]
+}
