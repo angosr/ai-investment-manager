@@ -37,6 +37,7 @@ from investment_manager.governance.models import (
 )
 from investment_manager.governance.tables import release_manifests
 from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.repository import canonical_event_locator
 from investment_manager.information.tables import normalized_events
 from investment_manager.information.text import sanitize_external_text
 from investment_manager.market.tables import (
@@ -371,17 +372,38 @@ class DashboardReader:
         return merged[:limit]
 
     def _recent_news(self, *, cursor: PageCursor | None, limit: int) -> list[WorldEvent]:
-        cursor_identity = literal("NEWS:") + normalized_events.c.evidence_id
+        canonical_news = (
+            select(
+                normalized_events.c.payload.label("payload"),
+                normalized_events.c.event_time.label("event_time"),
+                normalized_events.c.evidence_id.label("evidence_id"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        normalized_events.c.source,
+                        canonical_event_locator(),
+                    ),
+                    order_by=(
+                        normalized_events.c.observed_at.desc(),
+                        normalized_events.c.evidence_id.desc(),
+                    ),
+                )
+                .label("version_rank"),
+            )
+            .subquery()
+        )
+        cursor_identity = literal("NEWS:") + canonical_news.c.evidence_id
         query = (
-            select(normalized_events.c.payload)
+            select(canonical_news.c.payload)
+            .where(canonical_news.c.version_rank == 1)
             .order_by(
-                normalized_events.c.event_time.desc(),
-                normalized_events.c.evidence_id.desc(),
+                canonical_news.c.event_time.desc(),
+                canonical_news.c.evidence_id.desc(),
             )
             .limit(limit)
         )
         if cursor is not None:
-            query = query.where(older_than(normalized_events.c.event_time, cursor_identity, cursor))
+            query = query.where(older_than(canonical_news.c.event_time, cursor_identity, cursor))
         with self._engine.connect() as connection:
             payloads = connection.execute(query).scalars().all()
         parsed = tuple(IntelligenceEvent.model_validate(payload) for payload in payloads)

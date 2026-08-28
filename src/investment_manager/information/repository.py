@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql.elements import ColumnElement
 
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
@@ -16,6 +17,21 @@ from investment_manager.scheduling.models import (
 )
 from investment_manager.scheduling.repository import insert_trigger_with_outbox
 from investment_manager.scheduling.tables import analysis_trigger_events
+
+
+def canonical_event_locator() -> ColumnElement[str]:
+    """Return the stable upstream identity used by current event projections.
+
+    Normalizer releases may retain multiple immutable revisions of one upstream
+    document.  A source URL identifies that document across those revisions;
+    evidence without a stable URL remains independently addressable by its
+    immutable evidence id.
+    """
+
+    return func.coalesce(
+        normalized_events.c.payload["url"].as_string(),
+        normalized_events.c.evidence_id,
+    )
 
 
 class SqlEventStore:
@@ -121,10 +137,6 @@ class SqlEventStore:
             .distinct()
             .subquery()
         )
-        canonical_locator = func.coalesce(
-            normalized_events.c.payload["url"].as_string(),
-            normalized_events.c.evidence_id,
-        )
         ranked = (
             select(
                 normalized_events.c.payload.label("payload"),
@@ -132,7 +144,7 @@ class SqlEventStore:
                 normalized_events.c.evidence_id.label("evidence_id"),
                 func.row_number()
                 .over(
-                    partition_by=(normalized_events.c.source, canonical_locator),
+                    partition_by=(normalized_events.c.source, canonical_event_locator()),
                     order_by=(
                         normalized_events.c.observed_at.desc(),
                         normalized_events.c.evidence_id.desc(),

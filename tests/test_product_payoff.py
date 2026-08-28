@@ -1934,7 +1934,7 @@ def test_held_perpetual_exits_when_current_product_projection_is_unavailable(
     capital = CapitalCycleService.__new__(CapitalCycleService)
     capital._source_by_family = {forecast.outcome_family_id: source}
     capital._forecasts = SimpleNamespace(
-        latest_base_for_target=lambda **_: forecast,
+        latest_capital_base_for_target=lambda **_: forecast,
     )
     sleeve_id = SleeveTarget.identity_for(
         portfolio_id="primary",

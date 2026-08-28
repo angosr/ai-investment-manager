@@ -548,6 +548,58 @@ def test_event_api_cursor_pages_one_fact_store_without_gap(
     assert second.json()["next_cursor"] is None
 
 
+def test_event_api_projects_latest_normalized_revision_once(
+    app_config,
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'canonical-events.db'}"
+    engine = create_engine(database_url)
+    create_schema(engine)
+    at = datetime(2026, 8, 22, 3, tzinfo=UTC)
+    first = IntelligenceEvent(
+        evidence_id="event-normalizer-v1",
+        normalizer_version="normalizer-v1",
+        acquisition_route="official-rss-v1",
+        event_time=at,
+        observed_at=at,
+        source="official:test",
+        title="同一上游事件",
+        body="第一版规范化正文。",
+        url="https://example.gov/releases/one",
+        symbols=("BTCUSDT",),
+        relevance=Decimal("0.8"),
+        impact=Decimal("0.7"),
+        source_reliability=Decimal("1"),
+        novelty=Decimal("0.8"),
+    )
+    latest = first.model_copy(
+        update={
+            "evidence_id": "event-normalizer-v2",
+            "normalizer_version": "normalizer-v2",
+            "observed_at": at + timedelta(minutes=1),
+            "body": "第二版规范化正文。",
+        }
+    )
+    store = SqlEventStore(engine, pipeline_id=app_config.pipeline.version)
+    assert store.put(first)
+    assert store.put(latest)
+    application = create_app(app_config, database_url)
+
+    async def read_events():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://dashboard.test",
+        ) as client:
+            return await client.get("/api/events")
+
+    response = asyncio.run(read_events())
+
+    assert response.status_code == 200
+    assert [item["event_id"] for item in response.json()["events"]] == [
+        "NEWS:event-normalizer-v2"
+    ]
+
+
 def test_dashboard_accounts_use_the_runtime_release_identity(app_config, tmp_path) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'accounts.db'}"
     create_schema(create_engine(database_url))
