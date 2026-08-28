@@ -27,7 +27,6 @@ CLI_CONTRACT = {
     "dashboard-service": (
         "config,database_url,release_manifest,host,port,web_dist"
     ),
-    "evaluate-slow-trend-candidate": "plan,project_root,carry_catalog,result",
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
     ),
@@ -63,7 +62,6 @@ CLI_CONTRACT = {
 }
 
 RESEARCH_COMMAND_NAMES = {
-    "evaluate-slow-trend-candidate",
     "fetch-binance-carry-history",
     "fetch-binance-funding-history",
     "fetch-binance-history",
@@ -278,7 +276,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "fetch-binance-usdm-history",
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
-            "evaluate-slow-trend-candidate",
             "freeze-event-history",
         },
     }

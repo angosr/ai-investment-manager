@@ -85,8 +85,8 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' .venv/bin/alembic upgrade head
 
 ## 当前证据边界
 
-代码已经能保存世界认知、Forecast、Portfolio 选择、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置与 Shadow 当前都不启用 Forecast producer：首个 AI+Quant posterior 在 5 个定时槽与 5 个材料事件槽的 20 个目标上逐位复制 Quant，评分增量数学上恒为零且增加 40～101 秒延迟；随后 4h Quant 的最强状态也只有 BTC 6.50bp、PAXG 2.65bp 预期毛收益，均低于 10bp 的确定性往返手续费下界，因此其生产配置、运行器、训练命令、专属 Dashboard 解析和在线研究轮询已硬删除。不可变 Forecast、输入、Outcome 和离线证据制品仍永久保留。BTC/PAXG Spot 只作为规范 Outcome 和只读市场参考；将来获得唯一资本授权的生产行为只能通过对应 USD-M Perpetual 与 SPY TradFi Perpetual 表达合法多空。
+代码已经能保存世界认知、Forecast、Portfolio 选择、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置与 Shadow 当前都不启用 Forecast producer：首个 AI+Quant posterior 在 5 个定时槽与 5 个材料事件槽的 20 个目标上逐位复制 Quant，评分增量数学上恒为零且增加 40～101 秒延迟；随后 4h Quant 的最强状态也只有 BTC 6.50bp、PAXG 2.65bp 预期毛收益，均低于 10bp 的确定性往返手续费下界，因此其生产配置、运行器、训练命令、专属 Dashboard 解析和在线研究轮询已硬删除。独立预登记的 BTC 12 周慢趋势虽在 2020-03 至 2026-08 获得正的全期成本后收益，但最大回撤 69.70%，且四个固定阶段只有两个为正，已按原规则拒绝；一次性评估代码同样删除。不可变 Forecast、输入、Outcome 和离线证据制品仍永久保留。BTC/PAXG Spot 只作为规范 Outcome 和只读市场参考；将来获得唯一资本授权的生产行为只能通过对应 USD-M Perpetual 与 SPY TradFi Perpetual 表达合法多空。
 
 当前 Reference Policy 仍为空，产品映射和总资本选择也尚无足够前瞻、非重叠、费用后证据证明增量。现有 Binance 目录没有可直接充当短债或现金收益腿的未杠杆产品；TMF/TBT 的永续表达不能冒充防守现金，RWUSD 在账户资格、点时 APR、赎回与压力流动性完成验收前也不进入可投资域。模拟账户保留既有订单和可对账成本作为历史事实；新的研究假设必须先在离线点时验证中跨过预测基线和确定性成本下界，才允许建立一条前瞻逻辑账户，不能用少量交易、毛收益为正或一次方向正确证明稳定盈利，也不能由模拟环境自动升级正式资金权限。
 
-因此当前正确表述是：首个 AI 后验和首个透明 4h Quant 均已被证据淘汰；世界认知、市场与资本安全链继续运行，但尚没有通过成本下界的 Alpha producer，更不具备宣称稳定盈利的证据。
+因此当前正确表述是：首个 AI 后验、透明 4h Quant 和单一 12 周慢趋势均已被证据淘汰；世界认知、市场与资本安全链继续运行，但尚没有合格 Alpha producer，更不具备宣称稳定盈利的证据。

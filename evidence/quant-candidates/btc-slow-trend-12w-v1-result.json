@@ -1,0 +1,87 @@
+{
+  "always_long": {
+    "annualized_net_return": "-1",
+    "annualized_sharpe": "0.4274972844148311162729374215",
+    "execution_cost_per_initial_equity": "0.000750000000000000000000000",
+    "funding_pnl_per_initial_equity": "-3.103438551035109132919351897",
+    "liquidated": true,
+    "maximum_drawdown": "1",
+    "net_compounded_return": "-1",
+    "trade_count": 1,
+    "turnover_notional_per_initial_equity": "1.000000000000000000000000000",
+    "weekly_profit_factor": "0.9644575302253145668895159917"
+  },
+  "capital_change": "NONE",
+  "checks": {
+    "at_least_three_positive_regimes": false,
+    "lower_drawdown_than_always_long": true,
+    "positive_annualized_sharpe": true,
+    "positive_net_return": true,
+    "weekly_profit_factor_above_one": true
+  },
+  "conclusion": "固定 12 周慢趋势未通过预注册回顾性筛选，不进入前向研究或资本链。",
+  "dataset": {
+    "bar_count": 2404,
+    "bars_hash": "31fdac4f91964f0df2ead102bdd089734cc64963990a292b25f412587e6e718f",
+    "dataset_id": "historical_carry_dataset_ff50dce10205dfc0f265",
+    "settlement_count": 7212,
+    "settlements_hash": "cd1b1f127dea4aee841026d9422e067d04c02b029f79b858f1d354bec1157ef4"
+  },
+  "evaluated_at": "2026-08-28T20:56:50.377720+00:00",
+  "evaluator_code_version": "8c722c3bb4f1ae140c1e2ec7118eb79d9ec7ad91",
+  "method": "fixed-84d-sign-weekly-state-transition-v1",
+  "permission": "REJECTION_ONLY",
+  "plan_commit": "a7c54162e6464c1556d651d6028fb83c20aed410",
+  "plan_hash": "c8cac191109d93246e08adee79019994ba02c74ee7e9c8eb8b78a8960a1b9f1b",
+  "plan_id": "btc-slow-trend-12w-v1",
+  "regimes": [
+    {
+      "end": "2022-01-03T00:00:00+00:00",
+      "net_return": "0.889641914849283016793857399",
+      "positive": true,
+      "start": "2020-03-30T00:00:00+00:00"
+    },
+    {
+      "end": "2023-01-02T00:00:00+00:00",
+      "net_return": "0.405995868595208319579070354",
+      "positive": true,
+      "start": "2022-01-03T00:00:00+00:00"
+    },
+    {
+      "end": "2025-01-06T00:00:00+00:00",
+      "net_return": "-0.0621848092475099200277024277",
+      "positive": false,
+      "start": "2023-01-02T00:00:00+00:00"
+    },
+    {
+      "end": "2026-08-01T00:00:00+00:00",
+      "net_return": "-0.0300151665414676007994428661",
+      "positive": false,
+      "start": "2025-01-06T00:00:00+00:00"
+    }
+  ],
+  "rejection_reasons": [
+    "at_least_three_positive_regimes"
+  ],
+  "sample": {
+    "first_signal_at": "2020-03-30T00:00:00+00:00",
+    "last_signal_at": "2026-07-27T00:00:00+00:00",
+    "long_signal_count": 188,
+    "short_signal_count": 143,
+    "weekly_period_count": 331
+  },
+  "schema_version": "slow-trend-candidate-result-v1",
+  "status": "REJECTED_RETROSPECTIVE",
+  "strategy": {
+    "annualized_net_return": "0.1651299982915575",
+    "annualized_sharpe": "0.5484962854208757532753247920",
+    "execution_cost_per_initial_equity": "0.1191057336644617983011960455",
+    "funding_pnl_per_initial_equity": "-1.314492874574876049904973166",
+    "liquidated": false,
+    "maximum_drawdown": "0.6969962038650173050591616788",
+    "net_compounded_return": "1.634444869550975844979881174",
+    "trade_count": 36,
+    "turnover_notional_per_initial_equity": "158.8076448859490644015947274",
+    "weekly_profit_factor": "1.086562482325049848230870351"
+  }
+}
