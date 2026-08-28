@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v79
+  version: total-portfolio-capital-v80
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -277,7 +277,7 @@ capital:
         derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
         required_feature_keys: [asset_state:BTC.realized_volatility, asset_state:BTC.return_fraction]
         product_payoffs:
-          version: btc-perpetual-product-payoff-v4
+          version: btc-perpetual-product-payoff-v5
           economic_exposure_id: CRYPTO_NETWORK:BTC:USDT
           instrument_keys: [BINANCE:USD_M_PERPETUAL:BTCUSDT]
           maximum_rule_age_seconds: 900
@@ -312,7 +312,7 @@ capital:
           reference_price_multiplier: "1"
         required_feature_keys: [asset_state:PAXG.realized_volatility, asset_state:PAXG.return_fraction]
         product_payoffs:
-          version: paxg-perpetual-product-payoff-v2
+          version: paxg-perpetual-product-payoff-v3
           economic_exposure_id: INFLATION_SENSITIVE:PAXG:USDT
           instrument_keys: [BINANCE:USD_M_PERPETUAL:PAXGUSDT]
           maximum_rule_age_seconds: 900

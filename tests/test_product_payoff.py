@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -1646,6 +1647,14 @@ def test_context_projector_emits_spot_and_both_legal_perpetual_directions() -> N
     assert len(derivatives) == 2
     assert all(rules.rules_id in item.product_rule_refs for item in derivatives)
     assert all(item.expected_funding_bps == Decimal("0.5") for item in derivatives)
+    expected_persistent_basis = (
+        Decimal("100") / Decimal("99.95") - Decimal("1")
+    ) * Decimal("10000")
+    assert all(
+        item.expected_exit_basis_bps == expected_persistent_basis
+        for item in derivatives
+    )
+    assert all("spot-product-7" in item.input_refs for item in derivatives)
     assert len(store.values) == 3
 
 
@@ -1658,6 +1667,21 @@ def test_context_projector_can_build_without_mutating_projection_ledger() -> Non
     assert store.values == []
     assert projector.project(forecast, as_of=forecast.available_at) == built
     assert store.values == list(built)
+
+
+def test_context_projector_never_remaps_an_existing_forecast_with_a_new_cohort() -> None:
+    forecast, _, _, store, projector = _context_projector_fixture()
+    original = projector.project(forecast, as_of=forecast.available_at)
+    upgraded = replace(
+        projector,
+        policy=projector.policy.model_copy(
+            update={"version": "btc-linear-product-payoff-v2"}
+        ),
+    )
+
+    assert upgraded.project(forecast, as_of=forecast.available_at) == ()
+    assert upgraded.build_for_replay(forecast, as_of=forecast.available_at) is None
+    assert store.values == list(original)
 
 
 def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config) -> None:
@@ -1680,7 +1704,7 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
     market = InMemoryMarketDataStore()
     _put_context_market(market, at=forecast.available_at, update_id=7)
     projector = SimpleNamespace(
-        build=lambda source_forecast, *, as_of: tuple(
+        build_for_replay=lambda source_forecast, *, as_of: tuple(
             item
             for item in _decision_projection_inputs(source_forecast)[1]
             if item.target.legs[0].instrument == PERPETUAL

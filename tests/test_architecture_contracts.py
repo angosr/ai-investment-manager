@@ -27,10 +27,6 @@ CLI_CONTRACT = {
     "dashboard-service": (
         "config,database_url,release_manifest,host,port,web_dist"
     ),
-    "evaluate-basis-mapping": (
-        "plan,spot_dataset_id,carry_dataset_id,project_root,spot_catalog,carry_catalog,"
-        "result_catalog"
-    ),
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
     ),
@@ -69,7 +65,6 @@ CLI_CONTRACT = {
 }
 
 RESEARCH_COMMAND_NAMES = {
-    "evaluate-basis-mapping",
     "fetch-binance-carry-history",
     "fetch-binance-funding-history",
     "fetch-binance-history",
@@ -278,7 +273,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "operate-release",
         },
         "entrypoints/cli/research_commands.py": {
-            "evaluate-basis-mapping",
             "record-reference-rejection",
             "freeze-executable-quotes",
             "fetch-economic-series",

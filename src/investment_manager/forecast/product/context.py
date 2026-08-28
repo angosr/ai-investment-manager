@@ -75,12 +75,26 @@ class ContextProductPayoffProjector:
     ) -> tuple[ProductPayoffProjection, ...]:
         return self.store.for_source(source_forecast_id)
 
+    @property
+    def mapping_cohort_id(self) -> str:
+        return ProductPayoffMappingIdentity(
+            economic_exposure_id=self.policy.economic_exposure_id,
+            projection_version=self.policy.version,
+            instrument_keys=self.policy.instrument_keys,
+            maximum_rule_age_seconds=self.policy.maximum_rule_age_seconds,
+        ).cohort_id
+
     def project(
         self,
         forecast: BaseForecast,
         *,
         as_of: datetime,
     ) -> tuple[ProductPayoffProjection, ...]:
+        existing = self.for_source(forecast.forecast_id)
+        if existing and not any(
+            item.mapping_cohort_id == self.mapping_cohort_id for item in existing
+        ):
+            return ()
         projections = self.build(forecast, as_of=as_of)
         for projection in projections:
             self.store.record(projection)
@@ -100,12 +114,7 @@ class ContextProductPayoffProjector:
         if not forecast.available_at <= decision_at < forecast.economic_horizon_end:
             raise ValueError("Product payoff 决策时点超出经济 Forecast 支持范围")
         state = self.target_states.build(as_of=decision_at)
-        mapping_cohort_id = ProductPayoffMappingIdentity(
-            economic_exposure_id=self.policy.economic_exposure_id,
-            projection_version=self.policy.version,
-            instrument_keys=self.policy.instrument_keys,
-            maximum_rule_age_seconds=self.policy.maximum_rule_age_seconds,
-        ).cohort_id
+        mapping_cohort_id = self.mapping_cohort_id
         spec_by_key = {item.instrument.key: item for item in self.execution_specs}
         projections: list[ProductPayoffProjection] = []
         for instrument in self.instruments:
@@ -138,6 +147,27 @@ class ContextProductPayoffProjector:
                 )
                 projections.append(projection)
         return tuple(sorted(projections, key=lambda item: item.target.target_id))
+
+    def build_for_replay(
+        self,
+        forecast: BaseForecast,
+        *,
+        as_of: datetime,
+    ) -> tuple[ProductPayoffProjection, ...] | None:
+        """Use one immutable mapping cohort when replaying source-time capital."""
+
+        existing = self.for_source(forecast.forecast_id)
+        if existing:
+            current = tuple(
+                item
+                for item in existing
+                if item.mapping_cohort_id == self.mapping_cohort_id
+                and item.projected_at <= as_of
+            )
+            # None means this Forecast belongs to an earlier mapping cohort and
+            # must not be reinterpreted by the active mapping.
+            return current or None
+        return self.build(forecast, as_of=as_of)
 
     def _spot_projection(
         self,
@@ -287,6 +317,13 @@ class ContextProductPayoffProjector:
             abs(derivative.reference_spot_mid_deviation_bps or Decimal("0")),
         )
         entry_mid = (quote.ask + quote.bid) / Decimal("2")
+        expected_exit_basis, reference_quote_ref, reference_valid_until = (
+            self._persistent_exit_basis(
+                instrument=instrument,
+                derivative_mid=entry_mid,
+                as_of=as_of,
+            )
+        )
         tick_scale = rules.tick_size / entry_mid * _BPS
         mapping_uncertainty = max(
             tick_scale,
@@ -299,9 +336,10 @@ class ContextProductPayoffProjector:
             quote.exchange_time + timedelta(seconds=self.maximum_quote_age_seconds),
             market_state.exchange_time
             + timedelta(seconds=self.maximum_quote_age_seconds),
+            reference_valid_until,
         )
         common = {
-            "expected_exit_basis_bps": Decimal("0"),
+            "expected_exit_basis_bps": expected_exit_basis,
             "expected_funding_bps": expected_funding,
             "mapping_uncertainty_bps": mapping_uncertainty,
             "initial_margin_fraction": self.risk.derivative_initial_margin_fraction,
@@ -314,6 +352,7 @@ class ContextProductPayoffProjector:
                         market_state.state_id,
                         derivative.evidence_ref,
                         rules.rules_id,
+                        *reference_quote_ref,
                         *funding_rule_refs,
                         *target_state.input_refs,
                     }
@@ -345,6 +384,45 @@ class ContextProductPayoffProjector:
                 **common,
             )
             for direction in (ExposureDirection.LONG, ExposureDirection.SHORT)
+        )
+
+    def _persistent_exit_basis(
+        self,
+        *,
+        instrument: InstrumentId,
+        derivative_mid: Decimal,
+        as_of: datetime,
+    ) -> tuple[Decimal, tuple[str, ...], datetime]:
+        """Carry the observable entry basis forward; do not invent convergence."""
+
+        reference = self.contract.target.legs[0].instrument
+        if reference.product != InstrumentProduct.SPOT:
+            if reference.key != instrument.key:
+                raise PointInTimeInputUnavailable(
+                    "Product payoff 缺少可验证的非 Spot 参考映射"
+                )
+            return (
+                Decimal("0"),
+                (),
+                as_of + timedelta(seconds=self.maximum_quote_age_seconds),
+            )
+        quote = self.market.latest_spot_quote(
+            instrument=reference,
+            evaluation_at=as_of,
+            visible_at=as_of,
+        )
+        if quote is None or self._age_seconds(quote.observed_at, as_of) >= (
+            self.maximum_quote_age_seconds
+        ):
+            raise PointInTimeInputUnavailable(
+                "Product payoff 缺少新鲜参考 Spot 报价"
+            )
+        reference_mid = (quote.ask + quote.bid) / Decimal("2")
+        basis_bps = (derivative_mid / reference_mid - Decimal("1")) * _BPS
+        return (
+            basis_bps,
+            (quote.quote_id,),
+            quote.observed_at + timedelta(seconds=self.maximum_quote_age_seconds),
         )
 
     @staticmethod

@@ -54,12 +54,12 @@ class ProducerCapitalPathEvidence(FrozenModel):
 
 
 class ProductPayoffBuilder(Protocol):
-    def build(
+    def build_for_replay(
         self,
         forecast: BaseForecast,
         *,
         as_of: datetime,
-    ) -> tuple[ProductPayoffProjection, ...]: ...
+    ) -> tuple[ProductPayoffProjection, ...] | None: ...
 
 
 class ProductPayoffRecorder(ProductPayoffBuilder, Protocol):
@@ -178,7 +178,9 @@ class ProducerCapitalReplay:
         fresh: dict[str, PortfolioSleeveInput] = {}
         for forecast in panel.forecasts:
             projector = self._projector(forecast.outcome_family_id)
-            projections = projector.build(forecast, as_of=as_of)
+            projections = projector.build_for_replay(forecast, as_of=as_of)
+            if projections is None:
+                continue
             if not projections and not self._holds_family(current, forecast.outcome_family_id):
                 raise PointInTimeInputUnavailable(
                     f"{forecast.outcome_family_id} Forecast 没有可执行产品收益投影"
