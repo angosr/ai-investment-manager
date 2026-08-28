@@ -88,6 +88,8 @@ ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不
 
 研究 Forecast 复用同一 Contract、DecisionSlot、ProducerBinding、Forecast/`NO_ESTIMATE` 和 Outcome 账本。需要异步 Codex 的候选只持久化一份冻结 assignment 作为工作义务，成功或失败直接终结公共 Forecast 槽；禁止再复制一套候选结果表、结算器或资本流水。assignment 必须在任何候选调用前保存完整模型输入、Prompt、Schema、来源行为、截止和研究权限，worker 不得在执行时重新读取“最新”市场、世界认知或 Quant 状态来改写输入。研究 assignment 的缺失或持久化故障必须记录并降低该候选覆盖率，但不能阻断、延迟或改写唯一资本 Forecast。
 
+全部异步研究性 Codex 评价共用一条串行执行通道；它们可以在截止内排队，但不能并发占满账号而使 WorldModel 或正式 Forecast 无法启动。该约束只隔离研究流量，不限制正式调用次数，也不是 AI 用量预算。
+
 任何校准、收缩、来源选择或权限计算只能读取严格早于本次 information cutoff 且已经结算的 Forecast—Outcome；本次及更晚 Outcome 只能影响未来决策。输入样本身份和政策版本必须随 Forecast 保存，不能用事后更新的“最新校准”重写当时资本判断。
 
 ### 4.3 组合目标

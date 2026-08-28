@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -176,7 +177,7 @@ def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config)
     asyncio.run(scenario())
 
 
-def test_forecast_stability_behaviors_share_one_parallel_evaluation_loop(
+def test_forecast_stability_behaviors_share_one_serial_research_lane(
     app_config,
 ) -> None:
     class Settler:
@@ -188,6 +189,8 @@ def test_forecast_stability_behaviors_share_one_parallel_evaluation_loop(
         loop = asyncio.get_running_loop()
         lock = threading.Lock()
         completed = 0
+        active = 0
+        maximum_active = 0
 
         class StabilityRunner:
             def __init__(self, assignments: int, samples: int) -> None:
@@ -196,9 +199,14 @@ def test_forecast_stability_behaviors_share_one_parallel_evaluation_loop(
                 self.calls = 0
 
             def reconcile(self, *, as_of):
-                nonlocal completed
+                nonlocal active, completed, maximum_active
                 self.calls += 1
                 with lock:
+                    active += 1
+                    maximum_active = max(maximum_active, active)
+                time.sleep(0.02)
+                with lock:
+                    active -= 1
                     completed += 1
                     if completed == 2:
                         loop.call_soon_threadsafe(stop.set)
@@ -223,8 +231,83 @@ def test_forecast_stability_behaviors_share_one_parallel_evaluation_loop(
         )
 
         assert formal.calls == posterior.calls == 1
+        assert maximum_active == 1
         assert supervisor.health.forecast_stability_assignments == 13
         assert supervisor.health.forecast_stability_complete_samples == 13
         assert supervisor.health.forecast_stability_failed_replicas == 0
+
+    asyncio.run(scenario())
+
+
+def test_all_research_ai_evaluations_share_one_serial_lane(app_config) -> None:
+    class Settler:
+        def settle(self, *, as_of):
+            return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        lock = threading.Lock()
+        active = 0
+        completed = 0
+        maximum_active = 0
+
+        def measured(result):
+            nonlocal active, completed, maximum_active
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.02)
+            with lock:
+                active -= 1
+                completed += 1
+                if completed == 3:
+                    loop.call_soon_threadsafe(stop.set)
+            return result
+
+        class AblationRunner:
+            def reconcile(self, *, as_of):
+                return measured(
+                    SimpleNamespace(assignments=1, settled_pairs=0, failed_controls=0)
+                )
+
+        class StabilityRunner:
+            def reconcile(self, *, as_of):
+                return measured(
+                    SimpleNamespace(
+                        assignment_count=1,
+                        complete_sample_count=1,
+                        failed_replica_count=0,
+                    )
+                )
+
+        class PosteriorRunner:
+            def __init__(self) -> None:
+                configured = app_config.outcome_evaluation.quant_context_posterior
+                assert configured is not None
+                self.policy = configured.model_copy(update={"assignment_poll_seconds": 300})
+
+            def reconcile(self, *, as_of):
+                return measured(
+                    SimpleNamespace(
+                        assignment_count=1,
+                        forecast_count=1,
+                        no_estimate_count=0,
+                        pending_count=0,
+                    )
+                )
+
+        supervisor = OutcomeEvaluationSupervisor(
+            config=app_config,
+            target_forecast_settler=Settler(),
+            world_model_ablation_runner=AblationRunner(),
+            forecast_stability_runners=(StabilityRunner(),),
+            quant_posterior_runner=PosteriorRunner(),
+            clock=lambda: datetime.now(UTC),
+        )
+
+        await asyncio.wait_for(supervisor.run(stop), timeout=2)
+        assert completed == 3
+        assert maximum_active == 1
 
     asyncio.run(scenario())

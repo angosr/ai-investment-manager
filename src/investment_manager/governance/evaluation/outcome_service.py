@@ -86,6 +86,11 @@ class OutcomeEvaluationSupervisor:
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
     )
+    _research_ai_slot: asyncio.Lock = field(
+        default_factory=asyncio.Lock,
+        init=False,
+        repr=False,
+    )
 
     async def run(self, stop: asyncio.Event) -> None:
         workers = [self._run_settlement_loop(stop)]
@@ -149,10 +154,7 @@ class OutcomeEvaluationSupervisor:
         while not stop.is_set():
             now = require_utc(self.clock())
             try:
-                report = await asyncio.to_thread(
-                    runner.reconcile,
-                    as_of=now,
-                )
+                report = await self._reconcile_research(runner, as_of=now)
                 self.health.world_model_ablation_assignments = report.assignments
                 self.health.world_model_ablation_settled_pairs = report.settled_pairs
                 self.health.world_model_ablation_failed_controls = report.failed_controls
@@ -175,10 +177,14 @@ class OutcomeEvaluationSupervisor:
         assert runners
         while not stop.is_set():
             now = require_utc(self.clock())
-            outcomes = await asyncio.gather(
-                *(asyncio.to_thread(runner.reconcile, as_of=now) for runner in runners),
-                return_exceptions=True,
-            )
+            outcomes = []
+            for runner in runners:
+                try:
+                    outcomes.append(await self._reconcile_research(runner, as_of=now))
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:
+                    outcomes.append(exc)
             reports = tuple(item for item in outcomes if not isinstance(item, BaseException))
             errors = tuple(item for item in outcomes if isinstance(item, BaseException))
             self.health.forecast_stability_assignments = sum(
@@ -212,7 +218,7 @@ class OutcomeEvaluationSupervisor:
         while not stop.is_set():
             now = require_utc(self.clock())
             try:
-                report = await asyncio.to_thread(runner.reconcile, as_of=now)
+                report = await self._reconcile_research(runner, as_of=now)
                 self.health.quant_posterior_assignments = report.assignment_count
                 self.health.quant_posterior_forecasts = report.forecast_count
                 self.health.quant_posterior_no_estimates = report.no_estimate_count
@@ -229,6 +235,12 @@ class OutcomeEvaluationSupervisor:
                 now=require_utc(self.clock()),
                 poll_seconds=runner.policy.assignment_poll_seconds,
             )
+
+    async def _reconcile_research(self, runner, *, as_of: datetime):
+        """Keep asynchronous evaluation off the operational Codex critical path."""
+
+        async with self._research_ai_slot:
+            return await asyncio.to_thread(runner.reconcile, as_of=as_of)
 
 
 async def _wait_for_next_poll(
