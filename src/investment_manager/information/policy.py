@@ -12,6 +12,7 @@ class OfficialEventFeed(StrictConfig):
 
     stream_id: str
     url: str
+    entry_path_pattern: str | None = None
 
     @field_validator("stream_id")
     @classmethod
@@ -34,6 +35,19 @@ class OfficialEventFeed(StrictConfig):
             or parsed.fragment
         ):
             raise ValueError("official event feed 必须是无凭据、无查询的固定 .gov HTTPS URL")
+        return value
+
+    @field_validator("entry_path_pattern")
+    @classmethod
+    def entry_path_pattern_must_be_bounded(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if len(value) > 200 or not value.startswith("^") or not value.endswith("$"):
+            raise ValueError("official event entry pattern 必须完整锚定且不超过 200 字符")
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError("official event entry pattern 非法") from exc
         return value
 
 

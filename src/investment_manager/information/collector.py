@@ -28,7 +28,9 @@ from investment_manager.information.models import (
     SourcePollRecord,
     SourcePollStatus,
 )
+from investment_manager.information.official.document import parse_official_html_document
 from investment_manager.information.policy import OfficialEventFeed
+from investment_manager.information.text import sanitize_external_text
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -310,6 +312,10 @@ class OfficialRssSource:
         self._maximum_bytes = maximum_bytes
         self._transport = transport
         self._validators: dict[str, str] = {}
+        self._entry_pattern = (
+            re.compile(feed.entry_path_pattern) if feed.entry_path_pattern else None
+        )
+        self._entry_bodies: dict[str, str] = {}
 
     def read(self, *, observed_at: datetime) -> tuple[RawIntelligenceItem, ...]:
         observed_at = require_utc(observed_at)
@@ -324,28 +330,33 @@ class OfficialRssSource:
             transport=self._transport,
         ) as client:
             response = client.get(self._feed.url, headers=headers)
-        if response.status_code == 304:
-            return ()
-        response.raise_for_status()
-        if str(response.url) != self._feed.url:
-            raise ValueError("official RSS 响应 URL 与固定请求不一致")
-        if not response.content or len(response.content) > self._maximum_bytes:
-            raise ValueError("official RSS 响应为空或超过大小上限")
-        self._validators = {
-            name: value
-            for name, value in (
-                ("If-None-Match", response.headers.get("etag")),
-                ("If-Modified-Since", response.headers.get("last-modified")),
+            if response.status_code == 304:
+                return ()
+            response.raise_for_status()
+            if str(response.url) != self._feed.url:
+                raise ValueError("official RSS 响应 URL 与固定请求不一致")
+            if not response.content or len(response.content) > self._maximum_bytes:
+                raise ValueError("official RSS 响应为空或超过大小上限")
+            self._validators = {
+                name: value
+                for name, value in (
+                    ("If-None-Match", response.headers.get("etag")),
+                    ("If-Modified-Since", response.headers.get("last-modified")),
+                )
+                if value
+            }
+            return self._parse(
+                response.content,
+                observed_at=observed_at,
+                client=client,
             )
-            if value
-        }
-        return self._parse(response.content, observed_at=observed_at)
 
     def _parse(
         self,
         content: bytes,
         *,
         observed_at: datetime,
+        client: httpx.Client,
     ) -> tuple[RawIntelligenceItem, ...]:
         try:
             root = ElementTree.fromstring(content)
@@ -355,10 +366,14 @@ class OfficialRssSource:
             node for node in root.iter() if _xml_local_name(node.tag) in {"item", "entry"}
         )
         items: list[RawIntelligenceItem] = []
+        retained_entry_urls: set[str] = set()
         for entry in entries:
             title = _xml_child_text(entry, ("title",))
             published = _xml_child_text(entry, ("pubDate", "published", "updated", "date"))
-            url = _xml_entry_url(entry)
+            url = _xml_entry_url(
+                entry,
+                expected_hostname=urlparse(self._feed.url).hostname,
+            )
             if not title or not published or not url:
                 continue
             event_time = _parse_feed_time(published)
@@ -367,7 +382,29 @@ class OfficialRssSource:
             if observed_at - event_time > self._maximum_age:
                 continue
             guid = _xml_child_text(entry, ("guid", "id")) or url
-            body = _xml_child_text(entry, ("description", "summary", "content")) or title
+            feed_body = (
+                _xml_child_text(entry, ("description", "summary", "content")) or title
+            )
+            body = feed_body
+            acquisition_route = "official-rss-v1"
+            entry_url = self._bounded_entry_url(url)
+            if entry_url is not None:
+                retained_entry_urls.add(entry_url)
+                try:
+                    body = _merge_official_entry_body(
+                        title=title,
+                        feed_body=feed_body,
+                        entry_body=self._entry_body(client, entry_url),
+                    )
+                    acquisition_route = "official-rss-entry-v2"
+                    url = entry_url
+                except (httpx.HTTPError, ValueError) as exc:
+                    logger.warning(
+                        "official RSS 正文补全失败，保留可审计 RSS 事实: stream=%s url=%s error=%s",
+                        self._feed.stream_id,
+                        entry_url,
+                        exc,
+                    )
             items.append(
                 RawIntelligenceItem(
                     source_item_id=stable_id(
@@ -377,7 +414,7 @@ class OfficialRssSource:
                         event_time.isoformat(),
                     ),
                     source=f"official:{self._feed.stream_id}",
-                    acquisition_route="official-rss-v1",
+                    acquisition_route=acquisition_route,
                     event_time=event_time,
                     observed_at=observed_at,
                     title=_bounded_external_text(title, maximum_length=1_000),
@@ -388,11 +425,64 @@ class OfficialRssSource:
                     directional_support_eligible=True,
                 )
             )
+        self._entry_bodies = {
+            url: body
+            for url, body in self._entry_bodies.items()
+            if url in retained_entry_urls
+        }
         return tuple(items)
+
+    def _bounded_entry_url(self, value: str) -> str | None:
+        if self._entry_pattern is None:
+            return None
+        feed = urlparse(self._feed.url)
+        parsed = urlparse(value)
+        path = parsed.path.rstrip("/") or "/"
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != feed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or self._entry_pattern.fullmatch(path) is None
+        ):
+            return None
+        return parsed._replace(path=path).geturl()
+
+    def _entry_body(self, client: httpx.Client, url: str) -> str:
+        if cached := self._entry_bodies.get(url):
+            return cached
+        response = client.get(
+            url,
+            headers={
+                "Accept": "text/html",
+                "User-Agent": "investment-manager-official-events/1.0",
+            },
+        )
+        response.raise_for_status()
+        if str(response.url).rstrip("/") != url.rstrip("/"):
+            raise ValueError("official RSS entry 响应 URL 与固定请求不一致")
+        if not response.content or len(response.content) > self._maximum_bytes:
+            raise ValueError("official RSS entry 响应为空或超过大小上限")
+        document = parse_official_html_document(response.text)
+        body = document.body.strip()[:20_000]
+        if not document.title.strip() or not body:
+            raise ValueError("official RSS entry 缺少标题或正文")
+        self._entry_bodies[url] = body
+        return body
 
 
 def _xml_local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
+
+
+def _merge_official_entry_body(*, title: str, feed_body: str, entry_body: str) -> str:
+    summary, _ = sanitize_external_text(feed_body, maximum_length=1_000)
+    normalized_title, _ = sanitize_external_text(title, maximum_length=1_000)
+    if not summary or summary == normalized_title or entry_body.startswith(summary):
+        return entry_body
+    return f"{summary}\n{entry_body}"[:20_000]
 
 
 def _xml_child_text(element: ElementTree.Element, names: tuple[str, ...]) -> str:
@@ -404,7 +494,11 @@ def _xml_child_text(element: ElementTree.Element, names: tuple[str, ...]) -> str
     return ""
 
 
-def _xml_entry_url(element: ElementTree.Element) -> str | None:
+def _xml_entry_url(
+    element: ElementTree.Element,
+    *,
+    expected_hostname: str | None,
+) -> str | None:
     for child in element:
         if _xml_local_name(child.tag) != "link":
             continue
@@ -413,8 +507,9 @@ def _xml_entry_url(element: ElementTree.Element) -> str | None:
         if (
             parsed.scheme == "https"
             and parsed.hostname
-            and parsed.hostname.endswith(".gov")
+            and parsed.hostname == expected_hostname
             and parsed.username is None
+            and parsed.password is None
         ):
             return _bounded_external_url(value)
     return None

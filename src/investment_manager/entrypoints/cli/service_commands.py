@@ -417,7 +417,9 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
     sources.extend(
         OfficialRssSource(
             feed,
-            maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
+            maximum_age_seconds=(
+                loaded.decision_state.packet_policy.maximum_background_fact_distance_seconds
+            ),
             timeout_seconds=policy.request_timeout_seconds,
         )
         for feed in policy.official_event_feeds

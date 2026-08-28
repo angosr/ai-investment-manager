@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from investment_manager.information.collector import RawIntelligenceItem
+from investment_manager.information.official.document import parse_official_html_document
 from investment_manager.information.policy import OfficialPublicationFeed
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
@@ -28,111 +29,6 @@ class _IndexLinkParser(HTMLParser):
         href = (values.get("href") or "").strip()
         if href:
             self.links.append(href)
-
-
-class _PublicationParser(HTMLParser):
-    _HIDDEN_TAGS = frozenset({"script", "style", "noscript", "svg"})
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.meta_title: str | None = None
-        self.time_values: list[str] = []
-        self._main_depth = 0
-        self._article_depth = 0
-        self._article_found = False
-        self._hidden_depth = 0
-        self._heading_depth = 0
-        self._document_title_depth = 0
-        self._document_title_parts: list[str] = []
-        self._heading_parts: list[str] = []
-        self._body_parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        tag = tag.lower()
-        self._capture_metadata(tag, attrs)
-        if tag == "title":
-            self._document_title_depth += 1
-        if tag == "main":
-            self._main_depth += 1
-            return
-        if not self._main_depth:
-            return
-        if tag == "article" and not self._article_found:
-            self._article_found = True
-            self._article_depth = 1
-        elif tag == "article" and self._article_depth:
-            self._article_depth += 1
-        if self._article_depth:
-            if tag in self._HIDDEN_TAGS:
-                self._hidden_depth += 1
-            if tag == "h1":
-                self._heading_depth += 1
-        if tag == "time" and self._article_depth:
-            self._capture_time(attrs)
-
-    def handle_startendtag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        tag = tag.lower()
-        self._capture_metadata(tag, attrs)
-        if tag == "time" and self._article_depth:
-            self._capture_time(attrs)
-
-    def _capture_metadata(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        values = dict(attrs)
-        if tag == "meta" and (values.get("property") or values.get("name")) == "og:title":
-            title = (values.get("content") or "").strip()
-            if title:
-                self.meta_title = title
-
-    def _capture_time(self, attrs: list[tuple[str, str | None]]) -> None:
-        value = (dict(attrs).get("datetime") or "").strip()
-        if value:
-            self.time_values.append(value)
-
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if tag == "title" and self._document_title_depth:
-            self._document_title_depth -= 1
-        if not self._main_depth:
-            return
-        if self._article_depth:
-            if tag in self._HIDDEN_TAGS and self._hidden_depth:
-                self._hidden_depth -= 1
-            if tag == "h1" and self._heading_depth:
-                self._heading_depth -= 1
-            if tag == "article":
-                self._article_depth -= 1
-        if tag == "main":
-            self._main_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        text = " ".join(data.split())
-        if text and self._document_title_depth:
-            self._document_title_parts.append(text)
-        if not text or not self._article_depth or self._hidden_depth:
-            return
-        self._body_parts.append(text)
-        if self._heading_depth:
-            self._heading_parts.append(text)
-
-    @property
-    def title(self) -> str:
-        return (
-            self.meta_title
-            or " ".join(self._heading_parts).strip()
-            or " ".join(self._document_title_parts).strip()
-        )
-
-    @property
-    def body(self) -> str:
-        return "\n".join(self._body_parts).strip()
 
 
 class OfficialPublicationSource:
@@ -259,13 +155,16 @@ class OfficialPublicationSource:
         *,
         observed_at: datetime,
     ) -> RawIntelligenceItem | None:
-        parser = _PublicationParser()
-        parser.feed(content)
-        title = parser.title.strip()
-        body = parser.body.strip()
+        document = parse_official_html_document(content)
+        title = document.title.strip()
+        body = document.body.strip()
         if not title or not body:
             raise ValueError("official publication entry 缺少标题或正文")
-        event_time = _publication_time(parser.time_values, url=url, observed_at=observed_at)
+        event_time = _publication_time(
+            list(document.time_values),
+            url=url,
+            observed_at=observed_at,
+        )
         if event_time > observed_at:
             raise ValueError("official publication 发布时间晚于系统观测时间")
         if observed_at - event_time > self._maximum_age:

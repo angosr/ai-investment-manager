@@ -299,6 +299,123 @@ def test_official_rss_source_emits_only_fresh_first_party_items() -> None:
     assert event.trigger_priority == 0
 
 
+def test_official_rss_source_hydrates_bounded_first_party_entry_once() -> None:
+    observed_at = datetime(2026, 8, 21, 18, tzinfo=UTC)
+    feed_url = "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"
+    entry_url = "https://www.cftc.gov/PressRoom/PressReleases/9200-26"
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><item>
+      <guid>9200-26</guid><title>CFTC announces digital asset action</title>
+      <link>{entry_url}/</link>
+      <pubDate>Fri, 21 Aug 2026 17:30:00 GMT</pubDate>
+    </item></channel></rss>""".encode()
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if str(request.url) == feed_url:
+            return httpx.Response(200, content=xml, request=request)
+        assert str(request.url) == entry_url
+        return httpx.Response(
+            200,
+            text=(
+                '<html><head><meta property="og:title" '
+                'content="CFTC announces digital asset action"></head>'
+                '<body><div role="main"><nav>Site navigation</nav><article>'
+                '<h1>CFTC announces digital asset action</h1>'
+                '<p>The Commission approved a final digital asset market action.</p>'
+                '</article></div></body></html>'
+            ),
+            request=request,
+        )
+
+    source = OfficialRssSource(
+        OfficialEventFeed(
+            stream_id="cftc-press-releases",
+            url=feed_url,
+            entry_path_pattern=r"^/PressRoom/PressReleases/[0-9]+-[0-9]{2}$",
+        ),
+        maximum_age_seconds=3_600,
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = source.read(observed_at=observed_at)
+    second = source.read(observed_at=observed_at + timedelta(minutes=1))
+
+    assert len(first) == len(second) == 1
+    assert first[0].event_time == datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
+    assert first[0].acquisition_route == "official-rss-entry-v2"
+    assert "approved a final digital asset market action" in first[0].body
+    assert "Site navigation" not in first[0].body
+    assert requests == [feed_url, entry_url, feed_url]
+
+
+def test_official_rss_source_rejects_cross_domain_entry_identity() -> None:
+    observed_at = datetime(2026, 8, 21, 18, tzinfo=UTC)
+    feed_url = "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"
+    xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><item>
+      <guid>foreign</guid><title>Foreign government page</title>
+      <link>https://www.sec.gov/newsroom/press-releases/foreign</link>
+      <pubDate>Fri, 21 Aug 2026 17:30:00 GMT</pubDate>
+    </item></channel></rss>"""
+    source = OfficialRssSource(
+        OfficialEventFeed(stream_id="cftc-press-releases", url=feed_url),
+        maximum_age_seconds=3_600,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=xml, request=request)
+        ),
+    )
+
+    assert source.read(observed_at=observed_at) == ()
+
+
+def test_official_rss_source_preserves_summary_before_sec_body_container() -> None:
+    observed_at = datetime(2026, 8, 27, 23, tzinfo=UTC)
+    feed_url = "https://www.sec.gov/news/pressreleases.rss"
+    entry_url = "https://www.sec.gov/newsroom/press-releases/2026-78-market-action"
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><item>
+      <guid>2026-78</guid><title>SEC announces market action</title>
+      <link>{entry_url}</link>
+      <description><![CDATA[<p>High-density official summary.</p>]]></description>
+      <pubDate>Thu, 27 Aug 2026 17:30:00 -0400</pubDate>
+    </item></channel></rss>""".encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == feed_url:
+            return httpx.Response(200, content=xml, request=request)
+        assert str(request.url) == entry_url
+        return httpx.Response(
+            200,
+            text=(
+                '<meta property="og:title" content="SEC announces market action">'
+                '<main><nav>Newsroom navigation</nav>'
+                '<div class="clearfix field field--name-body field__item">'
+                '<p>Full first-party action details and legal status.</p>'
+                '</div></main>'
+            ),
+            request=request,
+        )
+
+    source = OfficialRssSource(
+        OfficialEventFeed(
+            stream_id="sec-press-releases",
+            url=feed_url,
+            entry_path_pattern=r"^/newsroom/press-releases/[a-z0-9-]+$",
+        ),
+        maximum_age_seconds=7_200,
+        transport=httpx.MockTransport(handler),
+    )
+
+    item = source.read(observed_at=observed_at)[0]
+
+    assert item.acquisition_route == "official-rss-entry-v2"
+    assert item.body.startswith("High-density official summary.\n")
+    assert "Full first-party action details" in item.body
+    assert "Newsroom navigation" not in item.body
+
+
 def test_official_macro_release_has_ai_trigger_priority() -> None:
     observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
     event = EventNormalizer(version="official-test-v8").normalize(
