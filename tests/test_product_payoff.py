@@ -1802,6 +1802,27 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
     )
     assert capital_path.path.account == capital_path.steps[-1].account
 
+    retired_mapping_replay = ProducerCapitalReplay(
+        producer_behavior_id=forecast.producer_behavior_id,
+        capital_policy=app_config.capital.model_copy(update={"enabled": True}),
+        initial_cash=Decimal("10000"),
+        market=market,
+        product_payoffs_by_family={
+            forecast.outcome_family_id: SimpleNamespace(
+                build_for_replay=lambda _forecast, *, as_of: None
+            )
+        },
+        sleeve_risk=risk,
+    )
+    assert (
+        evaluate_producer_capital_path(
+            initial_cash=Decimal("10000"),
+            ledger=ledger,
+            replay=retired_mapping_replay,
+        )
+        is None
+    )
+
     event_at = NOW + timedelta(minutes=5)
     event_cause = ForecastSlotCause.material_state(
         policy_version="test-material-v1",

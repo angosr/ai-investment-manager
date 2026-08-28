@@ -170,21 +170,27 @@ class ProducerCapitalReplay:
     def producer_behavior_id(self) -> str:
         return self._behavior_id
 
-    def advance(self, panel: ProducerDecisionPanel) -> LogicalAccountStep:
+    def advance(self, panel: ProducerDecisionPanel) -> LogicalAccountStep | None:
         if panel.producer_behavior_id != self._behavior_id:
             raise ValueError("Producer panel 与逻辑账户行为身份不一致")
         as_of = panel.available_at
         current = self._account.current_account
         fresh: dict[str, PortfolioSleeveInput] = {}
+        mapped: list[tuple[BaseForecast, tuple[ProductPayoffProjection, ...]]] = []
         for forecast in panel.forecasts:
             projector = self._projector(forecast.outcome_family_id)
             projections = projector.build_for_replay(forecast, as_of=as_of)
             if projections is None:
-                continue
+                # A joint capital panel is one opportunity set. Mixing old and
+                # current product mapping cohorts would create a partial universe
+                # that never existed prospectively, so the whole panel is skipped.
+                return None
             if not projections and not self._holds_family(current, forecast.outcome_family_id):
                 raise PointInTimeInputUnavailable(
                     f"{forecast.outcome_family_id} Forecast 没有可执行产品收益投影"
                 )
+            mapped.append((forecast, projections))
+        for forecast, projections in mapped:
             authorization = self._authorization(forecast)
             for projection in projections:
                 sleeve = PortfolioSleeveInput(
@@ -423,13 +429,22 @@ def evaluate_producer_capital_path(
     if not selected:
         return None
     selected_panels = tuple(selected)
-    latest_panel_at = selected_panels[-1].available_at
+    evaluated_panels: list[ProducerDecisionPanel] = []
+    steps: list[LogicalAccountStep] = []
+    for panel in selected_panels:
+        step = replay.advance(panel)
+        if step is None:
+            continue
+        evaluated_panels.append(panel)
+        steps.append(step)
+    if not evaluated_panels:
+        return None
+    latest_panel_at = evaluated_panels[-1].available_at
     if mark_at is not None:
         mark_at = require_utc(mark_at)
         if mark_at < latest_panel_at:
             raise ValueError("Producer capital 估值时点不能早于最后一个 panel")
     as_of = mark_at or latest_panel_at
-    steps = tuple(replay.advance(panel) for panel in selected_panels)
     current = replay.account.current_account
     if current is not None and current.as_of < as_of:
         replay.mark(as_of=as_of)
@@ -437,10 +452,10 @@ def evaluate_producer_capital_path(
         evaluation_version=LOGICAL_ACCOUNT_EVALUATION_VERSION,
         as_of=as_of,
         initial_cash=initial_cash,
-        producer_id=selected_panels[0].producer_id,
+        producer_id=evaluated_panels[0].producer_id,
         producer_behavior_id=ledger.producer_behavior_id,
         included_strata=included_strata,
-        panel_ids=tuple(item.panel_id for item in selected_panels),
-        steps=steps,
+        panel_ids=tuple(item.panel_id for item in evaluated_panels),
+        steps=tuple(steps),
         path=replay.account.result(),
     )
