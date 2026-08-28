@@ -68,6 +68,8 @@ WorldModel 不能直接输出仓位或订单。中性先验是长期风险溢价
 
 官方日历主动创建可修改的未来唤醒；广域事件流发现日历外冲击。系统不等用户提醒 CFTC、FOMC、财政融资或重要立法日程。Provider 只是可替换采集器：接入前必须说明它填补哪项观察盲区、区分哪个竞争机制或改善哪个 Forecast；长期没有消费者或增量即删除。
 
+央行公开活动日历不能用固定人名或只匹配“主席”冒充完整政策日程。系统完整保存 [Federal Reserve 公开日历](https://www.federalreserve.gov/json/calendar.json)原始响应及修订，结构化投影 Board Chair、Vice Chair 和 Governor 的未来讲话、证词与讨论，角色而非个人姓名是稳定筛选语义。日历唤醒只启动官方原文获取，不直接调用 AI 或给出方向；发布终态只由 [Federal Reserve 官方讲话与证词 RSS](https://www.federalreserve.gov/feeds/feeds.htm)的 GUID、发布时间和官方文档链接建立。Information 保存原始 HTML，但 DecisionPacket 只携带按原段落顺序抽取的政策相关原句、文档身份和显式省略引用；该事件占用现有注意力容量时必须淘汰低优先级背景，不把整页 HTML 追加到面板，也不新增一个摘要 Agent。只有这一手原文形成实质 Canonical Fact 后才进入同一 Delta 与 WorldModel 链；截止前原文不可得则保留 `UNAVAILABLE`，不用二手快讯补写。官方日历响应合法但当前没有符合范围的未来活动时记为 `UNCHANGED`，不得误报为采集失败。区域联储行官员不在这一 Board 端点的完整性声明内；若要纳入，必须另有可重放的官方合同，不由二手新闻补齐。
+
 突发线索的一手回溯仍由 Information 的同一证据链负责，不另建“新闻核验 Agent”、临时搜索记忆或第二事件库。一个官方站点只有在机器可读入口实际覆盖相关行动、发布延迟低于所服务的决策时域，并能永久保存首次响应、发布时间和修订时，才可声明对应能力；存在官网、RSS 或列表页本身不能证明实时覆盖。若紧急口径只通过官方社交账号或受限 API 发布，必须取得可授权、可回放的正式接入合同；在此之前聚合快讯只保留为待核验线索，Coverage 保持缺失，不能由 Codex 临时联网搜索后把不可重放的结果写成一手事实。这样新增来源只替换采集器，不改变 Evidence、State、WorldModel 或触发的所有权。
 
 名义国债收益率与 TIPS 实际收益率是两个不可互相代替的定价通道。系统分别从美国财政部的 [Daily Treasury Par Yield Curve](https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve) 和 [Daily Treasury Par Real Yield Curve](https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_real_yield_curve) 保存最新点时曲线：前者表达名义贴现与久期约束，后者表达扣除通胀后的无风险持有成本，尤其用于验证贵金属及长久期资产传导。两者日期不同时不计算即时盈亏平衡通胀；实际收益率也不冒充 GOLD 现货覆盖，只作为可独立结算的外生驱动。
