@@ -29,15 +29,18 @@ function pagePath(path: string, cursor?: string, limit = 30): string {
   return `${path}?${query.toString()}`;
 }
 
-async function allPages<T>(
-  fetchPage: (cursor?: string) => Promise<Page<T>>,
-): Promise<T[]> {
-  const items: T[] = [];
+async function unseenEquityPoints(
+  knownSnapshotIds: ReadonlySet<string>,
+): Promise<CapitalEquityPoint[]> {
+  const items: CapitalEquityPoint[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (;;) {
-    const page = await fetchPage(cursor);
-    items.push(...page.items);
+    const page = await api.capitalEquity(cursor, 100);
+    for (const point of page.items) {
+      if (knownSnapshotIds.has(point.snapshot_id)) return items;
+      items.push(point);
+    }
     if (page.nextCursor === null) return items;
     if (seenCursors.has(page.nextCursor)) {
       throw new Error("分页游标重复，拒绝展示不完整权益历史");
@@ -46,6 +49,8 @@ async function allPages<T>(
     cursor = page.nextCursor;
   }
 }
+
+let equityHistoryCache: CapitalEquityPoint[] | null = null;
 
 export const api = {
   health: () => getJson<Health>("/api/health"),
@@ -57,8 +62,14 @@ export const api = {
     }>(pagePath("/api/capital/equity", cursor, limit));
     return { items: result.points, nextCursor: result.next_cursor };
   },
-  capitalEquityHistory: () =>
-    allPages((cursor) => api.capitalEquity(cursor, 100)),
+  capitalEquityHistory: async () => {
+    const known = new Set(
+      (equityHistoryCache ?? []).map((point) => point.snapshot_id),
+    );
+    const additions = await unseenEquityPoints(known);
+    equityHistoryCache = [...additions, ...(equityHistoryCache ?? [])];
+    return equityHistoryCache;
+  },
   capitalActivity: async (cursor?: string, limit = 30): Promise<Page<CapitalAction>> => {
     const result = await getJson<{ actions: CapitalAction[]; next_cursor: string | null }>(
       pagePath("/api/capital/activity", cursor, limit),
