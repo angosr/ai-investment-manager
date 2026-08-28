@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic import Field, TypeAdapter, field_validator, model_validator
@@ -23,6 +24,8 @@ from investment_manager.forecast.codex.router import (
 )
 from investment_manager.forecast.context.estimate import (
     CONTEXT_FORECAST_OUTPUT_VERSION,
+    ContextForecastDraft,
+    ContextForecastProbabilityDraft,
     ContextForecastStructuredOutput,
     context_forecast_output_schema_for_ids,
     context_forecast_runtime,
@@ -53,7 +56,7 @@ from investment_manager.forecast.contracts import (
     ForecastSlotObligation,
 )
 from investment_manager.forecast.repository import SqlForecastStore
-from investment_manager.forecast.results import BaseForecast
+from investment_manager.forecast.results import BaseForecast, ForecastMechanismEffect
 from investment_manager.forecast.tables import (
     context_forecast_posterior_assignments,
     forecast_decision_slots,
@@ -73,6 +76,8 @@ from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.settings import AppConfig
 
+POSTERIOR_FINALIZATION_VERSION = "quant-context-posterior-finalization-v1"
+
 
 def quant_context_posterior_behavior_id(
     *,
@@ -90,6 +95,7 @@ def quant_context_posterior_behavior_id(
         {
             "input_version": POSTERIOR_INPUT_VERSION,
             "output_version": CONTEXT_FORECAST_OUTPUT_VERSION,
+            "finalization_version": POSTERIOR_FINALIZATION_VERSION,
             "instructions": POSTERIOR_INSTRUCTIONS,
             "output_model": ContextForecastStructuredOutput.model_json_schema(),
             "contracts": ordered_contracts,
@@ -305,6 +311,79 @@ def build_quant_context_posterior_assignment(
     }
     values["source_hash"] = content_hash(values)
     return QuantContextPosteriorAssignment.model_validate(values)
+
+
+def audit_quant_context_posterior_draft(
+    *,
+    draft: ContextForecastDraft,
+    quant_prior: BaseForecast,
+    analysis_input: dict[str, object],
+) -> ContextForecastDraft:
+    """Make the stored posterior match its declared causal use of the Quant prior."""
+
+    if draft.decision_slot_id != quant_prior.decision_slot_id:
+        raise ValueError("Quant posterior draft 与来源 Quant prior 的 Slot 不一致")
+    posterior_bucket_ids = tuple(item.bucket_id for item in draft.outcome_probabilities)
+    prior_bucket_ids = tuple(item.bucket_id for item in quant_prior.outcome_probabilities)
+    if posterior_bucket_ids != prior_bucket_ids:
+        raise ValueError("Quant posterior draft 与来源 Quant prior 的 bucket 不一致")
+
+    world_model = analysis_input.get("world_model")
+    mechanisms = world_model.get("mechanisms") if isinstance(world_model, dict) else None
+    if not isinstance(mechanisms, (list, tuple)):
+        raise ValueError("Quant posterior 输入缺少 WorldModel mechanisms")
+    evidence_by_mechanism: dict[str, set[str]] = {}
+    for mechanism in mechanisms:
+        if not isinstance(mechanism, dict):
+            raise ValueError("Quant posterior WorldModel mechanism 结构非法")
+        mechanism_id = mechanism.get("mechanism_id")
+        if not isinstance(mechanism_id, str) or mechanism_id in evidence_by_mechanism:
+            raise ValueError("Quant posterior WorldModel mechanism 身份非法")
+        evidence_ids: set[str] = set()
+        for field_name in ("evidence_ids", "conflicting_evidence_ids"):
+            values = mechanism.get(field_name, ())
+            if not isinstance(values, (list, tuple)) or not all(
+                isinstance(item, str) for item in values
+            ):
+                raise ValueError("Quant posterior WorldModel evidence 结构非法")
+            evidence_ids.update(values)
+        evidence_by_mechanism[mechanism_id] = evidence_ids
+
+    substantive = tuple(
+        item
+        for item in draft.mechanism_contributions
+        if item.effect != ForecastMechanismEffect.NO_MATERIAL_EFFECT
+    )
+    cited = set(draft.evidence_refs)
+    for contribution in substantive:
+        mechanism_evidence = evidence_by_mechanism.get(contribution.mechanism_id)
+        if mechanism_evidence is None:
+            raise ValueError("Quant posterior 引用了未知 WorldModel mechanism")
+        if not cited.intersection(mechanism_evidence):
+            raise ValueError("Quant posterior 实质调整未引用对应 mechanism 的 evidence")
+
+    posterior_probabilities = tuple(
+        Decimal(item.probability) for item in draft.outcome_probabilities
+    )
+    prior_probabilities = tuple(item.probability for item in quant_prior.outcome_probabilities)
+    if substantive:
+        if posterior_probabilities == prior_probabilities:
+            raise ValueError("Quant posterior 声明实质影响但未改变 Quant prior")
+        return draft
+
+    return ContextForecastDraft(
+        decision_slot_id=draft.decision_slot_id,
+        outcome_probabilities=tuple(
+            ContextForecastProbabilityDraft(
+                bucket_id=item.bucket_id,
+                probability=format(item.probability, "f"),
+            )
+            for item in quant_prior.outcome_probabilities
+        ),
+        mechanism_contributions=draft.mechanism_contributions,
+        evidence_refs=draft.evidence_refs,
+        invalidation_conditions=draft.invalidation_conditions,
+    )
 
 
 @dataclass(slots=True)
@@ -798,6 +877,7 @@ class CodexQuantContextPosteriorAnalyst:
                         "analysis_mode": "QUANT_CONTEXT_POSTERIOR",
                         "input_version": POSTERIOR_INPUT_VERSION,
                         "output_version": CONTEXT_FORECAST_OUTPUT_VERSION,
+                        "finalization_version": POSTERIOR_FINALIZATION_VERSION,
                         "assignment_id": assignment.assignment_id,
                         "policy_version": assignment.policy_version,
                         "analysis_behavior_hash": assignment.producer_behavior_id,
@@ -965,11 +1045,21 @@ class QuantContextPosteriorRunner:
                 )
                 continue
             try:
+                if target.quant_forecast_id is None:
+                    raise ValueError("Quant posterior target 缺少来源 Quant prior")
+                quant_prior = self.forecasts.forecast(target.quant_forecast_id)
+                if not isinstance(quant_prior, BaseForecast):
+                    raise ValueError("Quant posterior 来源 Quant prior 不可用")
+                audited_draft = audit_quant_context_posterior_draft(
+                    draft=drafts[target.slot.slot_id],
+                    quant_prior=quant_prior,
+                    analysis_input=analysis_input,
+                )
                 forecast = finalize_context_base_forecast(
                     binding=target.binding,
                     contract=target.contract,
                     slot=target.slot,
-                    draft=drafts[target.slot.slot_id],
+                    draft=audited_draft,
                     analysis_input=analysis_input,
                     input_observed_at=target.input_observed_at,
                     available_at=completed_at,
@@ -1252,6 +1342,7 @@ __all__ = [
     "SqlQuantContextPosteriorRepository",
     "assemble_quant_context_posterior_preallocator",
     "assemble_quant_context_posterior_runner",
+    "audit_quant_context_posterior_draft",
     "build_quant_context_posterior_assignment",
     "quant_context_posterior_behavior_id",
 ]

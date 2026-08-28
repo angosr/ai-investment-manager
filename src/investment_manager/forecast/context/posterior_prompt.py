@@ -25,7 +25,9 @@ POSTERIOR_INSTRUCTIONS = (
         "十进制字符串且总和精确等于 1。"
     ),
     "mechanism_contributions 只引用输入 WorldModel 的 mechanism_id，并具体说明它为何使 posterior"
-    "相对 Quant prior 上移、下移、扩大不确定性或保持不变。",
+    "相对 Quant prior 上移、下移、扩大不确定性或保持不变；每个实质影响都必须在 evidence_refs "
+    "中引用该 mechanism 自身的至少一条证据。若所有贡献均为 NO_MATERIAL_EFFECT，必须原样复制 "
+    "Quant prior 的概率，不得产生舍入漂移。",
     (
         "evidence_refs 只引用输入 WorldModel 已有 evidence_id；invalidation_conditions "
         "必须是未来可观察的重估线索。中文应清晰、具体、可证伪，资产代码、数值和枚举保留原文。"

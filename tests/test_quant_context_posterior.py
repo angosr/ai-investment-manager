@@ -6,12 +6,16 @@ from sqlalchemy import create_engine
 
 from investment_manager.entrypoints.dashboard.evaluation import EvaluationDashboardReader
 from investment_manager.forecast.codex.router import AnalystResult
-from investment_manager.forecast.context.estimate import ContextForecastStructuredOutput
+from investment_manager.forecast.context.estimate import (
+    ContextForecastDraft,
+    ContextForecastStructuredOutput,
+)
 from investment_manager.forecast.context.posterior import (
     QuantContextPosteriorPreallocator,
     QuantContextPosteriorRunner,
     QuantContextPosteriorTarget,
     SqlQuantContextPosteriorRepository,
+    audit_quant_context_posterior_draft,
     build_quant_context_posterior_assignment,
     quant_context_posterior_behavior_id,
 )
@@ -342,6 +346,97 @@ def test_quant_context_posterior_exposes_selected_prior_not_candidate_distributi
     assert projected_panel["features"] == program_panel["features"]
     assert projected_panel["quant_prior"] == program_panel["quant_prior"]
     assert projected_panel["maximum_bucket_probability_range"] == "0.04"
+
+
+def test_posterior_no_material_effect_uses_exact_quant_prior() -> None:
+    *_, quant_forecast, assignment = _fixture()
+    model_input = json.loads(assignment.analysis_input_json)
+    draft = ContextForecastDraft.model_validate(
+        {
+            "decision_slot_id": quant_forecast.decision_slot_id,
+            "outcome_probabilities": [
+                {"bucket_id": item.bucket_id, "probability": probability}
+                for item, probability in zip(
+                    quant_forecast.outcome_probabilities,
+                    ("0.06", "0.10", "0.14", "0.14", "0.10", "0.14", "0.14", "0.09", "0.09"),
+                    strict=True,
+                )
+            ],
+            "mechanism_contributions": [
+                {
+                    "mechanism_id": "mechanism-1",
+                    "effect": "NO_MATERIAL_EFFECT",
+                    "rationale": "当前机制不足以改变历史条件分布。",
+                }
+            ],
+            "evidence_refs": ["evidence-1"],
+            "invalidation_conditions": ["资金事实发生可观察反转"],
+        }
+    )
+
+    audited = audit_quant_context_posterior_draft(
+        draft=draft,
+        quant_prior=quant_forecast,
+        analysis_input=model_input,
+    )
+
+    assert tuple(Decimal(item.probability) for item in audited.outcome_probabilities) == tuple(
+        item.probability for item in quant_forecast.outcome_probabilities
+    )
+
+
+def test_posterior_substantive_adjustment_requires_mechanism_evidence() -> None:
+    *_, quant_forecast, assignment = _fixture()
+    model_input = json.loads(assignment.analysis_input_json)
+    model_input["world_model"]["event_references"].append(
+        {
+            "evidence_id": "unrelated-evidence",
+            "source": "OFFICIAL",
+            "title": "无关事实",
+            "event_time": NOW.isoformat(),
+            "impact_state": "CURRENT",
+        }
+    )
+    draft = _PosteriorAnalyst(NOW).estimate(assignment).output.forecasts[0].model_copy(
+        update={"evidence_refs": ("unrelated-evidence",)}
+    )
+
+    try:
+        audit_quant_context_posterior_draft(
+            draft=draft,
+            quant_prior=quant_forecast,
+            analysis_input=model_input,
+        )
+    except ValueError as exc:
+        assert "对应 mechanism" in str(exc)
+    else:
+        raise AssertionError("未绑定机制证据的 posterior 调整必须被拒绝")
+
+
+def test_posterior_substantive_claim_must_change_quant_prior() -> None:
+    *_, quant_forecast, assignment = _fixture()
+    model_input = json.loads(assignment.analysis_input_json)
+    original = _PosteriorAnalyst(NOW).estimate(assignment).output.forecasts[0]
+    payload = original.model_dump(mode="json")
+    payload["outcome_probabilities"] = [
+        {
+            "bucket_id": item.bucket_id,
+            "probability": format(item.probability, "f"),
+        }
+        for item in quant_forecast.outcome_probabilities
+    ]
+    draft = ContextForecastDraft.model_validate(payload)
+
+    try:
+        audit_quant_context_posterior_draft(
+            draft=draft,
+            quant_prior=quant_forecast,
+            analysis_input=model_input,
+        )
+    except ValueError as exc:
+        assert "未改变 Quant prior" in str(exc)
+    else:
+        raise AssertionError("未改变分布的实质影响声明必须被拒绝")
 
 
 def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> None:
