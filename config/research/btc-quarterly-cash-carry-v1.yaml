@@ -1,0 +1,94 @@
+schema_version: fixed-maturity-carry-candidate-plan-v1
+plan_id: btc-quarterly-cash-carry-v1
+evaluation_family_id: btc-fixed-maturity-carry
+
+hypothesis: >-
+  BTCUSDT 现货与 Binance USD-M 固定到期当季交割合约在交割前 30 天仍存在的正基差，
+  在扣除两腿完整交易摩擦后能够通过持有至官方交割形成可重复的正收益；该收益不依赖
+  BTC 方向预测或永续资金费率预测。
+
+research_prior:
+  - https://www.bis.org/publ/work1087.pdf
+  - https://developers.binance.com/zh-CN/docs/products/derivatives-trading-usds-futures/common-definition
+  - https://developers.binance.com/en/docs/llms.txt
+
+data:
+  observed_cutoff: 2026-08-28T21:18:00Z
+  sources:
+    - https://api.binance.com/api/v3/klines
+    - https://fapi.binance.com/fapi/v1/klines
+    - https://fapi.binance.com/futures/data/delivery-price
+  spot_symbol: BTCUSDT
+  futures_pair: BTCUSDT
+  futures_contract_type: CURRENT_QUARTER
+  interval: 1h
+  settlement_window: [2022-03-25T00:00:00Z, 2026-06-26T00:00:00Z]
+  availability: completed_hourly_kline_and_official_delivery_price
+  history_semantics: retrospective_falsification_not_blind
+  note: >-
+    官方 settlement 接口在 observed_cutoff 只返回 18 个已完成季度；全部都进入评价，
+    不按结果删除合约。历史 K 线没有点时盘口、历史手续费等级或历史规则快照，因此通过
+    也只能取得实时盘口前向模拟资格。
+
+rule:
+  entry_time: first_hour_open_at_or_after_30_calendar_days_before_delivery
+  exit_time: official_delivery_time
+  legs:
+    - buy_equal_quantity_spot
+    - short_equal_quantity_dated_future
+  futures_quantity_step: "0.001"
+  futures_minimum_notional: "50"
+  target_leg_notional_fraction_of_starting_equity: "0.40"
+  futures_cash_collateral_fraction_of_starting_equity: "0.60"
+  entry_gate: >-
+    仅当按入场现货与交割合约价格冻结的基差，严格大于两腿全部预注册成本时入场；
+    不使用年化基差阈值、趋势、情绪、funding、AI 判断或事后选择。
+  holding: no_rebalance_and_hold_to_official_delivery
+  parameter_search: prohibited
+
+cost:
+  spot_fee_bps_per_side: "10"
+  futures_fee_bps_per_side: "5"
+  spread_and_impact_allowance_bps_per_leg_side: "2.5"
+  total_round_trip_bps_on_equal_leg_notional: "40"
+  financing: >-
+    本账户未配置可实际获得的现金收益，现金基准为零；评价同时报告按锁定资金和持有天数
+    计算的年化净收益，不用未接入的 SOFR 收益美化账户结果。
+
+risk:
+  futures_maintenance_margin_fraction: "0.10"
+  mark_frequency: each_completed_hour
+  liquidation_rule: >-
+    交割合约现金抵押减去空头逐小时未实现亏损，不得低于该小时交割合约名义的 10%；
+    现货盈利不得跨钱包虚构为可用保证金。
+  account_equity: >-
+    逐小时合并现货市值、交割合约空头盈亏、剩余现金及已发生费用；交割使用官方交割价，
+    现货退出使用同一交割小时的现货开盘并计入退出摩擦。
+
+evaluation:
+  permission: REJECTION_OR_FORWARD_RESEARCH_ONLY
+  minimum_completed_contracts: 12
+  fixed_regimes:
+    - [2022-03-25T00:00:00Z, 2023-03-31T00:00:00Z]
+    - [2023-03-31T00:00:00Z, 2024-03-29T00:00:00Z]
+    - [2024-03-29T00:00:00Z, 2025-03-28T00:00:00Z]
+    - [2025-03-28T00:00:00Z, 2026-06-26T00:00:00Z]
+  metrics:
+    - entered_contract_count
+    - net_return_on_account
+    - annualized_net_return_on_deployed_spot_capital
+    - maximum_account_drawdown
+    - minimum_futures_margin_buffer
+    - positive_entered_contract_fraction
+    - regime_net_returns
+  rejection_rule: >-
+    任一条件失败即永久拒绝本候选：18 个官方合约中至少 12 个具备完整对齐数据；至少
+    8 个合约通过事前费用门并实际入场；全部入场合约合计账户净收益为正；入场合约正收益
+    比例至少 75%；四个固定阶段至少三个账户净收益为正；最大账户回撤不超过 10%；没有
+    强平且最低交割合约保证金缓冲不低于起始权益的 10%。不得根据结果搜索其他 DTE、成本、
+    仓位、基差阈值、退出时点、合约集合或阶段边界。
+
+next_step: >-
+  拒绝则删除专用取数和评价实现，只保留本计划及不可变结果。通过也不直接进入资本链；
+  只允许以新行为身份接入实时 Spot/交割合约盘口的前向模拟，原子执行、规则变化、账户
+  保证金和真实交割仍须独立验收。
