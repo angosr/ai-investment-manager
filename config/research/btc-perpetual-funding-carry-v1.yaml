@@ -1,0 +1,105 @@
+schema_version: perpetual-funding-carry-candidate-plan-v1
+plan_id: btc-perpetual-funding-carry-v1
+evaluation_family_id: btc-market-neutral-funding-carry
+
+hypothesis: >-
+  BTCUSDT 永续的正资金费率存在可持续的风险溢价。用等数量 BTC 现货多头和 USD-M
+  永续空头对冲方向风险，只在此前 30 个完整日已经结算且可见的资金费率足以覆盖两腿
+  完整往返成本时持有随后 30 日，可能形成跨状态可重复的费用后收益。
+
+research_prior:
+  - https://www.bis.org/publ/work1087.htm
+  - https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History
+
+data:
+  carry_dataset_id: historical_carry_dataset_ff50dce10205dfc0f265
+  spot_dataset_id: historical_dataset_2c3d78a5f3d963d50165
+  funding_dataset_id: historical_funding_dataset_61af8fb0f5593a5bf44b
+  source_window: [2020-01-01T00:00:00Z, 2026-08-01T00:00:00Z]
+  market: BINANCE_SPOT_AND_USDM
+  instrument: BTCUSDT
+  interval: 1d
+  price_series: spot_and_contract_ohlc
+  funding_series: verified_settlements
+  partitions:
+    development: [2020-01-01T00:00:00Z, 2023-01-01T00:00:00Z]
+    validation: [2023-01-01T00:00:00Z, 2025-01-01T00:00:00Z]
+    blind: [2025-01-01T00:00:00Z, 2026-08-01T00:00:00Z]
+
+rule:
+  starting_equity_usdt: "10000"
+  formation_days: 30
+  holding_days: 30
+  windows: non_overlapping_within_each_partition
+  entry: first_common_daily_open_at_or_after_window_start
+  exit: first_common_daily_open_at_or_after_30_calendar_days
+  signal: sum_of_settled_funding_rates_available_before_entry
+  entry_gate: trailing_funding_sum_strictly_above_complete_round_trip_cost_fraction
+  legs:
+    - buy_equal_quantity_btc_spot
+    - short_equal_quantity_btcusdt_perpetual
+  target_leg_notional_fraction_of_current_equity: "0.25"
+  quantity_step: "0.001"
+  minimum_perpetual_notional_usdt: "50"
+  sizing: >-
+    每个窗口按当前账户权益重新定量，数量向下取整，使现货与永续单腿入场名义均不超过
+    权益的 25%；购买现货后的全部剩余 USDT 都是永续空头的现金保证金。窗口不重叠，
+    不加杠杆、不调仓、不跨窗口保留仓位。
+  parameter_search: prohibited
+
+cost:
+  spot_fee_bps_per_side: "10"
+  perpetual_fee_bps_per_side: "5"
+  spread_and_impact_allowance_bps_per_leg_side: "2.5"
+  complete_round_trip_bps_on_equal_leg_notional: "40"
+  execution: >-
+    现货买入和永续回补使用更高的开盘成交价，现货卖出和永续卖空使用更低的开盘成交价；
+    四次成交分别扣除对应普通手续费。历史没有盘口，因此通过也只能获得实时盘口前向研究
+    资格，不能授权资本。
+  cash_yield: zero_because_no_cash_product_has_runtime_admission
+
+risk:
+  perpetual_maintenance_margin_fraction: "0.10"
+  mark_frequency: each_completed_daily_bar
+  margin_wallet: >-
+    买入现货后的剩余 USDT 作为永续钱包现金；现货未实现盈利不得跨钱包补充保证金，
+    已结算 funding 进入永续钱包。若空头钱包权益低于当日永续空头名义的 10%，该窗口
+    判定强平并按失败处理，不用现货对冲收益掩盖场所路径风险。
+  account_equity: spot_value_plus_perpetual_wallet_equity
+
+evaluation:
+  permission: REJECTION_OR_FORWARD_RESEARCH_ONLY
+  selection_history: >-
+    development 只报告，不调参；唯一规则必须先在 validation 通过全部门槛，才能一次性
+    揭示 blind。揭示后不得修改形成期、持有期、锚点、费用、仓位、入场门或分区。
+  validation_gate:
+    minimum_entered_windows: 8
+    minimum_positive_window_fraction: "0.60"
+    minimum_positive_subperiods: 3
+    subperiod_count: 4
+    minimum_net_return_fraction: "0"
+    maximum_drawdown_fraction: "0.10"
+    liquidation_count: 0
+  blind_gate:
+    minimum_entered_windows: 6
+    minimum_positive_window_fraction: "0.60"
+    minimum_positive_subperiods: 3
+    subperiod_count: 4
+    minimum_net_return_fraction: "0"
+    maximum_drawdown_fraction: "0.10"
+    liquidation_count: 0
+  metrics:
+    - eligible_and_entered_window_count
+    - net_return_on_account
+    - funding_pnl
+    - basis_and_price_pnl
+    - complete_cost
+    - positive_entered_window_fraction
+    - maximum_account_drawdown
+    - minimum_perpetual_margin_buffer
+    - fixed_subperiod_returns
+
+next_step: >-
+  validation 失败则不揭示 blind，并删除一次性评价实现，只保留本计划与拒绝结果。blind
+  失败同样永久拒绝。全部通过也不直接进入资本链，只允许以新身份读取实时 Spot、永续
+  双边报价和逐次 funding 做前向研究；原子两腿执行、保证金转账与恢复仍须独立验收。
