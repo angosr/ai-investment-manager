@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 from pydantic import model_validator
 
+from investment_manager.execution.cash.policy import CashYieldEvidencePolicy
 from investment_manager.execution.policy import (
     BinanceTestnetPolicy,
     ShadowSimulationPolicy,
@@ -55,6 +56,7 @@ class AppConfig(StrictConfig):
     assessment: ContextAssessmentPolicy
     codex_accounts: CodexAccountRegistry
     binance_testnet: BinanceTestnetPolicy
+    cash_yield_evidence: CashYieldEvidencePolicy
     deployment: DeploymentPolicy
 
     @property

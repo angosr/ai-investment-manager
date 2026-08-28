@@ -11,6 +11,9 @@ capital:
     enabled: false
   candidate_capital_authorizations: []
 
+cash_yield_evidence:
+  enabled: false
+
 codex_runtime:
   enabled: false
   isolation_verified: false

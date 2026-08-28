@@ -89,3 +89,20 @@ Index(
     product_order_observations.c.group_id,
     product_order_observations.c.available_at,
 )
+
+cash_yield_product_observations = Table(
+    "cash_yield_product_observations",
+    metadata,
+    Column("observation_id", String(128), primary_key=True),
+    Column("product_id", String(64), nullable=False),
+    Column("asset", String(32), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("observation_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_cash_yield_product_available",
+    cash_yield_product_observations.c.product_id,
+    cash_yield_product_observations.c.asset,
+    cash_yield_product_observations.c.available_at,
+)

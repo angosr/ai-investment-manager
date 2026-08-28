@@ -688,6 +688,17 @@ binance_testnet:
   quote_asset: USDT
   credential_environment_prefix: INVESTMENT_MANAGER_BINANCE
 
+cash_yield_evidence:
+  version: binance-usdt-flexible-evidence-v1
+  enabled: false
+  rest_base_url: https://api.binance.com
+  product_id: USDT001
+  asset: USDT
+  refresh_seconds: 3600
+  request_timeout_seconds: 10
+  recv_window_ms: 5000
+  credential_environment_prefix: INVESTMENT_MANAGER_BINANCE
+
 deployment:
   version: deployment-v1
   stage: MOCK

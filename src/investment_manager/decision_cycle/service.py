@@ -16,6 +16,12 @@ from investment_manager.decision_cycle.trigger import (
     TriggerCoordinatorActivities,
     TriggerDispatchBuilder,
 )
+from investment_manager.execution.cash.repository import SqlCashYieldObservationStore
+from investment_manager.execution.cash.service import CashYieldEvidenceService
+from investment_manager.execution.cash.source import (
+    BinanceReadCredentials,
+    BinanceSimpleEarnReadSource,
+)
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.governance.models import ReleaseManifest
@@ -200,9 +206,20 @@ def _assemble_capital_consumer(
     engine,
 ) -> CapitalCycleService:
     execution = assemble_product_execution_runtime(config, engine)
+    cash_yield_observer = None
+    if config.cash_yield_evidence.enabled:
+        cash_yield_observer = CashYieldEvidenceService(
+            policy=config.cash_yield_evidence,
+            source=BinanceSimpleEarnReadSource(
+                config.cash_yield_evidence,
+                BinanceReadCredentials.from_environment(config.cash_yield_evidence),
+            ),
+            store=SqlCashYieldObservationStore(engine),
+        )
     return assemble_capital_cycle(
         config,
         engine,
         venue=execution.venue,
         initial_cash=execution.initial_cash,
+        cash_yield_observer=cash_yield_observer,
     )
