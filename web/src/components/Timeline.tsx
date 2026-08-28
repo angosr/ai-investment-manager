@@ -70,9 +70,6 @@ function CapitalTimeline({
         </div>
       ) : tab === "analysis" ? (
         <div>
-          {forecastEvaluation?.world_model_ablation ? (
-            <WorldModelEvidenceLine evidence={forecastEvaluation.world_model_ablation} />
-          ) : null}
           {forecastEvaluation?.capital_choice_evidence ? (
             <CapitalChoiceEvidenceLine evidence={forecastEvaluation.capital_choice_evidence} />
           ) : null}
@@ -252,36 +249,6 @@ function ForecastStabilityLine({
         );
       })}
       <span>这里只衡量生成稳定性，不代表预测正确或能够盈利。</span>
-    </div>
-  );
-}
-
-function WorldModelEvidenceLine({
-  evidence,
-}: {
-  evidence: NonNullable<ForecastEvaluationEvidence["world_model_ablation"]>;
-}) {
-  if (evidence.assignments === 0) return null;
-  const headline = evidence.evidence_sufficient
-    ? "世界认知目前改善了预测"
-    : evidence.conservative_sample_count === 0
-      ? "世界认知对照已启动"
-      : evidence.conservative_improvement_lower_bound !== null
-          && Number(evidence.conservative_improvement_lower_bound) > 0
-        ? "当前结果偏正，但证据仍少"
-        : "尚未证明世界认知能改善预测";
-  const execution = evidence.conservative_sample_count > 0
-    ? `已结算 ${evidence.conservative_sample_count} 个互不重复的同时点对照结果。`
-    : evidence.successful_controls > 0
-      ? `已完成 ${evidence.successful_controls} 次无世界认知的对照预测，正在等待市场结果。`
-      : "系统已在相同市场时点启动有、无世界认知的两份预测。";
-  const failure = evidence.failed_controls > 0
-    ? ` 对照预测失败 ${evidence.failed_controls} 次。`
-    : "";
-  return (
-    <div className={`${styles.worldEvidence} ${evidence.evidence_sufficient ? styles.worldEvidenceGood : ""}`}>
-      <div><b>{headline}</b></div>
-      <p>{execution}{failure}</p>
     </div>
   );
 }

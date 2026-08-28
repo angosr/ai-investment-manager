@@ -151,18 +151,7 @@ class AppConfig(StrictConfig):
                 raise ValueError(
                     "ContextAssessment 分析截止时间必须覆盖 activity schedule-to-close"
                 )
-        ablation = self.outcome_evaluation.world_model_ablation
         context_forecast = self.capital.context_forecast
-        if (
-            ablation is not None
-            and ablation.enabled
-            and (
-                context_forecast is None
-                or not context_forecast.enabled
-                or not self.codex_runtime.enabled
-            )
-        ):
-            raise ValueError("WorldModel 成对评估必须绑定已启用的 Context Forecast 与 Codex")
         quant = self.outcome_evaluation.quant_baseline
         if quant is not None and quant.enabled:
             if context_forecast is None or not context_forecast.enabled:

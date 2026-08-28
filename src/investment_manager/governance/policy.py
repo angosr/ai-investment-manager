@@ -8,18 +8,6 @@ from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.kernel.time import require_utc
 
 
-class WorldModelAblationPolicy(StrictConfig):
-    """Prospective paired control; it can never produce capital instructions."""
-
-    version: str
-    enabled: bool = False
-    plan_id: str = Field(min_length=1)
-    activated_at: datetime
-    minimum_sample_size: int = Field(default=30, ge=2)
-
-    _utc_activated_at = field_validator("activated_at")(require_utc)
-
-
 class ContextForecastStabilityPolicy(StrictConfig):
     """Prospective exact-input replicas with no Forecast or capital authority."""
 
@@ -87,7 +75,6 @@ class OutcomeEvaluationPolicy(StrictConfig):
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)
     research_poll_seconds: int = Field(default=5, ge=1, le=60)
-    world_model_ablation: WorldModelAblationPolicy | None = None
     context_forecast_stability: ContextForecastStabilityPolicy | None = None
     quant_baseline: QuantBaselinePolicy | None = None
     quant_context_posterior: QuantContextPosteriorPolicy | None = None

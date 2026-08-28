@@ -19,7 +19,6 @@ from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_capital_choice_evidence,
     serialize_forecast_evidence,
     serialize_trading_cost_evidence,
-    serialize_world_model_ablation_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.producer_capital import (
@@ -280,49 +279,6 @@ def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() 
                     },
                 },
             ]
-        }
-    }
-
-
-def test_world_model_ablation_has_a_compact_audit_projection() -> None:
-    at = datetime(2026, 8, 25, 12, tzinfo=UTC)
-    report = SimpleNamespace(
-        plan_id="world-model-ablation-forward-v7",
-        as_of=at,
-        formal_forecast_count=3,
-        formal_no_estimate_count=1,
-        assignments=3,
-        pending_controls=1,
-        successful_controls=2,
-        failed_controls=0,
-        settled_pairs=1,
-        conservative_sample_count=2,
-        mean_ranked_probability_improvement=Decimal("0.025"),
-        conservative_mean_ranked_probability_improvement=Decimal("0.020"),
-        mean_brier_improvement=Decimal("0.125"),
-        conservative_improvement_lower_bound=None,
-        minimum_sample_size=30,
-        evidence_sufficient=False,
-    )
-
-    assert serialize_world_model_ablation_evidence(report) == {
-        "world_model_ablation": {
-            "plan_id": "world-model-ablation-forward-v7",
-            "as_of": at.isoformat(),
-            "formal_forecast_count": 3,
-            "formal_no_estimate_count": 1,
-            "assignments": 3,
-            "pending_controls": 1,
-            "successful_controls": 2,
-            "failed_controls": 0,
-            "settled_pairs": 1,
-            "conservative_sample_count": 2,
-            "mean_ranked_probability_improvement": "0.025",
-            "conservative_mean_ranked_probability_improvement": "0.020",
-            "mean_brier_improvement": "0.125",
-            "conservative_improvement_lower_bound": None,
-            "minimum_sample_size": 30,
-            "evidence_sufficient": False,
         }
     }
 

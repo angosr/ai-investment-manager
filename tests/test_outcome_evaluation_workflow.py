@@ -33,9 +33,6 @@ def test_outcome_service_keeps_settling_recorded_product_obligations(app_config)
                     )
                 }
             ),
-            "outcome_evaluation": app_config.outcome_evaluation.model_copy(
-                update={"world_model_ablation": None}
-            ),
         }
     )
 
@@ -85,55 +82,6 @@ def test_outcome_supervisor_only_settles_current_release_cohorts(app_config) -> 
         assert supervisor.health.product_payoff_settled == 12
         assert supervisor.health.product_payoff_outcome_unavailable == 13
         assert supervisor.health.product_payoff_pending == 14
-
-    asyncio.run(scenario())
-
-
-def test_slow_ai_evaluation_cannot_block_outcome_settlement(app_config) -> None:
-    evaluation_started = threading.Event()
-    release_evaluation = threading.Event()
-
-    class Settler:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def settle(self, *, as_of):
-            self.calls += 1
-            return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
-
-    class SlowAblationRunner:
-        def reconcile(self, *, as_of):
-            evaluation_started.set()
-            assert release_evaluation.wait(timeout=3)
-            return SimpleNamespace(assignments=1, settled_pairs=0, failed_controls=0)
-
-    async def scenario() -> None:
-        stop = asyncio.Event()
-        settler = Settler()
-        config = app_config.model_copy(
-            update={
-                "outcome_evaluation": app_config.outcome_evaluation.model_copy(
-                    update={"poll_seconds": 1}
-                )
-            }
-        )
-        supervisor = OutcomeEvaluationSupervisor(
-            config=config,
-            target_forecast_settler=settler,
-            world_model_ablation_runner=SlowAblationRunner(),
-        )
-        task = asyncio.create_task(supervisor.run(stop))
-        try:
-            assert await asyncio.to_thread(evaluation_started.wait, 1)
-            for _ in range(40):
-                if settler.calls >= 2:
-                    break
-                await asyncio.sleep(0.05)
-            assert settler.calls >= 2
-        finally:
-            release_evaluation.set()
-            stop.set()
-            await task
 
     asyncio.run(scenario())
 
@@ -243,7 +191,7 @@ def test_forecast_stability_behaviors_share_one_serial_research_lane(
     asyncio.run(scenario())
 
 
-def test_all_research_ai_evaluations_share_one_serial_lane(app_config) -> None:
+def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config) -> None:
     class Settler:
         def settle(self, *, as_of):
             return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
@@ -265,15 +213,9 @@ def test_all_research_ai_evaluations_share_one_serial_lane(app_config) -> None:
             with lock:
                 active -= 1
                 completed += 1
-                if completed == 3:
+                if completed == 2:
                     loop.call_soon_threadsafe(stop.set)
             return result
-
-        class AblationRunner:
-            def reconcile(self, *, as_of):
-                return measured(
-                    SimpleNamespace(assignments=1, settled_pairs=0, failed_controls=0)
-                )
 
         class StabilityRunner:
             def reconcile(self, *, as_of):
@@ -299,14 +241,13 @@ def test_all_research_ai_evaluations_share_one_serial_lane(app_config) -> None:
         supervisor = OutcomeEvaluationSupervisor(
             config=app_config,
             target_forecast_settler=Settler(),
-            world_model_ablation_runner=AblationRunner(),
             forecast_stability_runners=(StabilityRunner(),),
             quant_posterior_runner=PosteriorRunner(),
             clock=lambda: datetime.now(UTC),
         )
 
         await asyncio.wait_for(supervisor.run(stop), timeout=2)
-        assert completed == 3
+        assert completed == 2
         assert maximum_active == 1
 
     asyncio.run(scenario())

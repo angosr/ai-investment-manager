@@ -466,7 +466,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             "median_holding_seconds": None,
             "maximum_holding_seconds": None,
         },
-        "world_model_ablation": None,
     }
     assert bad_assessment_detail.json()["synthesis"] == bad_assessment.synthesis
     assert capital_rows.status_code == 200

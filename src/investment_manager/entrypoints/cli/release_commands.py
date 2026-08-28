@@ -29,10 +29,7 @@ from investment_manager.entrypoints.dashboard.capital import CapitalDashboardRea
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.forecast.context.service import assemble_assessment_service
 from investment_manager.governance.audit.acceptance import AuditProfile, PhaseAAuditor
-from investment_manager.governance.evaluation.outcome_service import (
-    assemble_outcome_evaluation,
-    preregister_world_model_ablation_plan,
-)
+from investment_manager.governance.evaluation.outcome_service import assemble_outcome_evaluation
 from investment_manager.governance.evaluation.reference_selection import (
     load_reference_selection_artifact,
     validate_reference_policy_selection,
@@ -58,7 +55,6 @@ from investment_manager.governance.release.deployment import (
     process_exists,
     save_runtime_state,
 )
-from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.information.tables import source_poll_records
 from investment_manager.market.models import SpotVenue
 from investment_manager.market.tables import cross_venue_spot_quotes
@@ -85,56 +81,6 @@ _DASHBOARD_READY_KEYS = {
     "capital_freshness",
     "release_alignment",
 }
-
-
-@app.command("preregister-world-model-ablation")
-def preregister_world_model_ablation(
-    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)],
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    release_manifest: Annotated[
-        Path,
-        typer.Option("--release-manifest", exists=True, dir_okay=False),
-    ],
-    database_url: Annotated[
-        str,
-        typer.Option(
-            envvar="INVESTMENT_MANAGER_DATABASE_URL",
-            help="仅从受控环境注入数据库 URL",
-        ),
-    ],
-) -> None:
-    """在候选首次前向时点前登记其不可变 WorldModel 配对计划。"""
-
-    root = project_root.resolve()
-    loaded = load_config(config.resolve())
-    manifest = load_release_manifest(release_manifest.resolve())
-    validate_manifest_against_config(
-        manifest,
-        loaded,
-        require_configuration_hash=True,
-    )
-    imported_root = validate_manifest_code_version(manifest)
-    if imported_root != root:
-        raise ValueError("预登记入口没有从候选冻结 checkout 导入代码")
-    validate_manifest_code_version(manifest, repository_root=root)
-    validate_runtime_release_checkout(root)
-    validate_manifest_artifacts(
-        manifest,
-        repository_root=root,
-        required_ids=_required_release_artifacts(loaded),
-    )
-    engine = build_engine(database_url)
-    try:
-        require_current_schema(engine)
-        plan = preregister_world_model_ablation_plan(
-            config=loaded,
-            engine=engine,
-            release=manifest,
-            registered_at=datetime.now(UTC),
-        )
-    finally:
-        engine.dispose()
-    typer.echo(plan.model_dump_json(indent=2))
 
 
 @app.command("operate-release")
@@ -444,11 +390,6 @@ def _preflight_release(
             market = None
             try:
                 _initialize_assembly_database(assembly_engine)
-                _seed_pre_registered_plan(
-                    config=config,
-                    production=SqlGovernanceRepository(production_engine),
-                    assembly=SqlGovernanceRepository(assembly_engine),
-                )
                 market = assemble_market_service(config, assembly_engine)
                 assemble_information_service(config, assembly_engine)
                 assemble_trigger_service(
@@ -482,16 +423,6 @@ def _preflight_release(
                 assembly_engine.dispose()
     finally:
         production_engine.dispose()
-
-
-def _seed_pre_registered_plan(*, config, production, assembly) -> None:
-    policy = config.outcome_evaluation.world_model_ablation
-    if policy is None or not policy.enabled:
-        return
-    existing = production.get_plan(policy.plan_id)
-    if existing is None:
-        raise ValueError("WorldModel 前瞻评价计划尚未预登记")
-    assembly.register_plan(existing)
 
 
 def _initialize_assembly_database(engine) -> None:

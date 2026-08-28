@@ -46,9 +46,6 @@ CLI_CONTRACT = {
         "project_root,config,release_manifest,database_url,runtime_directory,command_path,"
         "readiness_timeout_seconds,dashboard_host,dashboard_port"
     ),
-    "preregister-world-model-ablation": (
-        "project_root,config,release_manifest,database_url"
-    ),
     "record-reference-rejection": (
         "config,plan,information_cutoff,project_root,economic_catalog,product_catalog,"
         "funding_catalog,quote_catalog,result_catalog"
@@ -274,7 +271,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         },
         "entrypoints/cli/release_commands.py": {
             "operate-release",
-            "preregister-world-model-ablation",
         },
         "entrypoints/cli/research_commands.py": {
             "record-reference-rejection",
@@ -1334,7 +1330,6 @@ def test_dashboard_has_one_current_capital_and_world_model_read_path() -> None:
         "product_payoff_evidence",
         "capital_choice_evidence",
         "trading_cost_evidence",
-        "world_model_ablation_evidence",
     }
     assert methods(dashboard_root / "capital.py", "CapitalDashboardReader").isdisjoint(
         {*evaluation_methods, "forecast_stability_evidence"}

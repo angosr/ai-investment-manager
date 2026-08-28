@@ -36,7 +36,6 @@ from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_quant_context_posterior_evidence,
     serialize_quant_forecast_evidence,
     serialize_trading_cost_evidence,
-    serialize_world_model_ablation_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.pagination import (
@@ -177,7 +176,6 @@ def create_app(
             product_payoff,
             capital_choice,
             trading_cost,
-            ablation,
         ) = await asyncio.gather(
             run_in_threadpool(evaluation_reader.forecast_evidence, now=now),
             run_in_threadpool(evaluation_reader.quant_forecast_evidence, now=now),
@@ -194,10 +192,6 @@ def create_app(
             run_in_threadpool(evaluation_reader.product_payoff_evidence),
             run_in_threadpool(evaluation_reader.capital_choice_evidence),
             run_in_threadpool(evaluation_reader.trading_cost_evidence),
-            run_in_threadpool(
-                evaluation_reader.world_model_ablation_evidence,
-                now=now,
-            ),
         )
         return _json(
             {
@@ -210,7 +204,6 @@ def create_app(
                 **serialize_product_payoff_evidence(product_payoff),
                 **serialize_capital_choice_evidence(capital_choice),
                 **serialize_trading_cost_evidence(trading_cost),
-                **serialize_world_model_ablation_evidence(ablation),
             }
         )
 

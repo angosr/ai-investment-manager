@@ -272,24 +272,6 @@ export interface ForecastEvaluationEvidence {
       selected_unprofitable_exposure: boolean;
     }[];
   } | null;
-  world_model_ablation: {
-    plan_id: string;
-    as_of: string;
-    formal_forecast_count: number;
-    formal_no_estimate_count: number;
-    assignments: number;
-    pending_controls: number;
-    successful_controls: number;
-    failed_controls: number;
-    settled_pairs: number;
-    conservative_sample_count: number;
-    mean_ranked_probability_improvement: string | null;
-    conservative_mean_ranked_probability_improvement: string | null;
-    mean_brier_improvement: string | null;
-    conservative_improvement_lower_bound: string | null;
-    minimum_sample_size: number;
-    evidence_sufficient: boolean;
-  } | null;
 }
 
 export interface ForecastPairEvidenceSummary {

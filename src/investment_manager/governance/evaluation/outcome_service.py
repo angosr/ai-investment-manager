@@ -13,13 +13,11 @@ from investment_manager.forecast.context.posterior import (
     QuantContextPosteriorRunner,
     assemble_quant_context_posterior_runner,
 )
-from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.context.stability import (
     ContextForecastStabilityRunner,
     assemble_context_forecast_stability_runner,
 )
 from investment_manager.forecast.context.targets import configured_context_capital_targets
-from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
 )
@@ -30,18 +28,10 @@ from investment_manager.forecast.quant.runtime import (
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.settlement import ForecastOutcomeSettler
-from investment_manager.governance.evaluation.world_model_ablation import (
-    SqlWorldModelAblationRepository,
-    WorldModelAblationRunner,
-    assemble_world_model_ablation_analyst,
-    ensure_world_model_ablation_plan,
-)
 from investment_manager.governance.models import (
-    EvaluationPlan,
     ReleaseManifest,
     resolve_manifest_artifact,
 )
-from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine
@@ -58,9 +48,6 @@ class OutcomeEvaluationSupervisorHealth:
     product_payoff_settled: int = 0
     product_payoff_outcome_unavailable: int = 0
     product_payoff_pending: int = 0
-    world_model_ablation_assignments: int = 0
-    world_model_ablation_settled_pairs: int = 0
-    world_model_ablation_failed_controls: int = 0
     forecast_stability_assignments: int = 0
     forecast_stability_complete_samples: int = 0
     forecast_stability_failed_replicas: int = 0
@@ -70,7 +57,6 @@ class OutcomeEvaluationSupervisorHealth:
     quant_posterior_pending: int = 0
     last_target_forecast_error_class: str | None = None
     last_product_payoff_error_class: str | None = None
-    last_world_model_ablation_error_class: str | None = None
     last_forecast_stability_error_class: str | None = None
     last_quant_posterior_error_class: str | None = None
 
@@ -80,7 +66,6 @@ class OutcomeEvaluationSupervisor:
     config: AppConfig
     target_forecast_settler: ForecastOutcomeSettler
     product_payoff_settler: ProductPayoffOutcomeSettler | None = None
-    world_model_ablation_runner: WorldModelAblationRunner | None = None
     forecast_stability_runners: tuple[ContextForecastStabilityRunner, ...] = ()
     quant_posterior_runner: QuantContextPosteriorRunner | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
@@ -95,8 +80,6 @@ class OutcomeEvaluationSupervisor:
 
     async def run(self, stop: asyncio.Event) -> None:
         workers = [self._run_settlement_loop(stop)]
-        if self.world_model_ablation_runner is not None:
-            workers.append(self._run_world_model_ablation_loop(stop))
         if self.forecast_stability_runners:
             workers.append(self._run_forecast_stability_loop(stop))
         if self.quant_posterior_runner is not None:
@@ -146,30 +129,6 @@ class OutcomeEvaluationSupervisor:
                 stop,
                 now=require_utc(self.clock()),
                 poll_seconds=policy.poll_seconds,
-            )
-
-    async def _run_world_model_ablation_loop(self, stop: asyncio.Event) -> None:
-        policy = self.config.outcome_evaluation
-        runner = self.world_model_ablation_runner
-        assert runner is not None
-        while not stop.is_set():
-            now = require_utc(self.clock())
-            try:
-                report = await self._reconcile_research(runner, as_of=now)
-                self.health.world_model_ablation_assignments = report.assignments
-                self.health.world_model_ablation_settled_pairs = report.settled_pairs
-                self.health.world_model_ablation_failed_controls = report.failed_controls
-                self.health.last_world_model_ablation_error_class = None
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if self.health.last_world_model_ablation_error_class != type(exc).__name__:
-                    logger.exception("world model ablation evaluation failed")
-                self.health.last_world_model_ablation_error_class = type(exc).__name__
-            await _wait_for_next_poll(
-                stop,
-                now=require_utc(self.clock()),
-                poll_seconds=policy.research_poll_seconds,
             )
 
     async def _run_forecast_stability_loop(self, stop: asyncio.Event) -> None:
@@ -270,11 +229,6 @@ def assemble_outcome_evaluation(
     release: ReleaseManifest | None = None,
 ) -> OutcomeEvaluationSupervisor:
     engine = build_engine(database_url)
-    ablation_runner = _assemble_world_model_ablation(
-        config=config,
-        engine=engine,
-        release=release,
-    )
     posterior_runner = _assemble_quant_context_posterior(
         config=config,
         engine=engine,
@@ -321,7 +275,6 @@ def assemble_outcome_evaluation(
             settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
         ),
         product_payoff_settler=product_payoff_settler,
-        world_model_ablation_runner=ablation_runner,
         forecast_stability_runners=stability_runners,
         quant_posterior_runner=posterior_runner,
     )
@@ -369,86 +322,4 @@ def _assemble_quant_context_posterior(
             for item in targets
         ),
         quant_producer_behavior_id=quant_behavior_id,
-    )
-
-
-def _assemble_world_model_ablation(
-    *,
-    config: AppConfig,
-    engine,
-    release: ReleaseManifest | None,
-) -> WorldModelAblationRunner | None:
-    policy = config.outcome_evaluation.world_model_ablation
-    if policy is None or not policy.enabled:
-        return None
-    if release is None:
-        raise ValueError("启用 WorldModel control 必须绑定 ReleaseManifest")
-    contracts = configured_world_model_ablation_contracts(config)
-    context = config.capital.context_forecast
-    assert context is not None
-    plan = ensure_world_model_ablation_plan(
-        governance=SqlGovernanceRepository(engine),
-        config=config,
-        contracts=contracts,
-        release=release,
-        registered_at=datetime.now(UTC),
-    )
-    return WorldModelAblationRunner(
-        policy=policy,
-        plan=plan,
-        formal_producer_behavior_id=context.producer_behavior_id,
-        evaluation_version=config.outcome_evaluation.target_forecast_version,
-        repository=SqlWorldModelAblationRepository(engine),
-        analyst=assemble_world_model_ablation_analyst(config, engine=engine),
-    )
-
-
-def configured_world_model_ablation_contracts(
-    config: AppConfig,
-) -> tuple[ForecastContract, ...]:
-    """Build the exact joint contract set seen by the formal forecast call."""
-
-    context = config.capital.context_forecast
-    if context is None or not context.enabled:
-        raise ValueError("启用 WorldModel control 必须绑定 Context Forecast")
-    instruments = {
-        item.instrument.key: item.instrument for item in config.capital.execution_specs
-    }
-    instruments.update(
-        {
-            item.key: item
-            for item in config.capital.forecast_reference_instruments
-        }
-    )
-    try:
-        return tuple(
-            context_forecast_contract(
-                policy=context,
-                target_policy=target_policy,
-                instrument=instruments[target_policy.reference_instrument_key],
-                cost_semantics_version=config.capital.decision.cost_model_version,
-            )
-            for target_policy in context.targets
-        )
-    except KeyError as exc:
-        raise ValueError(
-            "WorldModel control 参考合同品种不在 Forecast 参考范围"
-        ) from exc
-
-
-def preregister_world_model_ablation_plan(
-    *,
-    config: AppConfig,
-    engine: Engine,
-    release: ReleaseManifest,
-    registered_at: datetime,
-) -> EvaluationPlan:
-    """Persist the candidate plan before release preflight or either model call."""
-
-    return ensure_world_model_ablation_plan(
-        governance=SqlGovernanceRepository(engine),
-        config=config,
-        contracts=configured_world_model_ablation_contracts(config),
-        release=release,
-        registered_at=registered_at,
     )

@@ -8,8 +8,6 @@ capital:
   candidate_capital_authorizations: []
 
 outcome_evaluation:
-  world_model_ablation:
-    enabled: false
   context_forecast_stability:
     enabled: true
   quant_baseline:

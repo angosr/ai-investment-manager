@@ -19,8 +19,6 @@ assessment:
   enabled: false
 
 outcome_evaluation:
-  world_model_ablation:
-    enabled: false
   quant_baseline:
     enabled: false
   quant_context_posterior:

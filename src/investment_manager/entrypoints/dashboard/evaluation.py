@@ -60,10 +60,6 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
-from investment_manager.governance.evaluation.world_model_ablation import (
-    SqlWorldModelAblationRepository,
-    WorldModelAblationReport,
-)
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.evaluation import (
@@ -256,23 +252,6 @@ class EvaluationDashboardReader:
                     key=lambda item: item.outcome_family_id,
                 )
             ),
-        )
-
-    def world_model_ablation_evidence(self, *, now: datetime) -> WorldModelAblationReport | None:
-        """Read the active prospective comparison without registering or mutating it."""
-
-        now = require_utc(now)
-        policy = self._config.outcome_evaluation.world_model_ablation
-        context = self._config.capital.context_forecast
-        if policy is None or not policy.enabled or context is None or not context.enabled:
-            return None
-        return SqlWorldModelAblationRepository(self._engine).report(
-            plan_id=policy.plan_id,
-            evaluation_version=self._config.outcome_evaluation.target_forecast_version,
-            minimum_sample_size=policy.minimum_sample_size,
-            formal_producer_behavior_id=context.producer_behavior_id,
-            activated_at=policy.activated_at,
-            as_of=now,
         )
 
     def product_payoff_evidence(self) -> ProductPayoffEvidence | None:
@@ -1028,47 +1007,6 @@ def serialize_trading_cost_evidence(evidence: TradingCostEvidence) -> dict:
     return {"trading_cost_evidence": payload}
 
 
-def serialize_world_model_ablation_evidence(
-    report: WorldModelAblationReport | None,
-) -> dict:
-    if report is None:
-        return {"world_model_ablation": None}
-    return {
-        "world_model_ablation": {
-            "plan_id": report.plan_id,
-            "as_of": _iso(report.as_of),
-            "formal_forecast_count": report.formal_forecast_count,
-            "formal_no_estimate_count": report.formal_no_estimate_count,
-            "assignments": report.assignments,
-            "pending_controls": report.pending_controls,
-            "successful_controls": report.successful_controls,
-            "failed_controls": report.failed_controls,
-            "settled_pairs": report.settled_pairs,
-            "conservative_sample_count": report.conservative_sample_count,
-            "mean_ranked_probability_improvement": (
-                None
-                if report.mean_ranked_probability_improvement is None
-                else str(report.mean_ranked_probability_improvement)
-            ),
-            "conservative_mean_ranked_probability_improvement": (
-                None
-                if report.conservative_mean_ranked_probability_improvement is None
-                else str(report.conservative_mean_ranked_probability_improvement)
-            ),
-            "mean_brier_improvement": (
-                None
-                if report.mean_brier_improvement is None
-                else str(report.mean_brier_improvement)
-            ),
-            "conservative_improvement_lower_bound": (
-                None
-                if report.conservative_improvement_lower_bound is None
-                else str(report.conservative_improvement_lower_bound)
-            ),
-            "minimum_sample_size": report.minimum_sample_size,
-            "evidence_sufficient": report.evidence_sufficient,
-        }
-    }
 
 
 def _serialize_forecast_evidence_payload(evidence: ForecastEvidence) -> dict:
