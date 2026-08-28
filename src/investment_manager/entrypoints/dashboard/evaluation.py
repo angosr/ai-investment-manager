@@ -28,6 +28,7 @@ from investment_manager.forecast.context.evaluation import (
 from investment_manager.forecast.context.posterior import (
     quant_context_posterior_behavior_id,
 )
+from investment_manager.forecast.context.targets import configured_context_capital_targets
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
@@ -155,13 +156,7 @@ class EvaluationDashboardReader:
             contracts = self._active_forecast_contracts(connection)
             if not contracts:
                 return None
-            behavior_id = quant_context_posterior_behavior_id(
-                config=self._config,
-                contracts=tuple(
-                    sorted(contracts, key=lambda item: item.outcome_family_id)
-                ),
-                quant_producer_behavior_id=self._quant_behavior_id(contracts),
-            )
+            behavior_id = self._posterior_behavior_id(contracts)
             return self._forecast_evidence(
                 connection,
                 now=now,
@@ -186,10 +181,9 @@ class EvaluationDashboardReader:
             if not contracts:
                 return None
             quant_behavior_id = self._quant_behavior_id(contracts)
-            posterior_behavior_id = quant_context_posterior_behavior_id(
-                config=self._config,
-                contracts=tuple(sorted(contracts, key=lambda item: item.outcome_family_id)),
-                quant_producer_behavior_id=quant_behavior_id,
+            posterior_behavior_id = self._posterior_behavior_id(
+                contracts,
+                quant_behavior_id=quant_behavior_id,
             )
             return QuantContextPairEvidence(
                 vs_quant=self._forecast_pair_evidence(
@@ -201,6 +195,39 @@ class EvaluationDashboardReader:
                     comparator_behavior_id=quant_behavior_id,
                 ),
             )
+
+    def _posterior_behavior_id(
+        self,
+        contracts: tuple[ForecastContract, ...],
+        *,
+        quant_behavior_id: str | None = None,
+    ) -> str:
+        specifications = configured_context_capital_targets(
+            capital=self._config.capital,
+            feature=self._config.feature,
+            market_policy=self._config.market_data,
+        )
+        behavior_by_family = {
+            item.contract.outcome_family_id: item.state_behavior
+            for item in specifications
+        }
+        ordered_contracts = tuple(
+            sorted(contracts, key=lambda item: item.outcome_family_id)
+        )
+        return quant_context_posterior_behavior_id(
+            config=self._config,
+            contracts=ordered_contracts,
+            target_state_behaviors=tuple(
+                (
+                    contract.outcome_family_id,
+                    behavior_by_family[contract.outcome_family_id],
+                )
+                for contract in ordered_contracts
+            ),
+            quant_producer_behavior_id=(
+                quant_behavior_id or self._quant_behavior_id(contracts)
+            ),
+        )
 
     def _quant_behavior_id(self, contracts: tuple[ForecastContract, ...]) -> str:
         policy = self._config.outcome_evaluation.quant_baseline

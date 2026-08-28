@@ -117,6 +117,10 @@ class ProducerCapitalDashboardReader:
             "AI_QUANT": quant_context_posterior_behavior_id(
                 config=self._config,
                 contracts=tuple(sorted(contracts, key=lambda item: item.outcome_family_id)),
+                target_state_behaviors=tuple(
+                    (item.contract.outcome_family_id, item.state_behavior)
+                    for item in definitions
+                ),
                 quant_producer_behavior_id=quant_behavior_id,
             ),
         }

@@ -26,24 +26,26 @@ from investment_manager.portfolio.policy import (
 
 
 @dataclass(frozen=True, slots=True)
-class ContextCapitalTargetDefinition:
+class ContextCapitalTargetSpecification:
     policy: ContextForecastTargetPolicy
     contract: ForecastContract
     instrument: InstrumentId
     state_behavior: ContextForecastTargetStateBehavior
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCapitalTargetDefinition(ContextCapitalTargetSpecification):
     target_states: MarketContextTargetStateProvider
     product_payoffs: ContextProductPayoffProjector | None
 
 
-def assemble_context_capital_targets(
+def configured_context_capital_targets(
     *,
     capital: CapitalPolicy,
     feature: FeaturePolicy,
     market_policy: MarketDataPolicy,
-    market: MarketDataStore,
-    product_store: SqlProductPayoffProjectionStore,
-) -> tuple[ContextCapitalTargetDefinition, ...]:
-    """Build the one target definition shared by production and evaluation."""
+) -> tuple[ContextCapitalTargetSpecification, ...]:
+    """Build the frozen contracts and point-in-time state behavior identities."""
 
     context = capital.context_forecast
     if context is None or not context.enabled:
@@ -60,7 +62,7 @@ def assemble_context_capital_targets(
         if market_policy.cross_venue_spot is not None
         else set()
     )
-    definitions: list[ContextCapitalTargetDefinition] = []
+    specifications: list[ContextCapitalTargetSpecification] = []
     for target_policy in context.targets:
         instrument = forecast_instruments[target_policy.reference_instrument_key]
         perpetual = (
@@ -108,6 +110,38 @@ def assemble_context_capital_targets(
             instrument=instrument,
             cost_semantics_version=capital.decision.cost_model_version,
         )
+        specifications.append(
+            ContextCapitalTargetSpecification(
+                policy=target_policy,
+                contract=contract,
+                instrument=instrument,
+                state_behavior=behavior,
+            )
+        )
+    return tuple(specifications)
+
+
+def assemble_context_capital_targets(
+    *,
+    capital: CapitalPolicy,
+    feature: FeaturePolicy,
+    market_policy: MarketDataPolicy,
+    market: MarketDataStore,
+    product_store: SqlProductPayoffProjectionStore,
+) -> tuple[ContextCapitalTargetDefinition, ...]:
+    """Attach runtime state and payoff providers to the frozen target identities."""
+
+    context = capital.context_forecast
+    if context is None or not context.enabled:
+        return ()
+    spec_by_key = {item.instrument.key: item for item in capital.execution_specs}
+    definitions: list[ContextCapitalTargetDefinition] = []
+    for specification in configured_context_capital_targets(
+        capital=capital,
+        feature=feature,
+        market_policy=market_policy,
+    ):
+        behavior = specification.state_behavior
         target_states = MarketContextTargetStateProvider(
             market=market,
             feature_policy=behavior.feature_policy,
@@ -123,13 +157,13 @@ def assemble_context_capital_targets(
             cross_venue_spot_venues=behavior.cross_venue_spot_venues,
             maximum_cross_venue_spot_age_seconds=(behavior.maximum_cross_venue_spot_age_seconds),
         )
-        payoff_policy = target_policy.product_payoffs
+        payoff_policy = specification.policy.product_payoffs
         product_payoffs = None
         if payoff_policy is not None:
             payoff_specs = tuple(spec_by_key[key] for key in payoff_policy.instrument_keys)
             product_payoffs = ContextProductPayoffProjector(
                 policy=payoff_policy,
-                contract=contract,
+                contract=specification.contract,
                 market=market,
                 target_states=target_states,
                 instruments=tuple(item.instrument for item in payoff_specs),
@@ -140,10 +174,10 @@ def assemble_context_capital_targets(
             )
         definitions.append(
             ContextCapitalTargetDefinition(
-                policy=target_policy,
-                contract=contract,
-                instrument=instrument,
-                state_behavior=behavior,
+                policy=specification.policy,
+                contract=specification.contract,
+                instrument=specification.instrument,
+                state_behavior=specification.state_behavior,
                 target_states=target_states,
                 product_payoffs=product_payoffs,
             )

@@ -18,6 +18,7 @@ from investment_manager.forecast.context.stability import (
     ContextForecastStabilityRunner,
     assemble_context_forecast_stability_runner,
 )
+from investment_manager.forecast.context.targets import configured_context_capital_targets
 from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
@@ -338,7 +339,12 @@ def _assemble_quant_context_posterior(
         return None
     if release is None or quant is None or not quant.enabled:
         raise ValueError("Quant Context posterior 运行必须绑定 Release 与 Quant baseline")
-    contracts = configured_world_model_ablation_contracts(config)
+    targets = configured_context_capital_targets(
+        capital=config.capital,
+        feature=config.feature,
+        market_policy=config.market_data,
+    )
+    contracts = tuple(item.contract for item in targets)
     policy_by_family = {item.outcome_family_id: item for item in quant.artifacts}
     artifacts = {
         family: load_quant_forecast_artifact(
@@ -358,6 +364,10 @@ def _assemble_quant_context_posterior(
         config,
         engine=engine,
         contracts=contracts,
+        target_state_behaviors=tuple(
+            (item.contract.outcome_family_id, item.state_behavior)
+            for item in targets
+        ),
         quant_producer_behavior_id=quant_behavior_id,
     )
 

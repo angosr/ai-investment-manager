@@ -20,10 +20,10 @@ from investment_manager.forecast.context.posterior import (
     build_quant_context_posterior_assignment,
     quant_context_posterior_behavior_id,
 )
-from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.context.stability import (
     SqlContextForecastStabilityRepository,
 )
+from investment_manager.forecast.context.targets import configured_context_capital_targets
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastDecisionSlot,
@@ -103,17 +103,17 @@ def _fixture():
     quant = config.outcome_evaluation.quant_baseline
     assert context is not None and posterior is not None and quant is not None
     target_policy = context.targets[0]
-    instrument = next(
+    specification = next(
         item
-        for item in config.capital.forecast_reference_instruments
-        if item.key == target_policy.reference_instrument_key
+        for item in configured_context_capital_targets(
+            capital=config.capital,
+            feature=config.feature,
+            market_policy=config.market_data,
+        )
+        if item.policy == target_policy
     )
-    contract = context_forecast_contract(
-        policy=context,
-        target_policy=target_policy,
-        instrument=instrument,
-        cost_semantics_version=config.capital.decision.cost_model_version,
-    )
+    instrument = specification.instrument
+    contract = specification.contract
     formal_binding = ForecastProducerBinding.create(
         contract_id=contract.contract_id,
         producer_kind=ForecastProducerKind.CONTEXT,
@@ -126,6 +126,7 @@ def _fixture():
     posterior_behavior = quant_context_posterior_behavior_id(
         config=config,
         contracts=(contract,),
+        target_state_behaviors=((contract.outcome_family_id, specification.state_behavior),),
         quant_producer_behavior_id=quant_behavior,
     )
     posterior_binding = ForecastProducerBinding.create(
@@ -307,32 +308,88 @@ def test_quant_context_posterior_behavior_is_independent_of_contract_order() -> 
     config = load_config("config/investment-manager.shadow.yaml")
     context = config.capital.context_forecast
     assert context is not None
-    instruments = {item.key: item for item in config.capital.forecast_reference_instruments}
-    instruments.update(
-        {item.instrument.key: item.instrument for item in config.capital.execution_specs}
+    specifications = configured_context_capital_targets(
+        capital=config.capital,
+        feature=config.feature,
+        market_policy=config.market_data,
     )
-    contracts = tuple(
-        context_forecast_contract(
-            policy=context,
-            target_policy=target,
-            instrument=instruments[target.reference_instrument_key],
-            cost_semantics_version=config.capital.decision.cost_model_version,
-        )
-        for target in context.targets
+    contracts = tuple(item.contract for item in specifications)
+    behaviors = tuple(
+        (item.contract.outcome_family_id, item.state_behavior)
+        for item in specifications
     )
 
     forward = quant_context_posterior_behavior_id(
         config=config,
         contracts=contracts,
+        target_state_behaviors=behaviors,
         quant_producer_behavior_id="a" * 64,
     )
     reverse = quant_context_posterior_behavior_id(
         config=config,
         contracts=tuple(reversed(contracts)),
+        target_state_behaviors=tuple(reversed(behaviors)),
         quant_producer_behavior_id="a" * 64,
     )
 
     assert forward == reverse
+
+
+def test_posterior_behavior_tracks_its_input_not_retired_context_output() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    context = config.capital.context_forecast
+    assert context is not None
+    specifications = configured_context_capital_targets(
+        capital=config.capital,
+        feature=config.feature,
+        market_policy=config.market_data,
+    )
+    contracts = tuple(item.contract for item in specifications)
+    behaviors = tuple(
+        (item.contract.outcome_family_id, item.state_behavior)
+        for item in specifications
+    )
+    original = quant_context_posterior_behavior_id(
+        config=config,
+        contracts=contracts,
+        target_state_behaviors=behaviors,
+        quant_producer_behavior_id="a" * 64,
+    )
+    retired_context_changed = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={
+                    "context_forecast": context.model_copy(
+                        update={"producer_behavior_id": "b" * 64}
+                    )
+                }
+            )
+        }
+    )
+    input_changed = tuple(
+        (
+            family,
+            behavior.model_copy(
+                update={"maximum_comparison_age_seconds": 901}
+            )
+            if index == 0
+            else behavior,
+        )
+        for index, (family, behavior) in enumerate(behaviors)
+    )
+
+    assert quant_context_posterior_behavior_id(
+        config=retired_context_changed,
+        contracts=contracts,
+        target_state_behaviors=behaviors,
+        quant_producer_behavior_id="a" * 64,
+    ) == original
+    assert quant_context_posterior_behavior_id(
+        config=config,
+        contracts=contracts,
+        target_state_behaviors=input_changed,
+        quant_producer_behavior_id="a" * 64,
+    ) != original
 
 
 def test_quant_context_posterior_exposes_selected_prior_not_candidate_distributions() -> None:

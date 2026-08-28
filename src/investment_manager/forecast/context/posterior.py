@@ -22,12 +22,15 @@ from investment_manager.forecast.codex.router import (
     CodexAccountRouter,
     assemble_codex_router,
 )
+from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.estimate import (
+    CONTEXT_FORECAST_INPUT_VERSION,
     CONTEXT_FORECAST_OUTPUT_VERSION,
     ContextForecastAnalysisTarget,
     ContextForecastDraft,
     ContextForecastProbabilityDraft,
     ContextForecastStructuredOutput,
+    ContextForecastTargetStateBehavior,
     QuantContextPosteriorDraft,
     QuantContextPosteriorStructuredOutput,
     context_forecast_input_projection,
@@ -84,10 +87,47 @@ from investment_manager.settings import AppConfig
 POSTERIOR_FINALIZATION_VERSION = "quant-context-posterior-finalization-v1"
 
 
+def quant_context_input_behavior_id(
+    *,
+    config: AppConfig,
+    contracts: tuple[ForecastContract, ...],
+    target_state_behaviors: tuple[
+        tuple[str, ContextForecastTargetStateBehavior], ...
+    ],
+) -> str:
+    """Identify only the shared point-in-time input projection, not retired AI output."""
+
+    context = config.capital.context_forecast
+    if context is None:
+        raise ValueError("Quant Context posterior 缺少 Context 输入政策")
+    return content_hash(
+        {
+            "input_version": CONTEXT_FORECAST_INPUT_VERSION,
+            "contracts": tuple(
+                sorted(contracts, key=lambda item: item.outcome_family_id)
+            ),
+            "target_state_behaviors": tuple(sorted(target_state_behaviors)),
+            "world_model_behavior_id": configured_assess_behavior_hash(config),
+            "input_policy": context.model_dump(
+                mode="json",
+                exclude={
+                    "producer_behavior_id": True,
+                    "enabled": True,
+                    "reasoning_effort": True,
+                    "targets": {"__all__": {"product_payoffs"}},
+                },
+            ),
+        }
+    )
+
+
 def quant_context_posterior_behavior_id(
     *,
     config: AppConfig,
     contracts: tuple[ForecastContract, ...],
+    target_state_behaviors: tuple[
+        tuple[str, ContextForecastTargetStateBehavior], ...
+    ],
     quant_producer_behavior_id: str,
 ) -> str:
     policy = config.outcome_evaluation.quant_context_posterior
@@ -104,7 +144,11 @@ def quant_context_posterior_behavior_id(
             "instructions": POSTERIOR_INSTRUCTIONS,
             "output_model": QuantContextPosteriorStructuredOutput.model_json_schema(),
             "contracts": ordered_contracts,
-            "formal_producer_behavior_id": context.producer_behavior_id,
+            "context_input_behavior_id": quant_context_input_behavior_id(
+                config=config,
+                contracts=ordered_contracts,
+                target_state_behaviors=target_state_behaviors,
+            ),
             "quant_producer_behavior_id": quant_producer_behavior_id,
             "policy": policy.model_dump(mode="json", exclude={"enabled": True}),
             "execution_contract": codex_execution_contract(),
@@ -1355,6 +1399,9 @@ def assemble_quant_context_posterior_allocator(
     *,
     engine: Engine,
     contracts: tuple[ForecastContract, ...],
+    target_state_behaviors: tuple[
+        tuple[str, ContextForecastTargetStateBehavior], ...
+    ],
     quant_producer_behavior_id: str,
     producer_activation_at: datetime,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -1369,6 +1416,7 @@ def assemble_quant_context_posterior_allocator(
     behavior_id = quant_context_posterior_behavior_id(
         config=config,
         contracts=contracts,
+        target_state_behaviors=target_state_behaviors,
         quant_producer_behavior_id=quant_producer_behavior_id,
     )
     bindings = {}
@@ -1386,7 +1434,11 @@ def assemble_quant_context_posterior_allocator(
         )
     return QuantContextPosteriorAllocator(
         policy=policy,
-        formal_producer_behavior_id=context.producer_behavior_id,
+        formal_producer_behavior_id=quant_context_input_behavior_id(
+            config=config,
+            contracts=contracts,
+            target_state_behaviors=target_state_behaviors,
+        ),
         quant_producer_behavior_id=quant_producer_behavior_id,
         producer_behavior_id=behavior_id,
         bindings_by_contract=bindings,
@@ -1413,6 +1465,10 @@ def assemble_quant_context_posterior_assignment_producer(
         config,
         engine=engine,
         contracts=tuple(item.contract for item in targets),
+        target_state_behaviors=tuple(
+            (item.contract.outcome_family_id, item.state_behavior)
+            for item in targets
+        ),
         quant_producer_behavior_id=quant_producer_behavior_id,
         producer_activation_at=producer_activation_at,
         clock=clock,
@@ -1435,6 +1491,9 @@ def assemble_quant_context_posterior_runner(
     *,
     engine: Engine,
     contracts: tuple[ForecastContract, ...],
+    target_state_behaviors: tuple[
+        tuple[str, ContextForecastTargetStateBehavior], ...
+    ],
     quant_producer_behavior_id: str,
 ) -> QuantContextPosteriorRunner | None:
     policy = config.outcome_evaluation.quant_context_posterior
@@ -1446,6 +1505,7 @@ def assemble_quant_context_posterior_runner(
     behavior_id = quant_context_posterior_behavior_id(
         config=config,
         contracts=contracts,
+        target_state_behaviors=target_state_behaviors,
         quant_producer_behavior_id=quant_producer_behavior_id,
     )
     runtime = context_forecast_runtime(config.codex_runtime, context)
@@ -1546,5 +1606,6 @@ __all__ = [
     "assemble_quant_context_posterior_runner",
     "audit_quant_context_posterior_draft",
     "build_quant_context_posterior_assignment",
+    "quant_context_input_behavior_id",
     "quant_context_posterior_behavior_id",
 ]
