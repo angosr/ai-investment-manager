@@ -1,0 +1,38 @@
+{
+  "schema_version": "product-feasibility-v1",
+  "evaluated_at": "2026-08-28T18:40:00Z",
+  "scope": "Binance-only defensive yield exposure for the current provisional reference policy",
+  "official_exchange_info": {
+    "url": "https://fapi.binance.com/fapi/v1/exchangeInfo",
+    "response_sha256": "69040e95a273d452fd20e88036181ab58d7d70e15d6121de984d097b52d3a70e",
+    "symbol_count": 882,
+    "direct_treasury_symbols_checked": ["TLTUSDT", "SGOVUSDT", "BILUSDT", "SHYUSDT", "IEFUSDT"],
+    "direct_treasury_symbols_found": []
+  },
+  "rejected_substitutes": [
+    {
+      "symbol": "TMFUSDT",
+      "status": "TRADING",
+      "reason": "杠杆长久期国债 ETF 的永续表达，具有日度杠杆路径、久期、funding 与新上市历史不足，不能作为现金或短债替代。"
+    },
+    {
+      "symbol": "TBTUSDT",
+      "status": "TRADING",
+      "reason": "反向杠杆长久期国债 ETF 的永续表达，经济方向与防守现金收益不同，不能作为 Reference 的无风险腿。"
+    }
+  ],
+  "pending_candidate": {
+    "product": "RWUSD",
+    "official_api": "https://developers.binance.com/docs/simple_earn/rwusd/earn",
+    "reward_history_api": "https://developers.binance.com/docs/simple_earn/rwusd/history/Get-RWUSD-rewards-history",
+    "known_semantics": "Binance 账户内的收益产品；APR 由 Binance 自主确定，不代表对任何 RWA 或国债的权利，赎回费用和可用性会改变现金流动性。",
+    "required_before_mock_admission": [
+      "确认当前账户和司法辖区资格且不暴露密钥或余额",
+      "取得点时 APR、奖励、申购、赎回费、到账时延与额度事实",
+      "实现独立 CASH_MANAGEMENT 产品的估值、应计收益、赎回和压力流动性语义",
+      "证明它相对零收益 USDT 在完整费用、交易所信用和赎回压力后的前瞻增量"
+    ]
+  },
+  "decision": "NO_CURRENT_BINANCE_DEFENSIVE_YIELD_PRODUCT_ADMITTED",
+  "conclusion": "当前 Reference 缺少可执行的低波动现金收益腿；不得把零收益 USDT 回填成短债收益，也不得把 TMF/TBT 当作防守债券。RWUSD 只保留为待验收产品候选，不产生配置、订单或代码路径。"
+}
