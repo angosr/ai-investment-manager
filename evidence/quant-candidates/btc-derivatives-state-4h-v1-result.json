@@ -1,0 +1,75 @@
+{
+  "schema_version": "quant-factor-candidate-result-v1",
+  "plan_id": "btc-derivatives-state-4h-v1",
+  "plan_commit": "33cbe7d3f21112495455bcc6c35d9d48a2d07247",
+  "plan_sha256": "ee68178c7a502f9f6d5b6d77747e4774b639a2853d4113675cc957b6d8bceaa9",
+  "evaluated_at": "2026-08-28T17:49:09Z",
+  "status": "REJECTED_ON_VALIDATION",
+  "permission": "REJECTION_ONLY",
+  "dataset_evidence": {
+    "spot_dataset_id": "historical_dataset_dbc898af147b44cbe744",
+    "derivatives_archive_count": 730,
+    "verified_archive_count": 730,
+    "checksum_failure_count": 0,
+    "metric_row_count": 210202,
+    "invalid_metric_row_count": 30
+  },
+  "sample_counts": {
+    "all": 17505,
+    "development": 10499,
+    "validation": 3497,
+    "blind_reserved": 3501
+  },
+  "baseline_validation": {
+    "mean_ranked_probability_score": "0.16602627",
+    "mean_absolute_return_error_bps": "73.23851",
+    "expected_realized_return_correlation": "0.00800",
+    "phase_ranked_probability_scores": ["0.16607653", "0.16441332", "0.16678481", "0.16682954"],
+    "phase_top_minus_bottom_realized_bps": ["0.94500", "13.22826", "35.66423", "4.64721"]
+  },
+  "candidates": [
+    {
+      "model": "baseline_plus_open_interest_change_4h_tercile",
+      "mean_ranked_probability_score": "0.16607506",
+      "mean_absolute_return_error_bps": "73.24793",
+      "expected_realized_return_correlation": "0.02062",
+      "phase_ranked_probability_scores": ["0.16612884", "0.16418809", "0.16674795", "0.16723461"],
+      "phase_top_minus_bottom_realized_bps": ["1.01894", "12.09692", "30.42123", "-12.08709"],
+      "passed": false
+    },
+    {
+      "model": "baseline_plus_futures_taker_log_ratio_1h_tercile",
+      "mean_ranked_probability_score": "0.16595577",
+      "mean_absolute_return_error_bps": "73.18709",
+      "expected_realized_return_correlation": "0.02223",
+      "phase_ranked_probability_scores": ["0.16577206", "0.16434114", "0.16686750", "0.16684133"],
+      "phase_top_minus_bottom_realized_bps": ["10.70009", "19.65262", "22.41453", "13.60150"],
+      "passed": false
+    },
+    {
+      "model": "baseline_plus_top_vs_global_positioning_divergence_tercile",
+      "mean_ranked_probability_score": "0.16607698",
+      "mean_absolute_return_error_bps": "73.29461",
+      "expected_realized_return_correlation": "0.01617",
+      "phase_ranked_probability_scores": ["0.16624068", "0.16461732", "0.16672235", "0.16672683"],
+      "phase_top_minus_bottom_realized_bps": ["-2.76550", "16.83438", "30.83617", "3.19679"],
+      "passed": false
+    },
+    {
+      "model": "baseline_plus_open_interest_and_futures_taker_terciles",
+      "mean_ranked_probability_score": "0.16645697",
+      "mean_absolute_return_error_bps": "73.30631",
+      "expected_realized_return_correlation": "0.01377",
+      "phase_ranked_probability_scores": ["0.16551616", "0.16516115", "0.16708821", "0.16806163"],
+      "phase_top_minus_bottom_realized_bps": ["10.55447", "0.33188", "20.49000", "-10.10729"],
+      "passed": false
+    }
+  ],
+  "rejection_reasons": [
+    "NO_CANDIDATE_IMPROVED_RANKED_PROBABILITY_SCORE_IN_ALL_FOUR_PHASES",
+    "NO_CANDIDATE_EXCEEDED_15_BPS_TOP_BOTTOM_SPREAD_IN_ALL_FOUR_PHASES"
+  ],
+  "blind_revealed": false,
+  "runtime_change": "NONE",
+  "conclusion": "OI、USD-M 主动流及大小账户仓位分歧在验证段均未提供稳定的四小时增量；不进入 Quant prior，不增加 Producer 或运行机制。"
+}
