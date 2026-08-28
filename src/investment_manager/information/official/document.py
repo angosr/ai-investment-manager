@@ -81,6 +81,8 @@ class _OfficialHtmlDocumentParser(HTMLParser):
             if tag == "article"
             else "body-field"
             if "field--name-body" in class_tokens
+            else "article-container"
+            if values.get("id") == "article"
             else None
         )
         should_select_candidate = (

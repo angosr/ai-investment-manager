@@ -527,8 +527,8 @@ shadow:
   analysis_deadline_seconds: 900
 
 information:
-  version: information-intake-v44
-  normalizer_version: trendradar-collector-v11
+  version: information-intake-v45
+  normalizer_version: trendradar-collector-v12
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
   # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。
@@ -545,6 +545,14 @@ information:
     - stream_id: cftc-speeches-testimony
       url: https://www.cftc.gov/RSS/RSSST/rssst.xml
       entry_path_pattern: "^/PressRoom/SpeechesTestimony/[A-Za-z0-9_-]+$"
+    - stream_id: fed-speeches
+      url: https://www.federalreserve.gov/feeds/speeches.xml
+      entry_path_pattern: "^/newsevents/speech/[a-z0-9]+\\.htm$"
+      immediate_review_eligible: true
+    - stream_id: fed-testimony
+      url: https://www.federalreserve.gov/feeds/testimony.xml
+      entry_path_pattern: "^/newsevents/testimony/[a-z0-9]+\\.htm$"
+      immediate_review_eligible: true
     - stream_id: sec-press-releases
       url: https://www.sec.gov/news/pressreleases.rss
       entry_path_pattern: "^/newsroom/press-releases/[a-z0-9-]+$"

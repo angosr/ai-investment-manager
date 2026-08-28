@@ -378,6 +378,57 @@ def test_official_rss_source_hydrates_bounded_first_party_entry_once() -> None:
     assert requests == [feed_url, entry_url, feed_url]
 
 
+def test_official_fed_speech_hydrates_text_and_qualifies_for_immediate_review() -> None:
+    observed_at = datetime(2026, 8, 28, 14, 1, tzinfo=UTC)
+    feed_url = "https://www.federalreserve.gov/feeds/speeches.xml"
+    entry_url = "https://www.federalreserve.gov/newsevents/speech/warsh20260828a.htm"
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><item>
+      <guid>{entry_url}</guid><title>Warsh, In Our Time</title>
+      <link>{entry_url}</link>
+      <description>Speech at an economic policy symposium.</description>
+      <pubDate>Fri, 28 Aug 2026 14:00:00 GMT</pubDate>
+    </item></channel></rss>""".encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == feed_url:
+            return httpx.Response(200, content=xml, request=request)
+        assert str(request.url) == entry_url
+        return httpx.Response(
+            200,
+            text=(
+                '<meta property="og:title" content="Warsh, In Our Time">'
+                '<main><div id="article"><div class="heading"><h3>In Our Time</h3></div>'
+                '<div class="col-xs-12 col-sm-8 col-md-8">'
+                "<p>The Federal Reserve will adjust the policy rate when the "
+                "economic outlook and balance of risks require a different stance.</p>"
+                "</div></div></main>"
+            ),
+            request=request,
+        )
+
+    source = OfficialRssSource(
+        OfficialEventFeed(
+            stream_id="fed-speeches",
+            url=feed_url,
+            entry_path_pattern=r"^/newsevents/speech/[a-z0-9]+\.htm$",
+            immediate_review_eligible=True,
+        ),
+        maximum_age_seconds=3_600,
+        transport=httpx.MockTransport(handler),
+    )
+
+    item = source.read(observed_at=observed_at)[0]
+    event = EventNormalizer(version="official-test-v8").normalize(item)
+
+    assert item.acquisition_route == "official-rss-entry-v3"
+    assert "adjust the policy rate" in item.body
+    assert "adjust the policy rate" in item.decision_excerpt
+    assert event is not None
+    assert event.directional_support_eligible
+    assert event.trigger_priority >= 80
+
+
 def test_official_rss_source_rejects_cross_domain_entry_identity() -> None:
     observed_at = datetime(2026, 8, 21, 18, tzinfo=UTC)
     feed_url = "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"

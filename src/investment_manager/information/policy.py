@@ -13,6 +13,7 @@ class OfficialEventFeed(StrictConfig):
     stream_id: str
     url: str
     entry_path_pattern: str | None = None
+    immediate_review_eligible: bool = False
 
     @field_validator("stream_id")
     @classmethod

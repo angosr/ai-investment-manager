@@ -441,6 +441,9 @@ class OfficialRssSource:
                     url=url,
                     source_reliability=Decimal("1"),
                     rank=0,
+                    immediate_review_eligible=(
+                        self._feed.immediate_review_eligible
+                    ),
                     directional_support_eligible=True,
                 )
             )
@@ -557,6 +560,9 @@ class EventNormalizer:
         "gdp",
         "personal consumption expenditures",
         "personal income",
+        "monetary policy",
+        "policy rate",
+        "balance sheet",
         "innovation advisory committee",
         "pce",
         "payroll",
@@ -611,6 +617,9 @@ class EventNormalizer:
         "gdp",
         "personal consumption expenditures",
         "personal income",
+        "monetary policy",
+        "policy rate",
+        "balance sheet",
         "innovation advisory committee",
         "pce",
         "payroll",

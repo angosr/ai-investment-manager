@@ -73,8 +73,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:SPOT:PAXGUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v17"
-    assert config.information.version == "information-intake-v44"
-    assert config.information.normalizer_version == "trendradar-collector-v11"
+    assert config.information.version == "information-intake-v45"
+    assert config.information.normalizer_version == "trendradar-collector-v12"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.economic_release_actual_poll_seconds == 15
     assert config.information.economic_release_actual_deadline_seconds == 900
@@ -83,6 +83,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         item.stream_id for item in config.information.official_event_feeds
     }
     assert all(item.entry_path_pattern for item in config.information.official_event_feeds)
+    assert {
+        item.stream_id
+        for item in config.information.official_event_feeds
+        if item.immediate_review_eligible
+    } == {"fed-speeches", "fed-testimony"}
     assert config.information.official_metric_slow_poll_seconds == 21_600
     assert config.decision_state.version == "portfolio-state-v51"
     assert config.decision_state.official_fact_policy.version == "official-fact-v19"
