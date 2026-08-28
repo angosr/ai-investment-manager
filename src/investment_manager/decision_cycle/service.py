@@ -17,21 +17,7 @@ from investment_manager.decision_cycle.trigger import (
     TriggerDispatchBuilder,
 )
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
-from investment_manager.forecast.context.posterior import (
-    assemble_quant_context_posterior_preallocator,
-)
-from investment_manager.forecast.context.producer import CompositeContextForecastPreflight
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
-from investment_manager.forecast.context.stability import (
-    assemble_context_forecast_stability_preallocator,
-)
-from investment_manager.forecast.quant.runtime import (
-    load_quant_forecast_artifact,
-    quant_forecast_behavior_id,
-)
-from investment_manager.governance.evaluation.world_model_ablation import (
-    assemble_world_model_ablation_preallocator,
-)
 from investment_manager.governance.models import ReleaseManifest, resolve_manifest_artifact
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
@@ -215,10 +201,7 @@ def _assemble_capital_consumer(
     manifest: ReleaseManifest,
 ) -> CapitalCycleService:
     execution = assemble_product_execution_runtime(config, engine)
-    ablation_policy = config.outcome_evaluation.world_model_ablation
-    stability_policy = config.outcome_evaluation.context_forecast_stability
     quant_policy = config.outcome_evaluation.quant_baseline
-    posterior_policy = config.outcome_evaluation.quant_context_posterior
     quant_artifact_paths = (
         {
             item.artifact_id: resolve_manifest_artifact(manifest, item.artifact_id)
@@ -228,78 +211,11 @@ def _assemble_capital_consumer(
         else None
     )
 
-    def evaluation_preflight(contracts):
-        preflights = []
-        if ablation_policy is not None and ablation_policy.enabled:
-            ablation = assemble_world_model_ablation_preallocator(
-                config,
-                engine=engine,
-                release=manifest,
-                contracts=contracts,
-                clock=lambda: datetime.now(UTC),
-            )
-            if ablation is None:
-                raise ValueError("WorldModel 配对 preflight 未启用")
-            preflights.append(ablation)
-        if stability_policy is not None and stability_policy.enabled:
-            stability = assemble_context_forecast_stability_preallocator(
-                config,
-                engine=engine,
-                clock=lambda: datetime.now(UTC),
-            )
-            if stability is None:
-                raise ValueError("Context Forecast stability preflight 未启用")
-            preflights.append(stability)
-        if posterior_policy is not None and posterior_policy.enabled:
-            assert quant_policy is not None and quant_policy.enabled
-            assert quant_artifact_paths is not None
-            policy_by_family = {item.outcome_family_id: item for item in quant_policy.artifacts}
-            artifacts_by_family = {
-                family: load_quant_forecast_artifact(
-                    quant_artifact_paths[item.artifact_id],
-                    expected_artifact_id=item.artifact_id,
-                )
-                for family, item in policy_by_family.items()
-            }
-            quant_behavior_id = quant_forecast_behavior_id(
-                policy_version=quant_policy.version,
-                producer_id=quant_policy.producer_id,
-                targets=tuple(
-                    (
-                        contract,
-                        artifacts_by_family.get(contract.outcome_family_id),
-                    )
-                    for contract in contracts
-                ),
-            )
-            posterior = assemble_quant_context_posterior_preallocator(
-                config,
-                engine=engine,
-                contracts=contracts,
-                quant_producer_behavior_id=quant_behavior_id,
-                producer_activation_at=manifest.created_at,
-                clock=lambda: datetime.now(UTC),
-            )
-            if posterior is None:
-                raise ValueError("Quant Context posterior preflight 未启用")
-            preflights.append(posterior)
-        return CompositeContextForecastPreflight(tuple(preflights))
-
     return assemble_capital_cycle(
         config,
         engine,
         venue=execution.venue,
         initial_cash=execution.initial_cash,
-        code_version=manifest.code_version,
         producer_activation_at=manifest.created_at,
         quant_artifact_paths=quant_artifact_paths,
-        context_forecast_preflight_factory=(
-            evaluation_preflight
-            if (
-                (ablation_policy is not None and ablation_policy.enabled)
-                or (stability_policy is not None and stability_policy.enabled)
-                or (posterior_policy is not None and posterior_policy.enabled)
-            )
-            else None
-        ),
     )

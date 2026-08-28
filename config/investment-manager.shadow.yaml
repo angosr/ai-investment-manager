@@ -4,12 +4,12 @@ capital:
   enabled: true
   context_forecast:
     enabled: true
-  # Context 继续按同一合同生成研究 Forecast，但已结算证据不支持它新增风险。
+  # 前瞻研究只比较 Quant 与 AI+Quant，尚未授予任何一方资本权限。
   candidate_capital_authorizations: []
 
 outcome_evaluation:
   world_model_ablation:
-    enabled: true
+    enabled: false
   context_forecast_stability:
     enabled: true
   quant_baseline:

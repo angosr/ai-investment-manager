@@ -279,13 +279,11 @@ def assemble_outcome_evaluation(
         engine=engine,
         release=release,
     )
-    stability_behaviors = [
-        config.capital.context_forecast.producer_behavior_id
-        if config.capital.context_forecast is not None
-        else None
-    ]
-    if posterior_runner is not None:
-        stability_behaviors.append(posterior_runner.producer_behavior_id)
+    stability_behaviors = (
+        ()
+        if posterior_runner is None
+        else (posterior_runner.producer_behavior_id,)
+    )
     stability_runners = tuple(
         runner
         for behavior_id in stability_behaviors

@@ -23,10 +23,10 @@ from investment_manager.entrypoints.dashboard.evaluation import EvaluationDashbo
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
-from investment_manager.forecast.context.producer import (
-    PortfolioContextForecastProducer,
-    context_forecast_contract,
+from investment_manager.forecast.context.posterior import (
+    QuantContextPosteriorAssignmentProducer,
 )
+from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -1470,48 +1470,23 @@ def test_pending_group_requires_quotes_without_a_prior_account_position() -> Non
     assert tuple(item.symbol for item in execution) == ("PAXGUSDT",)
 
 
-def test_context_forecast_uses_observation_only_perpetual_market_evidence(
-    monkeypatch,
-) -> None:
+def test_research_chain_contains_only_quant_then_ai_quant_assignment() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
-    captured = {}
-
-    def _capture_analyst(_config, **kwargs):
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(
-        "investment_manager.decision_cycle.capital.assemble_codex_context_forecast_analyst",
-        _capture_analyst,
-    )
 
     service = _assemble_capital_cycle(
         config,
         engine,
-        code_version="test-code",
         producer_activation_at=NOW,
     )
 
-    behaviors = captured["target_state_behaviors"]
-    assert len(behaviors) == 3
-    evidence = behaviors[0].derivative_evidence_instrument
-    assert evidence is not None
-    assert evidence.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
     assert {item.instrument.product for item in config.capital.execution_specs} == {
         InstrumentProduct.TRADFI_PERPETUAL,
         InstrumentProduct.USD_M_PERPETUAL,
     }
     assert service._forecast_sources == ()
-    assert set(service._source_by_family) == {
-        target.outcome_family_id for target in config.capital.context_forecast.targets
-    }
-    assert all(
-        source.binding.permission == ForecastPermission.RESEARCH
-        and source.capital_authorization is None
-        for source in service._source_by_family.values()
-    )
+    assert service._source_by_family == {}
     assert len(service._research_forecast_producers) == 2
     assert isinstance(
         service._research_forecast_producers[0],
@@ -1519,7 +1494,7 @@ def test_context_forecast_uses_observation_only_perpetual_market_evidence(
     )
     assert isinstance(
         service._research_forecast_producers[1],
-        PortfolioContextForecastProducer,
+        QuantContextPosteriorAssignmentProducer,
     )
 
 

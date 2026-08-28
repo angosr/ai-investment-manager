@@ -12,7 +12,7 @@ from investment_manager.forecast.context.estimate import (
     QuantContextPosteriorDraft,
 )
 from investment_manager.forecast.context.posterior import (
-    QuantContextPosteriorPreallocator,
+    QuantContextPosteriorAllocator,
     QuantContextPosteriorRunner,
     QuantContextPosteriorTarget,
     SqlQuantContextPosteriorRepository,
@@ -604,6 +604,73 @@ def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> No
     assert pair.mean_max_bucket_probability_delta == Decimal("0.03")
 
 
+def test_quant_context_posterior_assignment_is_frozen_directly_from_quant_terminal() -> None:
+    (
+        config,
+        contract,
+        _,
+        posterior_binding,
+        quant_forecast,
+        expected,
+    ) = _fixture()
+    posterior_policy = config.outcome_evaluation.quant_context_posterior
+    assert posterior_policy is not None
+    posterior_policy = posterior_policy.model_copy(update={"activated_at": NOW})
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    forecasts = SqlForecastStore(engine)
+    contracts.record_contract(contract)
+    contracts.record_binding(posterior_binding, activated_at=NOW)
+    quant_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id=quant_forecast.producer_id,
+        producer_behavior_id=quant_forecast.producer_behavior_id,
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(quant_binding, activated_at=NOW)
+    contracts.record_slot(expected.targets[0].slot, binding=quant_binding)
+    forecasts.record(quant_forecast)
+    repository = SqlQuantContextPosteriorRepository(engine)
+    allocator = QuantContextPosteriorAllocator(
+        policy=posterior_policy,
+        formal_producer_behavior_id=expected.formal_producer_behavior_id,
+        quant_producer_behavior_id=quant_binding.producer_behavior_id,
+        producer_behavior_id=posterior_binding.producer_behavior_id,
+        bindings_by_contract={contract.contract_id: posterior_binding},
+        contracts=contracts,
+        forecasts=forecasts,
+        repository=repository,
+        clock=lambda: expected.assigned_at,
+    )
+
+    assignment = allocator.allocate(
+        slot=expected.targets[0].slot,
+        analysis_input=json.loads(expected.analysis_input_json),
+    )
+
+    assert assignment is not None
+    assert assignment.assignment_id == expected.assignment_id
+    assert assignment.analysis_input_json == expected.analysis_input_json
+    assert assignment.targets[0].quant_forecast_id == quant_forecast.forecast_id
+    assert set(assignment.targets[0].quant_input_refs) == {
+        quant_forecast.forecast_id,
+        *quant_forecast.input_refs,
+    }
+    assert repository.assignment(assignment.assignment_id) == assignment
+    assert (
+        contracts.obligation(
+            stable_id(
+                "forecast_slot_obligation",
+                expected.targets[0].slot.slot_id,
+                posterior_binding.binding_id,
+            )
+        )
+        is not None
+    )
+
+
 def test_quant_context_posterior_records_missing_prior_without_calling_ai() -> None:
     config, contract, formal_binding, posterior_binding, _, assignment = _fixture()
     posterior_policy = config.outcome_evaluation.quant_context_posterior
@@ -683,91 +750,3 @@ def test_quant_context_posterior_records_missing_prior_without_calling_ai() -> N
     assert report.no_estimate_count == 1
     assert report.pending_count == 0
     assert analyst.calls == 0
-
-
-def test_quant_context_posterior_records_formal_target_absence_on_shared_slot() -> None:
-    (
-        config,
-        contract,
-        formal_binding,
-        posterior_binding,
-        quant_forecast,
-        assignment,
-    ) = _fixture()
-    posterior_policy = config.outcome_evaluation.quant_context_posterior
-    assert posterior_policy is not None
-    posterior_policy = posterior_policy.model_copy(update={"activated_at": NOW})
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    contracts = SqlForecastContractStore(engine)
-    forecasts = SqlForecastStore(engine)
-    contracts.record_contract(contract)
-    contracts.record_binding(formal_binding, activated_at=NOW)
-    contracts.record_binding(posterior_binding, activated_at=NOW)
-    slot = assignment.targets[0].slot
-    contracts.record_slot(slot, binding=formal_binding)
-    quant_binding = ForecastProducerBinding.create(
-        contract_id=contract.contract_id,
-        producer_kind=ForecastProducerKind.PROGRAM,
-        producer_id=quant_forecast.producer_id,
-        producer_behavior_id=quant_forecast.producer_behavior_id,
-        permission=ForecastPermission.RESEARCH,
-    )
-    contracts.record_binding(quant_binding, activated_at=NOW)
-    contracts.record_obligation(slot=slot, binding=quant_binding)
-    forecasts.record(quant_forecast)
-    formal_absence = ForecastNoEstimate(
-        result_id=stable_id(
-            "forecast_no_estimate",
-            slot.slot_id,
-            formal_binding.producer_behavior_id,
-        ),
-        slot_id=slot.slot_id,
-        contract_id=contract.contract_id,
-        producer_kind=formal_binding.producer_kind,
-        producer_id=formal_binding.producer_id,
-        producer_behavior_id=formal_binding.producer_behavior_id,
-        reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
-        information_cutoff_at=slot.information_cutoff_at,
-        attempted_at=slot.slot_as_of,
-        completed_at=slot.slot_as_of,
-        input_refs=("formal-target-state-missing",),
-        detail="TARGET_STATE_UNAVAILABLE:ValueError",
-    )
-    contracts.record_no_estimate(formal_absence)
-    repository = SqlQuantContextPosteriorRepository(engine)
-    preallocator = QuantContextPosteriorPreallocator(
-        policy=posterior_policy,
-        formal_producer_behavior_id=formal_binding.producer_behavior_id,
-        quant_producer_behavior_id=quant_binding.producer_behavior_id,
-        producer_behavior_id=posterior_binding.producer_behavior_id,
-        bindings_by_contract={contract.contract_id: posterior_binding},
-        contracts=contracts,
-        forecasts=forecasts,
-        repository=repository,
-        clock=lambda: NOW + timedelta(seconds=2),
-    )
-
-    preallocator.before_estimate(
-        slot=slot,
-        formal_producer_behavior_id=formal_binding.producer_behavior_id,
-        formal_analysis_input=None,
-        formal_output_schema=None,
-    )
-
-    posterior_absence = contracts.no_estimate(
-        stable_id(
-            "forecast_no_estimate",
-            slot.slot_id,
-            posterior_binding.producer_behavior_id,
-        )
-    )
-    assert posterior_absence is not None
-    assert posterior_absence.reason == ForecastNoEstimateReason.MARKET_INPUT_INVALID
-    assert posterior_absence.detail == "FORMAL_INPUT_UNAVAILABLE:MARKET_INPUT_INVALID"
-    assert formal_absence.result_id in posterior_absence.input_refs
-    assert quant_forecast.forecast_id in posterior_absence.input_refs
-    assert repository.assignments(
-        policy_version=posterior_policy.version,
-        producer_behavior_id=posterior_binding.producer_behavior_id,
-    ) == ()

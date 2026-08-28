@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -28,20 +27,10 @@ from investment_manager.execution.planning.planner import TradePlan, TradePlanne
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product import ProductOrderVenue
-from investment_manager.forecast.codex.repository import (
-    SqlAccountLeaseStore,
-    SqlCodexAuditStore,
+from investment_manager.forecast.context.posterior import (
+    assemble_quant_context_posterior_assignment_producer,
 )
-from investment_manager.forecast.context.estimate import (
-    assemble_codex_context_forecast_analyst,
-)
-from investment_manager.forecast.context.producer import (
-    ContextForecastPreflight,
-    ContextForecastRuntimeTarget,
-    ForecastProductionResult,
-    PortfolioContextForecastProducer,
-)
-from investment_manager.forecast.context.repository import SqlContextAssessmentStore
+from investment_manager.forecast.context.producer import ForecastProductionResult
 from investment_manager.forecast.context.targets import (
     assemble_context_capital_targets,
 )
@@ -1381,12 +1370,8 @@ def assemble_capital_cycle(
     venue: ProductOrderVenue,
     initial_cash: Decimal,
     forecast_sources: tuple[CapitalForecastSource, ...] | None = None,
-    code_version: str | None = None,
     producer_activation_at: datetime | None = None,
     quant_artifact_paths: dict[str, Path] | None = None,
-    context_forecast_preflight_factory: (
-        Callable[[tuple[ForecastContract, ...]], ContextForecastPreflight] | None
-    ) = None,
 ) -> CapitalCycleService:
     if not config.capital.enabled:
         raise ValueError("Capital cycle 未启用")
@@ -1394,7 +1379,6 @@ def assemble_capital_cycle(
         raise ValueError("Capital 初始现金必须为正数")
     market = SqlMarketDataStore(engine)
     forecasts = SqlForecastStore(engine)
-    world_models = SqlContextAssessmentStore(engine)
     contracts = SqlForecastContractStore(engine)
     research_forecast_producers: list[ResearchForecastProducer] = []
     context_activation_at: datetime | None = None
@@ -1402,14 +1386,14 @@ def assemble_capital_cycle(
         configured_sources: list[CapitalForecastSource] = []
         context = config.capital.context_forecast
         if context is not None and context.enabled:
-            if code_version is None:
-                raise ValueError("装配 Context Forecast 必须冻结 code_version")
             if producer_activation_at is None:
-                raise ValueError("装配 Context Forecast 必须冻结 producer activation")
+                raise ValueError("装配 Forecast 研究必须冻结 producer activation")
             authorization_by_family = {
                 item.outcome_family_id: item
                 for item in config.capital.candidate_capital_authorizations
             }
+            if authorization_by_family:
+                raise ValueError("纯 Context 已退役；当前没有获授权的现役 Forecast 来源")
             target_definitions = assemble_context_capital_targets(
                 capital=config.capital,
                 feature=config.feature,
@@ -1417,73 +1401,17 @@ def assemble_capital_cycle(
                 market=market,
                 product_store=SqlProductPayoffProjectionStore(engine),
             )
-            runtimes: list[ContextForecastRuntimeTarget] = []
-            activation_times: list[datetime] = []
-            for definition in target_definitions:
-                target_policy = definition.policy
-                contract = definition.contract
-                binding = ForecastProducerBinding.create(
-                    contract_id=contract.contract_id,
-                    producer_kind=ForecastProducerKind.CONTEXT,
-                    producer_id=context.producer_id,
-                    producer_behavior_id=context.producer_behavior_id,
-                    permission=(
-                        ForecastPermission.CAPITAL_CANDIDATE
-                        if contract.outcome_family_id in authorization_by_family
-                        else ForecastPermission.RESEARCH
-                    ),
-                    required_feature_keys=target_policy.required_feature_keys,
+            frozen_targets = tuple(
+                sorted(
+                    target_definitions,
+                    key=lambda item: item.contract.outcome_family_id,
                 )
-                contracts.record_contract(contract)
-                binding = contracts.resolve_binding(
-                    binding,
-                    activated_at=producer_activation_at,
-                )
-                activation_at = contracts.binding_activation_at(binding.binding_id)
-                if activation_at is None:
-                    raise ValueError("Context Forecast binding 缺少激活时点")
-                activation_times.append(activation_at)
-                runtimes.append(
-                    ContextForecastRuntimeTarget(
-                        policy=target_policy,
-                        contract=contract,
-                        binding=binding,
-                        instrument=definition.instrument,
-                        target_states=definition.target_states,
-                    )
-                )
-            context_activation_at = max(activation_times)
-            frozen_runtimes = tuple(runtimes)
-            frozen_behaviors = tuple(item.state_behavior for item in target_definitions)
-            frozen_contracts = tuple(item.contract for item in frozen_runtimes)
-            program = PortfolioContextForecastProducer(
-                policy=context,
-                targets=frozen_runtimes,
-                market=market,
-                contexts=world_models,
-                contracts=contracts,
-                forecasts=forecasts,
-                analysis_scope=config.assessment.mandate.analysis_scope,
-                activated_at=context_activation_at,
-                preflight=(
-                    None
-                    if context_forecast_preflight_factory is None
-                    else context_forecast_preflight_factory(frozen_contracts)
-                ),
-                analyst=assemble_codex_context_forecast_analyst(
-                    config,
-                    policy=context,
-                    contracts=frozen_contracts,
-                    target_state_behaviors=frozen_behaviors,
-                    code_version=code_version,
-                    leases=SqlAccountLeaseStore(engine),
-                    audit=SqlCodexAuditStore(engine),
-                ),
             )
-            context_research_producer = program if not authorization_by_family else None
+            for definition in frozen_targets:
+                contracts.record_contract(definition.contract)
+            context_activation_at = producer_activation_at
             quant_policy = config.outcome_evaluation.quant_baseline
             if quant_policy is not None and quant_policy.enabled:
-                assert producer_activation_at is not None
                 if quant_artifact_paths is None:
                     raise ValueError("装配 Quant baseline 必须提供 Release 冻结制品")
                 artifact_policy_by_family = {
@@ -1501,17 +1429,19 @@ def assemble_capital_cycle(
                     producer_id=quant_policy.producer_id,
                     targets=tuple(
                         (
-                            runtime.contract,
-                            artifacts_by_family.get(runtime.contract.outcome_family_id),
+                            definition.contract,
+                            artifacts_by_family.get(
+                                definition.contract.outcome_family_id
+                            ),
                         )
-                        for runtime in frozen_runtimes
+                        for definition in frozen_targets
                     ),
                 )
                 quant_targets = []
                 quant_activation_times = []
-                for runtime in frozen_runtimes:
+                for definition in frozen_targets:
                     quant_binding = ForecastProducerBinding.create(
-                        contract_id=runtime.contract.contract_id,
+                        contract_id=definition.contract.contract_id,
                         producer_kind=ForecastProducerKind.PROGRAM,
                         producer_id=quant_policy.producer_id,
                         producer_behavior_id=behavior_id,
@@ -1526,11 +1456,11 @@ def assemble_capital_cycle(
                     )
                     quant_targets.append(
                         QuantForecastRuntimeTarget(
-                            contract=runtime.contract,
+                            contract=definition.contract,
                             binding=quant_binding,
-                            instrument=runtime.instrument,
+                            instrument=definition.instrument,
                             artifact=artifacts_by_family.get(
-                                runtime.contract.outcome_family_id
+                                definition.contract.outcome_family_id
                             ),
                         )
                     )
@@ -1551,27 +1481,17 @@ def assemble_capital_cycle(
                         activated_at=max(quant_activation_times),
                     )
                 )
-            if context_research_producer is not None:
-                # Context preflights can freeze a posterior that consumes the
-                # current-slot deterministic Quant prior.  Preserve that domain
-                # dependency explicitly instead of relying on incidental list order.
-                research_forecast_producers.append(context_research_producer)
-            definition_by_family = {
-                item.contract.outcome_family_id: item for item in target_definitions
-            }
-            for runtime in frozen_runtimes:
-                family = runtime.contract.outcome_family_id
-                authorization = authorization_by_family.get(family)
-                configured_sources.append(
-                    CapitalForecastSource(
-                        contract=runtime.contract,
-                        binding=runtime.binding,
-                        producer=program.view(family),
-                        risk_template=config.capital.sleeve_risk,
-                        capital_authorization=authorization,
-                        product_payoffs=definition_by_family[family].product_payoffs,
+                posterior_assignment = (
+                    assemble_quant_context_posterior_assignment_producer(
+                        config,
+                        engine=engine,
+                        targets=frozen_targets,
+                        quant_producer_behavior_id=behavior_id,
+                        producer_activation_at=producer_activation_at,
                     )
                 )
+                if posterior_assignment is not None:
+                    research_forecast_producers.append(posterior_assignment)
         forecast_sources = tuple(configured_sources)
     portfolio = SqlPortfolioStore(engine)
     performance = SqlPortfolioPerformanceStore(engine)
