@@ -553,11 +553,7 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         "MarketDataPolicy": "market/policy.py",
         "DecisionPacketPolicy": "state/policy.py",
         "DecisionStatePolicy": "state/policy.py",
-        "StrategyPolicy": "forecast/policy.py",
-        "CalibrationPolicy": "forecast/policy.py",
-        "AiMode": "forecast/policy.py",
         "PipelinePolicy": "forecast/policy.py",
-        "ProposalPolicy": "forecast/policy.py",
         "CodexAccount": "forecast/policy.py",
         "CodexAccountRegistry": "forecast/policy.py",
         "CodexRuntimePolicy": "forecast/policy.py",
@@ -621,8 +617,6 @@ def test_evidence_and_scheduling_domains_do_not_depend_on_forecast() -> None:
 
 def test_shared_models_are_owned_and_retired_modules_are_absent() -> None:
     owners = {
-        "DirectionalView": "forecast/models.py",
-        "EdgeCalibration": "forecast/models.py",
         "ForecastResultKind": "forecast/results.py",
     }
     definitions: dict[str, list[str]] = {name: [] for name in owners}

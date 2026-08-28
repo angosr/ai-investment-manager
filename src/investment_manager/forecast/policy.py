@@ -1,90 +1,16 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from enum import StrEnum
-from itertools import pairwise
 from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.state.decision.packet import AnalysisMandate
 
 
-class StrategyPolicy(StrictConfig):
-    strategy_id: str = "price-trend"
-    version: str
-    family: str = "price-trend"
-    enabled: bool = True
-    score_threshold: Decimal = Decimal("0.55")
-    stop_atr_multiple: Decimal = Decimal("1.5")
-    horizon_minutes: int = Field(default=60, gt=0)
-    expected_edge_half_life_seconds: int = Field(default=900, ge=1, le=86400)
-
-
-class CalibrationPolicy(StrictConfig):
-    version: str
-    minimum_non_overlapping_samples: int = Field(default=30, ge=2)
-    method_version: str = "mean-lower-bound-v1"
-    lower_confidence_z: Decimal = Field(default=Decimal("1.96"), gt=0)
-    artifacts: tuple[EdgeCalibration, ...] = ()
-
-    @model_validator(mode="after")
-    def artifacts_must_be_unique_sufficient_and_non_overlapping(self):
-        ids = [item.calibration_id for item in self.artifacts]
-        if len(ids) != len(set(ids)):
-            raise ValueError("EdgeCalibration calibration_id 必须唯一")
-        by_scope: dict[tuple[object, ...], list[EdgeCalibration]] = {}
-        for artifact in self.artifacts:
-            if artifact.non_overlapping_sample_size < self.minimum_non_overlapping_samples:
-                raise ValueError("发布校准制品的非重叠样本量不足")
-            if artifact.method_version != self.method_version:
-                raise ValueError("EdgeCalibration 构建方法版本与策略不一致")
-            by_scope.setdefault(artifact.scope, []).append(artifact)
-        for scoped in by_scope.values():
-            ordered = sorted(scoped, key=lambda item: item.valid_from)
-            if any(
-                current.valid_from < previous.valid_until for previous, current in pairwise(ordered)
-            ):
-                raise ValueError("同一校准作用域的有效期不得重叠")
-        return self
-
-
-class AiMode(StrEnum):
-    OFF = "OFF"
-    PROPOSE = "PROPOSE"
-
-
 class PipelinePolicy(StrictConfig):
     version: str
-
-
-class ResearchPipelinePolicy(PipelinePolicy):
-    """Offline legacy replay mode; never part of a managed release config."""
-
-    ai_mode: AiMode = AiMode.OFF
-
-
-class ProposalPolicy(StrictConfig):
-    version: str
-    producer_id: str = "codex-analyst"
-    strategy_family: str = "ai-contextual"
-    minimum_confidence: Decimal = Decimal("0.55")
-    maximum_horizon_minutes: int = Field(default=240, gt=0)
-    forecast_horizons_minutes: tuple[int, ...] = Field(
-        default=(60, 240), min_length=1, max_length=4
-    )
-    expected_edge_half_life_seconds: int = Field(default=1800, ge=1, le=86400)
-
-    @model_validator(mode="after")
-    def forecast_horizons_are_unique_ordered_and_bounded(self):
-        horizons = self.forecast_horizons_minutes
-        if tuple(sorted(set(horizons))) != horizons:
-            raise ValueError("方向预测周期必须正数、唯一且升序")
-        if horizons[0] <= 0 or horizons[-1] > self.maximum_horizon_minutes:
-            raise ValueError("方向预测周期必须在 Proposal 最大周期内")
-        return self
 
 
 class CodexAccount(StrictConfig):

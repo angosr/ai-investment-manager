@@ -23,12 +23,6 @@ class TriggerReason(StrEnum):
     POSITION_RECHECK = "POSITION_RECHECK"
 
 
-class TriggerDecision(FrozenModel):
-    should_run: bool
-    reason: TriggerReason
-    evidence_ids: tuple[str, ...] = ()
-
-
 class AnalysisCallAdmission(FrozenModel):
     admitted: bool
     admitted_at: datetime | None = None
