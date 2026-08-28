@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from itertools import pairwise
 from pathlib import Path
 from typing import Literal
@@ -42,6 +42,23 @@ QUANT_INFERENCE_VERSION = "conditional-empirical-dirichlet-v1"
 QUANT_PANEL_VERSION = "quant-reliability-panel-v5"
 _FIVE_MINUTES = timedelta(minutes=5)
 _FEATURE_BARS = 49
+QUANT_SELECTION_RULE = "simplest-within-best-worst-phase-one-standard-error-v1"
+
+
+def quant_phase_score_standard_error(values: tuple[Decimal, ...]) -> Decimal:
+    """Sample standard error for frozen non-overlapping phase scores."""
+
+    if len(values) < 2:
+        raise ValueError("Quant 选择标准误差至少需要两个非重叠相位")
+    with localcontext() as context:
+        context.prec = 50
+        count = Decimal(len(values))
+        mean = sum(values, Decimal("0")) / count
+        sample_variance = sum(
+            ((value - mean) ** 2 for value in values),
+            Decimal("0"),
+        ) / Decimal(len(values) - 1)
+        return (sample_variance / count).sqrt()
 
 
 class QuantFeatureThresholds(FrozenModel):
@@ -137,13 +154,43 @@ class QuantCandidateEvaluation(FrozenModel):
         return self
 
 
+class QuantHistoricalCapitalFeasibility(FrozenModel):
+    """Why the frozen model can or cannot receive an honest historical capital replay."""
+
+    schema_version: Literal["quant-historical-capital-feasibility-v1"] = (
+        "quant-historical-capital-feasibility-v1"
+    )
+    status: Literal["UNAVAILABLE"] = "UNAVAILABLE"
+    policy_version: Literal["formal-product-portfolio-replay-v1"] = (
+        "formal-product-portfolio-replay-v1"
+    )
+    capital_instrument_keys: tuple[str, ...] = Field(min_length=1)
+    checked_dataset_ids: tuple[str, ...] = Field(min_length=1)
+    missing_fact_types: tuple[str, ...] = Field(min_length=1)
+    reason_code: Literal["POINT_IN_TIME_EXECUTION_FACTS_UNAVAILABLE"] = (
+        "POINT_IN_TIME_EXECUTION_FACTS_UNAVAILABLE"
+    )
+
+    @model_validator(mode="after")
+    def unavailable_inputs_are_canonical(self):
+        for name in (
+            "capital_instrument_keys",
+            "checked_dataset_ids",
+            "missing_fact_types",
+        ):
+            values = getattr(self, name)
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"Quant historical capital {name} 必须唯一且排序")
+        return self
+
+
 class QuantForecastArtifact(FrozenModel):
     """Content-addressed training result; runtime inference performs no fitting."""
 
-    schema_version: Literal["quant-forecast-artifact-v6"] = "quant-forecast-artifact-v6"
+    schema_version: Literal["quant-forecast-artifact-v7"] = "quant-forecast-artifact-v7"
     artifact_id: str = Field(min_length=1)
-    training_method_version: Literal["purged-ordinal-panel-selection-v6"] = (
-        "purged-ordinal-panel-selection-v6"
+    training_method_version: Literal["purged-ordinal-panel-selection-v7"] = (
+        "purged-ordinal-panel-selection-v7"
     )
     inference_version: Literal["conditional-empirical-dirichlet-v1"] = QUANT_INFERENCE_VERSION
     contract_id: str = Field(min_length=1)
@@ -157,6 +204,10 @@ class QuantForecastArtifact(FrozenModel):
     feature_thresholds: QuantFeatureThresholds
     candidate_evaluations: tuple[QuantCandidateEvaluation, ...] = Field(min_length=1)
     selected_model: str = Field(min_length=1)
+    selection_rule: Literal[
+        "simplest-within-best-worst-phase-one-standard-error-v1"
+    ] = QUANT_SELECTION_RULE
+    selection_standard_error: Decimal = Field(ge=0)
     smoothing_strength: Decimal = Field(gt=0)
     global_distribution: QuantCellDistribution
     development_sample_count: int = Field(gt=0)
@@ -184,6 +235,7 @@ class QuantForecastArtifact(FrozenModel):
     selected_blind_phase_return_correlations: tuple[Decimal, ...]
     blind_unconditional_return_correlation: Decimal = Field(ge=-1, le=1)
     blind_unconditional_phase_return_correlations: tuple[Decimal, ...]
+    historical_capital_feasibility: QuantHistoricalCapitalFeasibility
 
     _utc_training_cutoff_at = field_validator("training_cutoff_at")(require_utc)
     _utc_dataset_last_close_at = field_validator("dataset_last_close_at")(require_utc)
@@ -209,15 +261,29 @@ class QuantForecastArtifact(FrozenModel):
         )
         if not eligible:
             raise ValueError("Quant artifact 没有全相位优于基准的候选")
-        selected = min(
+        strict_best = min(
             eligible,
             key=lambda indexed: (
                 indexed[1].validation_worst_phase_ranked_probability_score,
                 indexed[0],
             ),
         )[1]
+        expected_standard_error = quant_phase_score_standard_error(
+            strict_best.validation_phase_ranked_probability_scores
+        )
+        if self.selection_standard_error != expected_standard_error:
+            raise ValueError("Quant 模型选择标准误差与最佳候选相位不一致")
+        selection_limit = (
+            strict_best.validation_worst_phase_ranked_probability_score
+            + expected_standard_error
+        )
+        selected = next(
+            candidate
+            for _, candidate in eligible
+            if candidate.validation_worst_phase_ranked_probability_score <= selection_limit
+        )
         if selected.model_name != self.selected_model:
-            raise ValueError("Quant selected model 未按最差有序分布相位与复杂度排序")
+            raise ValueError("Quant selected model 未按相位不确定性内最简单规则排序")
         expected_ids = tuple(item.bucket_id for item in self.global_distribution.probabilities)
         for candidate in self.candidate_evaluations:
             cell_keys = tuple(item.cell_key for item in candidate.cells)
@@ -831,9 +897,11 @@ __all__ = [
     "QuantFeatureVector",
     "QuantForecastArtifact",
     "QuantForecastRuntimeTarget",
+    "QuantHistoricalCapitalFeasibility",
     "load_quant_forecast_artifact",
     "quant_cell_key",
     "quant_features",
     "quant_features_from_bars",
     "quant_forecast_behavior_id",
+    "quant_phase_score_standard_error",
 ]

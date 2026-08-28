@@ -226,6 +226,119 @@ def test_forecast_ledger_validates_contract_slot_distribution_and_base_dependenc
         store.record(altered)
 
 
+def test_latest_capital_forecast_uses_the_slots_immutable_permission() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    forecasts = SqlForecastStore(engine)
+    contract = _contract()
+    contracts.record_contract(contract)
+
+    def record_forecast(
+        *,
+        slot_at: datetime,
+        behavior: str,
+        permission: ForecastPermission,
+        expected_gross_bps: Decimal,
+    ) -> BaseForecast:
+        binding = ForecastProducerBinding.create(
+            contract_id=contract.contract_id,
+            producer_kind=ForecastProducerKind.PROGRAM,
+            producer_id="permission-history",
+            producer_behavior_id=behavior,
+            permission=permission,
+        )
+        contracts.record_binding(binding, activated_at=slot_at)
+        cutoff = ForecastPriceAnchor(
+            instrument_id=contract.target.legs[0].instrument.key,
+            price=Decimal("100"),
+            observed_at=slot_at,
+            available_at=slot_at,
+            quote_ref=f"cutoff-{behavior}",
+        )
+        slot = ForecastDecisionSlot.create(
+            contract,
+            slot_as_of=slot_at,
+            cutoff_prices=(cutoff,),
+        )
+        contracts.record_slot(slot, binding=binding)
+        available_at = slot_at + timedelta(seconds=10)
+        forecast = BaseForecast(
+            forecast_id=stable_id("base_forecast", slot.slot_id, behavior),
+            contract_id=contract.contract_id,
+            decision_slot_id=slot.slot_id,
+            producer_id=binding.producer_id,
+            producer_behavior_id=behavior,
+            outcome_family_id=contract.outcome_family_id,
+            target=contract.target,
+            horizon_minutes=contract.horizon_minutes,
+            cutoff_prices=(cutoff,),
+            entry_prices=(
+                cutoff.model_copy(
+                    update={
+                        "observed_at": available_at,
+                        "available_at": available_at,
+                        "quote_ref": f"entry-{behavior}",
+                    }
+                ),
+            ),
+            information_cutoff_at=slot_at,
+            input_observed_at=slot_at,
+            available_at=available_at,
+            valid_until=slot_at + timedelta(minutes=30),
+            outcome_probabilities=(
+                ForecastBucketProbability(bucket_id="LOSS", probability=Decimal("0.2")),
+                ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0.5")),
+                ForecastBucketProbability(bucket_id="GAIN", probability=Decimal("0.3")),
+            ),
+            expected_gross_bps=expected_gross_bps,
+            input_refs=(f"input-{behavior}",),
+        )
+        assert forecasts.record(forecast)
+        return forecast
+
+    capital = record_forecast(
+        slot_at=NOW,
+        behavior="capital-behavior-v1",
+        permission=ForecastPermission.CAPITAL_CANDIDATE,
+        expected_gross_bps=Decimal("10"),
+    )
+    research = record_forecast(
+        slot_at=NOW + timedelta(minutes=5),
+        behavior="research-behavior-v1",
+        permission=ForecastPermission.RESEARCH,
+        expected_gross_bps=Decimal("10"),
+    )
+    as_of = NOW + timedelta(minutes=10)
+
+    assert forecasts.latest_base_for_target(
+        target_id=contract.target.target_id,
+        outcome_family_id=contract.outcome_family_id,
+        as_of=as_of,
+    ) == research
+    assert forecasts.latest_capital_base_for_target(
+        target_id=contract.target.target_id,
+        outcome_family_id=contract.outcome_family_id,
+        as_of=as_of,
+    ) == capital
+
+    after_expiry = NOW + timedelta(minutes=31)
+    assert (
+        forecasts.latest_capital_base_for_target(
+            target_id=contract.target.target_id,
+            outcome_family_id=contract.outcome_family_id,
+            as_of=after_expiry,
+        )
+        is None
+    )
+    assert forecasts.latest_capital_base_for_target(
+        target_id=contract.target.target_id,
+        outcome_family_id=contract.outcome_family_id,
+        as_of=after_expiry,
+        include_expired=True,
+    ) == capital
+
+
 def test_cadence_recovery_anchor_ignores_newer_material_event_slots() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)

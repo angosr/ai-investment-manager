@@ -299,6 +299,8 @@ Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和�
 
 同一信息截止点和同一 WorldModel 只调用一次 Forecast Analyst，分别输出 BTC、PAXG 与 SPY 的 4h 收益分布。三份合同使用各自冻结历史分布校准结果桶，独立形成 Forecast/NoEstimate 和 Outcome；任一资产休市、行情陈旧或输入缺失只影响该合同。WorldModel 可以同时解释流动性、美元、利率、财政、监管、资金流和跨资产传导，但必须把联合解释投影为三份可证伪的资产分布，不能只输出一段无法结算的宏观叙事。
 
+这里的 4h 是现役短周期研究的 Outcome 时域，不是长期持仓期限，也不因 AI 调用本身授权重做仓位。Forecast 槽按自己的采样合同持续形成样本；只有 `ARCHITECTURE.md` 规定并随资本行为冻结的控制规则，才选择其中哪些 cause 进入 Shadow Portfolio，以及更新 Forecast 是否替代旧目标。此前正式模拟账户按每小时 cadence 与合格材料事件执行过小时级滚动控制，其完整换手与亏损永久保留为负面资本结果；现行 Context、Quant 和 AI + Quant 均只产生研究 Forecast，并在 Evaluation 的独立逻辑账户中按各自实际时延重放，正式模拟账户不再从这些来源新增风险，既有持仓只减不增。该 cohort 只能裁决这项 4h 研究合同及各 producer，不能继承为日度状态、周度或双周再平衡的长期总组合证据。长期主实验必须另用与资本决策区间一致、能联合表达中性风险溢价与条件修正的 ForecastContract。
+
 产品表达与资本规则由 [`ARCHITECTURE.md` 第 4.3.4 节](ARCHITECTURE.md#434-现役多资产模拟实验)唯一规定，本文件不复制第二套产品准入或仓位规则。世界认知评价只消费每份 Forecast 的 proper score、校准、方向、覆盖和同槽“读取 WorldModel / 不读取 WorldModel”配对差异；Product residual 只评价标的到产品的映射；Capital choice 先把产品结果重锚到真实决策时点，再用当时冻结的完整未来成本按经济暴露识别捕获、错误入场与错过机会；实际执行损耗由账户 evaluator 归因。未被 Portfolio 选择的产品投影照常结算，因此不需要靠随机交易取得方向和产品反馈，也不能再用“没有订单”回避方向判断失败。
 
 定时槽与材料事件槽始终是独立义务：材料事件不能消费或改写固定 cadence 样本，历史旧行为也不能并入新行为的证据。改变 WorldModel 输入投影、Prompt、结果合同、适用资产、时域或触发规则必须产生新行为身份；漏过截止只记录 `NO_ESTIMATE`，不得在看到后续行情后补跑。WorldModel 配对消融必须在首个前向槽之前预登记；在配对结果形成前，不得把正式 Forecast 相对静态基线的改善归因于世界认知。

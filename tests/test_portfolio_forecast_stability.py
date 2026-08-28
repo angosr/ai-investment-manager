@@ -27,7 +27,11 @@ from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
     PortfolioSleeveInput,
 )
-from investment_manager.portfolio.models import PortfolioAccountSnapshot, SleeveTarget
+from investment_manager.portfolio.models import (
+    CandidateCapitalAuthorization,
+    PortfolioAccountSnapshot,
+    SleeveTarget,
+)
 from investment_manager.portfolio.stability import (
     CapitalStabilityReplayInputs,
     replay_context_forecast_capital_impact,
@@ -43,7 +47,16 @@ def test_exact_input_replica_is_replayed_through_the_real_portfolio_engine() -> 
     config = load_config("config/investment-manager.shadow.yaml")
     stability_policy = config.outcome_evaluation.context_forecast_stability
     assert stability_policy is not None
-    authorization = config.capital.candidate_capital_authorizations[0]
+    context_policy = config.capital.context_forecast
+    assert context_policy is not None
+    target_policy = context_policy.targets[0]
+    authorization = CandidateCapitalAuthorization(
+        version="capital-stability-counterfactual-v1",
+        producer_id=context_policy.producer_id,
+        producer_behavior_id=context_policy.producer_behavior_id,
+        outcome_family_id=target_policy.outcome_family_id,
+        hypothesis_fingerprint="a" * 64,
+    )
     instrument = next(
         item.instrument
         for item in config.capital.execution_specs

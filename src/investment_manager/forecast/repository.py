@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
+    ForecastPermission,
     ForecastProducerKind,
     ForecastSlotObligation,
 )
@@ -28,6 +29,7 @@ from investment_manager.forecast.tables import (
     forecast_decision_slots,
     forecast_no_estimates,
     forecast_outcomes,
+    forecast_producer_bindings,
     forecast_slot_obligations,
     forecasts,
 )
@@ -137,6 +139,53 @@ class SqlForecastStore:
             as_of=as_of,
             include_expired=include_expired,
         )
+        return None if payload is None else BaseForecast.model_validate(payload)
+
+    def latest_capital_base_for_target(
+        self,
+        *,
+        target_id: str,
+        outcome_family_id: str,
+        as_of: datetime,
+        include_expired: bool = False,
+    ) -> BaseForecast | None:
+        """Recover the last actually authorized support for an existing holding."""
+
+        now = require_utc(as_of)
+        joined = forecasts.join(
+            forecast_slot_obligations,
+            and_(
+                forecast_slot_obligations.c.slot_id == forecasts.c.decision_slot_id,
+                forecast_slot_obligations.c.producer_id == forecasts.c.producer_id,
+                forecast_slot_obligations.c.producer_behavior_id
+                == forecasts.c.producer_behavior_id,
+            ),
+        ).join(
+            forecast_producer_bindings,
+            forecast_producer_bindings.c.binding_id
+            == forecast_slot_obligations.c.binding_id,
+        )
+        query = (
+            select(forecasts.c.payload)
+            .select_from(joined)
+            .where(
+                forecasts.c.kind == ForecastResultKind.BASE.value,
+                forecasts.c.target_id == target_id,
+                forecasts.c.outcome_family_id == outcome_family_id,
+                forecasts.c.available_at <= now,
+                forecast_producer_bindings.c.permission
+                == ForecastPermission.CAPITAL_CANDIDATE.value,
+            )
+        )
+        if not include_expired:
+            query = query.where(forecasts.c.valid_until > now)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                query.order_by(
+                    forecasts.c.available_at.desc(),
+                    forecasts.c.forecast_id.desc(),
+                ).limit(1)
+            ).scalar_one_or_none()
         return None if payload is None else BaseForecast.model_validate(payload)
 
     def latest_calibrated_for_target(

@@ -50,7 +50,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v77"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v78"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -60,7 +60,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v78"
+    assert config.capital.version == "total-portfolio-capital-v79"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -128,7 +128,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.version == "typed-outcome-settlement-v51"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
-        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v43"
+        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v44"
     )
     assert config.outcome_evaluation.context_forecast_stability is not None
     assert config.outcome_evaluation.context_forecast_stability.enabled
@@ -140,7 +140,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.quant_context_posterior is not None
     assert config.outcome_evaluation.quant_context_posterior.enabled
     assert config.outcome_evaluation.quant_context_posterior.version == (
-        "quant-context-posterior-forward-v11"
+        "quant-context-posterior-forward-v13"
     )
     assert config.outcome_evaluation.quant_context_posterior.assignment_poll_seconds == 5
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
@@ -376,7 +376,7 @@ def test_historical_state_policy_does_not_require_future_source_rules() -> None:
     )
 
 
-def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
+def test_shadow_has_one_shared_multi_asset_context_research_program() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     context = config.capital.context_forecast
     assert config.capital.enabled
@@ -391,12 +391,7 @@ def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
     assert not hasattr(config.capital.decision, "cooldown_minutes")
     assert not hasattr(config.capital.decision, "minimum_sample_size")
     assert len(context.targets) == 3
-    assert {item.outcome_family_id for item in config.capital.candidate_capital_authorizations} == {
-        item.outcome_family_id for item in context.targets
-    }
-    assert {
-        item.producer_behavior_id for item in config.capital.candidate_capital_authorizations
-    } == {context.producer_behavior_id}
+    assert config.capital.candidate_capital_authorizations == ()
 
     instruments = {item.instrument.key: item.instrument for item in config.capital.execution_specs}
     instruments.update({item.key: item for item in config.capital.forecast_reference_instruments})

@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v78
+  version: total-portfolio-capital-v79
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -383,11 +383,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v43
+    version: world-model-ablation-forward-v44
     enabled: false
-    plan_id: world-model-ablation-forward-v43
+    plan_id: world-model-ablation-forward-v44
     # 从预登记后的首个整点滚动槽计数；相互重叠的 4h 结果窗只构成一个独立样本。
-    activated_at: 2026-08-28T08:00:00Z
+    activated_at: 2026-08-28T10:00:00Z
     minimum_sample_size: 30
   context_forecast_stability:
     version: context-forecast-stability-forward-v1
@@ -396,21 +396,21 @@ outcome_evaluation:
     activated_at: 2026-08-27T12:00:00Z
     replicas_per_input: 1
   quant_baseline:
-    version: transparent-ordinal-quant-v7
+    version: transparent-ordinal-quant-v8
     enabled: false
     producer_id: program-quant-baseline
     artifacts:
       - outcome_family_id: btc-price-directional-4h
-        artifact_id: quant_forecast_artifact_0f13b2c1a895e8e84fba
-        relative_path: evidence/quant-forecasts/quant_forecast_artifact_0f13b2c1a895e8e84fba.json
+        artifact_id: quant_forecast_artifact_70430e567349f038e5b4
+        relative_path: evidence/quant-forecasts/quant_forecast_artifact_70430e567349f038e5b4.json
       - outcome_family_id: paxg-price-directional-4h
-        artifact_id: quant_forecast_artifact_91a5e3fdce4ca68d0818
-        relative_path: evidence/quant-forecasts/quant_forecast_artifact_91a5e3fdce4ca68d0818.json
+        artifact_id: quant_forecast_artifact_c730529eb5cd931235d8
+        relative_path: evidence/quant-forecasts/quant_forecast_artifact_c730529eb5cd931235d8.json
   quant_context_posterior:
-    version: quant-context-posterior-forward-v11
+    version: quant-context-posterior-forward-v13
     enabled: false
     producer_id: codex-quant-context-posterior
-    activated_at: 2026-08-28T08:00:00Z
+    activated_at: 2026-08-28T10:00:00Z
     assignment_poll_seconds: 5
 
 governance:

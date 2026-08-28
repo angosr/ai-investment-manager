@@ -166,20 +166,23 @@ class CapitalProductPayoffProjector(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CapitalForecastSource:
-    """One contract-bound producer and its risk/permission envelope."""
+    """One contract/product source, optionally authorized to add capital."""
 
     contract: ForecastContract
     binding: ForecastProducerBinding
     producer: CapitalForecastProducer
     risk_template: SleeveRiskTemplate
-    capital_authorization: CandidateCapitalAuthorization
+    capital_authorization: CandidateCapitalAuthorization | None
     product_payoffs: CapitalProductPayoffProjector | None = None
 
     def __post_init__(self) -> None:
         if self.binding.contract_id != self.contract.contract_id:
             raise ValueError("Capital Forecast source 的 Contract/Binding 不一致")
         permission = self.capital_authorization
-        if (
+        if permission is None:
+            if self.binding.permission != ForecastPermission.RESEARCH:
+                raise ValueError("无资本授权的 Forecast source 必须保持 RESEARCH")
+        elif (
             permission.producer_id != self.binding.producer_id
             or permission.producer_behavior_id != self.binding.producer_behavior_id
             or permission.outcome_family_id != self.contract.outcome_family_id
@@ -387,7 +390,9 @@ class CapitalCycleService:
         self._capital_behavior_id = capital_behavior_id
         self._market = market
         self._forecasts = forecasts
-        self._forecast_sources = forecast_sources
+        self._forecast_sources = tuple(
+            item for item in forecast_sources if item.capital_authorization is not None
+        )
         self._source_by_family = {
             item.contract.outcome_family_id: item for item in forecast_sources
         }
@@ -1199,7 +1204,7 @@ class CapitalCycleService:
         target_id: str,
         as_of: datetime,
     ) -> Forecast | None:
-        return self._forecasts.latest_base_for_target(
+        return self._forecasts.latest_capital_base_for_target(
             target_id=target_id,
             outcome_family_id=source.contract.outcome_family_id,
             as_of=as_of,
@@ -1401,6 +1406,10 @@ def assemble_capital_cycle(
                 raise ValueError("装配 Context Forecast 必须冻结 code_version")
             if producer_activation_at is None:
                 raise ValueError("装配 Context Forecast 必须冻结 producer activation")
+            authorization_by_family = {
+                item.outcome_family_id: item
+                for item in config.capital.candidate_capital_authorizations
+            }
             target_definitions = assemble_context_capital_targets(
                 capital=config.capital,
                 feature=config.feature,
@@ -1418,7 +1427,11 @@ def assemble_capital_cycle(
                     producer_kind=ForecastProducerKind.CONTEXT,
                     producer_id=context.producer_id,
                     producer_behavior_id=context.producer_behavior_id,
-                    permission=ForecastPermission.CAPITAL_CANDIDATE,
+                    permission=(
+                        ForecastPermission.CAPITAL_CANDIDATE
+                        if contract.outcome_family_id in authorization_by_family
+                        else ForecastPermission.RESEARCH
+                    ),
                     required_feature_keys=target_policy.required_feature_keys,
                 )
                 contracts.record_contract(contract)
@@ -1467,6 +1480,8 @@ def assemble_capital_cycle(
                     audit=SqlCodexAuditStore(engine),
                 ),
             )
+            if not authorization_by_family:
+                research_forecast_producers.append(program)
             quant_policy = config.outcome_evaluation.quant_baseline
             if quant_policy is not None and quant_policy.enabled:
                 assert producer_activation_at is not None
@@ -1537,22 +1552,19 @@ def assemble_capital_cycle(
                         activated_at=max(quant_activation_times),
                     )
                 )
-            authorization_by_family = {
-                item.outcome_family_id: item
-                for item in config.capital.candidate_capital_authorizations
-            }
             definition_by_family = {
                 item.contract.outcome_family_id: item for item in target_definitions
             }
             for runtime in frozen_runtimes:
                 family = runtime.contract.outcome_family_id
+                authorization = authorization_by_family.get(family)
                 configured_sources.append(
                     CapitalForecastSource(
                         contract=runtime.contract,
                         binding=runtime.binding,
                         producer=program.view(family),
                         risk_template=config.capital.sleeve_risk,
-                        capital_authorization=authorization_by_family[family],
+                        capital_authorization=authorization,
                         product_payoffs=definition_by_family[family].product_payoffs,
                     )
                 )

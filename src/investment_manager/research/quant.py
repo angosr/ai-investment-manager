@@ -19,13 +19,15 @@ from investment_manager.forecast.quant.runtime import (
     QuantFeatureThresholds,
     QuantFeatureVector,
     QuantForecastArtifact,
+    QuantHistoricalCapitalFeasibility,
     quant_cell_key,
     quant_features_from_bars,
+    quant_phase_score_standard_error,
 )
 from investment_manager.forecast.results import ForecastBucketProbability
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.market.models import InstrumentId
+from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.research.dataset import HistoricalDataset
 
 _CANDIDATE_MODELS = (
@@ -74,6 +76,7 @@ def train_quant_forecast_artifact(
     dataset: HistoricalDataset,
     contract: ForecastContract,
     reference_instrument: InstrumentId,
+    capital_instruments: tuple[InstrumentId, ...],
     training_cutoff_at: datetime,
     smoothing_strength: Decimal = Decimal("20"),
 ) -> QuantForecastArtifact:
@@ -91,7 +94,12 @@ def train_quant_forecast_artifact(
     if contract.target.legs[0].instrument != reference_instrument:
         raise ValueError("Quant 合同与参考产品不一致")
     if contract.horizon_minutes != 240:
-        raise ValueError("Quant artifact v6 只支持 4h ForecastContract")
+        raise ValueError("Quant artifact v7 只支持 4h ForecastContract")
+    capital_keys = tuple(item.key for item in capital_instruments)
+    if tuple(sorted(set(capital_keys))) != capital_keys:
+        raise ValueError("Quant 历史资本诊断产品必须唯一且排序")
+    if not capital_instruments:
+        raise ValueError("Quant 历史资本诊断必须绑定正式 Product 表达")
 
     raw_samples = _training_samples(dataset, cutoff=cutoff)
     if len(raw_samples) < 1_000:
@@ -156,12 +164,24 @@ def train_quant_forecast_artifact(
     )
     if not eligible:
         raise ValueError("Quant 候选未在全部非重叠验证相位改善有序分布")
-    selected = min(
+    strict_best = min(
         eligible,
         key=lambda item: (
             item.validation_worst_phase_ranked_probability_score,
             _CANDIDATE_MODELS.index(item.model_name),
         ),
+    )
+    selection_standard_error = quant_phase_score_standard_error(
+        strict_best.validation_phase_ranked_probability_scores
+    )
+    selection_limit = (
+        strict_best.validation_worst_phase_ranked_probability_score
+        + selection_standard_error
+    )
+    selected = next(
+        candidate
+        for candidate in eligible
+        if candidate.validation_worst_phase_ranked_probability_score <= selection_limit
     )
     development_and_validation = (*development, *validation)
     selected_training_distributions = _fit_distributions(
@@ -258,6 +278,7 @@ def train_quant_forecast_artifact(
         "feature_thresholds": thresholds,
         "candidate_evaluations": tuple(candidates),
         "selected_model": selected.model_name,
+        "selection_standard_error": selection_standard_error,
         "smoothing_strength": smoothing_strength,
         "global_distribution": _global_distribution(all_samples, contract=contract),
         "development_sample_count": len(development),
@@ -313,6 +334,10 @@ def train_quant_forecast_artifact(
         "blind_unconditional_phase_return_correlations": (
             blind_unconditional_phase_return_correlations
         ),
+        "historical_capital_feasibility": _unavailable_historical_capital_feasibility(
+            dataset=dataset,
+            capital_instruments=capital_instruments,
+        ),
     }
     provisional = QuantForecastArtifact.model_construct(artifact_id="pending", **values)
     artifact_id = stable_id(
@@ -320,6 +345,32 @@ def train_quant_forecast_artifact(
         provisional.model_dump(mode="json", exclude={"artifact_id"}),
     )
     return QuantForecastArtifact(artifact_id=artifact_id, **values)
+
+
+def _unavailable_historical_capital_feasibility(
+    *,
+    dataset: HistoricalDataset,
+    capital_instruments: tuple[InstrumentId, ...],
+) -> QuantHistoricalCapitalFeasibility:
+    """Refuse to turn trade-price bars or current rules into historical execution facts."""
+
+    missing = {
+        "EXECUTABLE_BID_ASK_DEPTH_HISTORY",
+        "TIME_VERSIONED_EXECUTION_RULES",
+    }
+    products = {item.product for item in capital_instruments}
+    if products & {
+        InstrumentProduct.USD_M_PERPETUAL,
+        InstrumentProduct.TRADFI_PERPETUAL,
+    }:
+        missing.add("VERIFIED_FUNDING_SETTLEMENT_HISTORY")
+    if InstrumentProduct.TRADFI_PERPETUAL in products:
+        missing.add("POINT_IN_TIME_TRADING_SESSION_HISTORY")
+    return QuantHistoricalCapitalFeasibility(
+        capital_instrument_keys=tuple(item.key for item in capital_instruments),
+        checked_dataset_ids=(dataset.manifest.dataset_id,),
+        missing_fact_types=tuple(sorted(missing)),
+    )
 
 
 def _training_samples(

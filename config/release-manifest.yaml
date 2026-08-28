@@ -8,7 +8,7 @@ complexity_score: 1
 component_versions:
   - [feature, feature-v1]
   - [decision_state, portfolio-state-v51]
-  - [capital, total-portfolio-capital-v78]
+  - [capital, total-portfolio-capital-v79]
   - [outcome_evaluation, typed-outcome-settlement-v51]
   - [trigger, analysis-trigger-v32]
   - [temporal, temporal-analysis-v5]

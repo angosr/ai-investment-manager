@@ -318,8 +318,8 @@ class CapitalPolicy(StrictConfig):
                 )
                 for target in context.targets
             }
-            if set(identities) != expected:
-                raise ValueError("启用 Context Forecast 必须逐目标绑定唯一资本授权")
+            if not set(identities).issubset(expected):
+                raise ValueError("Context Forecast 资本授权必须属于当前生产行为与目标")
             exposure_by_key = {
                 item.instrument_key: item.economic_exposure
                 for item in self.investable_universe.instruments

@@ -364,6 +364,12 @@ def train_quant_baseline_command(
     }
     target_policy = targets[0]
     instrument = instruments[target_policy.reference_instrument_key]
+    product_payoffs = target_policy.product_payoffs
+    if product_payoffs is None:
+        raise typer.BadParameter("Quant 历史资本诊断缺少正式 Product 表达")
+    capital_instruments = tuple(
+        instruments[instrument_key] for instrument_key in product_payoffs.instrument_keys
+    )
     contract = context_forecast_contract(
         policy=context,
         target_policy=target_policy,
@@ -374,6 +380,7 @@ def train_quant_baseline_command(
         dataset=HistoricalDatasetCatalog(dataset_catalog).load(dataset_id),
         contract=contract,
         reference_instrument=instrument,
+        capital_instruments=capital_instruments,
         training_cutoff_at=_parse_utc_option(training_cutoff, name="training-cutoff"),
     )
     target = artifact_catalog / f"{artifact.artifact_id}.json"
@@ -439,6 +446,9 @@ def train_quant_baseline_command(
                 ),
                 "selected_blind_return_correlation": str(
                     artifact.selected_blind_return_correlation
+                ),
+                "historical_capital_feasibility": (
+                    artifact.historical_capital_feasibility.model_dump(mode="json")
                 ),
                 "path": str(target),
             },

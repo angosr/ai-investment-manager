@@ -1483,7 +1483,7 @@ def test_context_forecast_uses_observation_only_perpetual_market_evidence(
         _capture_analyst,
     )
 
-    _assemble_capital_cycle(
+    service = _assemble_capital_cycle(
         config,
         engine,
         code_version="test-code",
@@ -1499,6 +1499,16 @@ def test_context_forecast_uses_observation_only_perpetual_market_evidence(
         InstrumentProduct.TRADFI_PERPETUAL,
         InstrumentProduct.USD_M_PERPETUAL,
     }
+    assert service._forecast_sources == ()
+    assert set(service._source_by_family) == {
+        target.outcome_family_id for target in config.capital.context_forecast.targets
+    }
+    assert all(
+        source.binding.permission == ForecastPermission.RESEARCH
+        and source.capital_authorization is None
+        for source in service._source_by_family.values()
+    )
+    assert len(service._research_forecast_producers) == 2
 
 
 def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
@@ -2174,6 +2184,96 @@ def test_current_holding_review_does_not_create_a_new_alpha_target() -> None:
     assert activity[0].order_count == 1
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
+
+
+def test_research_successor_cannot_reauthorize_or_redirect_an_existing_holding() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    base_config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, base_config, at=NOW, sequence=740)
+    capital_config, capital_service = _candidate_service(
+        base_config,
+        engine,
+        maximum_allocation_fraction=Decimal("0.10"),
+    )
+    opened = capital_service.produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+    assert opened.account.sleeves
+
+    old_source = capital_service._source_by_family[_TEST_FORECAST_FAMILY]
+    research_binding = ForecastProducerBinding.create(
+        contract_id=old_source.contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id=_TEST_PRODUCER_ID,
+        producer_behavior_id="test-capital-research-successor-v1",
+        permission=ForecastPermission.RESEARCH,
+    )
+    research_producer = _FixedMockForecastProducer(
+        store=SqlForecastStore(engine),
+        contracts=SqlForecastContractStore(engine),
+        contract=old_source.contract,
+        binding=research_binding,
+        raw_score=Decimal("-80"),
+    )
+    research_at = NOW + timedelta(minutes=5)
+    research_forecast = research_producer.produce(as_of=research_at)
+    research_config = capital_config.model_copy(
+        update={
+            "capital": capital_config.capital.model_copy(
+                update={
+                    "version": "research-only-capital-successor-v1",
+                    "candidate_capital_authorizations": (),
+                }
+            )
+        }
+    )
+    research_source = CapitalForecastSource(
+        contract=old_source.contract,
+        binding=research_binding,
+        producer=research_producer,
+        risk_template=old_source.risk_template,
+        capital_authorization=None,
+    )
+    restarted = _assemble_capital_cycle(
+        research_config,
+        engine,
+        forecast_sources=(research_source,),
+    )
+    assert restarted._forecast_sources == ()
+    assert SqlForecastStore(engine).latest_base_for_target(
+        target_id=old_source.contract.target.target_id,
+        outcome_family_id=_TEST_FORECAST_FAMILY,
+        as_of=research_at,
+    ) == research_forecast
+    historical_support = restarted._latest_forecast(
+        source=research_source,
+        target_id=old_source.contract.target.target_id,
+        as_of=research_at,
+    )
+    assert historical_support is not None
+    assert historical_support.producer_behavior_id == _TEST_PRODUCER_VERSION
+
+    _put_market(market, research_config, at=research_at, sequence=741)
+    held = restarted.review(
+        _runtime_batch(AnalysisTriggerType.HEARTBEAT, at=research_at)
+    )
+    assert not isinstance(held, TradePlanExecutionResult)
+    assert held.holding_risk_review is not None
+    assert held.holding_risk_review.outcome == HoldingRiskOutcome.HOLD
+    assert len(SqlPortfolioStore(engine).head_account(portfolio_id="primary").sleeves) == 1
+
+    expired_at = NOW + timedelta(days=8)
+    _put_market(market, research_config, at=expired_at, sequence=742)
+    exited = restarted.review(
+        _runtime_batch(AnalysisTriggerType.HEARTBEAT, at=expired_at)
+    )
+    assert isinstance(exited, TradePlanExecutionResult)
+    assert not exited.account.sleeves
+    assert len(exited.groups) == 1
+    exit_plan = restarted._plans.plan(exited.plan_id)
+    assert exit_plan is not None
+    assert all(leg.reduce_only for group in exit_plan.groups for leg in group.legs)
 
 
 def test_holding_review_cannot_increase_capital_without_a_fresh_forecast() -> None:
