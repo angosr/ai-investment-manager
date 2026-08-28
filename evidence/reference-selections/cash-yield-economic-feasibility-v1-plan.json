@@ -1,0 +1,97 @@
+{
+  "version": "reference-selection-plan-v2",
+  "plan_id": "reference_selection_plan_440f25e70d421d2f6d90",
+  "registered_at": "2026-08-28T22:01:30Z",
+  "mandate_version": "provisional-total-portfolio-real-growth-v2",
+  "universe_version": "economic-cash-feasibility-v1",
+  "risk_policy_version": "multi-product-portfolio-risk-v6",
+  "cost_model_version": "economic-proxy-only-no-product-admission",
+  "development_start": "1960-01-01",
+  "development_end": "2016-01-01",
+  "blind_start": "2016-01-01",
+  "blind_end": "2026-01-01",
+  "evidence_requirements": [
+    {
+      "layer": "ECONOMIC_PROXY",
+      "scope": "CASH",
+      "minimum_observation_count": 5000,
+      "minimum_span_days": 18250,
+      "fixed_evidence_id": "historical_economic_series_847417ec59b5c2f312c0",
+      "fixed_content_hash": "bfe771f4d1078e4985d398dfda75f05c7ddab8d183073d0b99be8324a45c7666"
+    },
+    {
+      "layer": "ECONOMIC_PROXY",
+      "scope": "INFLATION_SENSITIVE",
+      "minimum_observation_count": 600,
+      "minimum_span_days": 18250,
+      "fixed_evidence_id": "historical_economic_series_2ba31ef4ef4c5f2b558e",
+      "fixed_content_hash": "e179097e26186769dde39c3e3ecdc4c1e4b93c1e064582f2967d3d34464f0725"
+    },
+    {
+      "layer": "ECONOMIC_PROXY",
+      "scope": "US_EQUITY",
+      "minimum_observation_count": 5000,
+      "minimum_span_days": 18250,
+      "fixed_evidence_id": "historical_economic_series_ba97b40f042388278e45",
+      "fixed_content_hash": "c4cae4856aaf90b6dd9f9deec3a314815f3f51b4030c8a979e4aead22c37b3bf"
+    },
+    {
+      "layer": "OBJECTIVE_DEFLATOR",
+      "scope": "US_CPI_REAL_PURCHASING_POWER",
+      "minimum_observation_count": 600,
+      "minimum_span_days": 18250,
+      "fixed_evidence_id": "historical_economic_series_3abd061b67f0abe0cbe0",
+      "fixed_content_hash": "c1cfbcec9141f6dd3a690eefc41ec6891353dc8726f392b80d72160cbe72b3ae"
+    }
+  ],
+  "stress_windows": [
+    {
+      "stress_id": "covid-liquidity-shock",
+      "start": "2020-02-01",
+      "end": "2020-05-01"
+    },
+    {
+      "stress_id": "global-financial-crisis",
+      "start": "2007-10-01",
+      "end": "2009-04-01"
+    },
+    {
+      "stress_id": "inflation-rates-shock",
+      "start": "2022-01-01",
+      "end": "2023-01-01"
+    },
+    {
+      "stress_id": "stagflation-oil-shock",
+      "start": "1973-01-01",
+      "end": "1975-01-01"
+    }
+  ],
+  "qualification": {
+    "minimum_annualized_real_return_fraction": "0",
+    "maximum_drawdown_fraction": "0.10",
+    "maximum_worst_stress_loss_fraction": "0.10",
+    "maximum_annualized_turnover_fraction": "0.50",
+    "maximum_annualized_cost_fraction": "0.01",
+    "maximum_single_risk_contribution_fraction": "0.70"
+  },
+  "candidates": [
+    {
+      "candidate_id": "reference_candidate_3ea6cb2f66ea631fc1f5",
+      "allocations": [
+        {
+          "implementation_key": "BINANCE:SPOT:PAXGUSDT",
+          "target_exposure_fraction": "0.15"
+        },
+        {
+          "implementation_key": "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
+          "target_exposure_fraction": "0.15"
+        },
+        {
+          "implementation_key": "CASH:ECONOMIC_TBILL_PROXY",
+          "target_exposure_fraction": "0.70"
+        }
+      ],
+      "rebalance_band_fraction": "0.05"
+    }
+  ]
+}
