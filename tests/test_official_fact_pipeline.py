@@ -376,11 +376,11 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         now=OBSERVED_AT,
     )
     fed = SqlFedFactIngestor(engine, POLICY)
-    calendar = fed.ingest_calendar(
+    fed.ingest_calendar(
         _calendar("15-16"),
         observed_at=OBSERVED_AT,
     )
-    chair = fed.ingest_public_calendar(
+    fed.ingest_public_calendar(
         _public_calendar(),
         observed_at=OBSERVED_AT,
         years=(2026,),
@@ -412,9 +412,6 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         delta_policy=app_config.decision_state.delta_policy,
         pipeline_id=app_config.pipeline.version,
         trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
-        required_freshness_seconds=(
-            app_config.decision_state.packet_policy.maximum_market_age_seconds
-        ),
         analysis_owner_symbol=app_config.assessment.review_trigger_symbol,
     )
 
@@ -442,47 +439,16 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         )
     owner = app_config.assessment.review_trigger_symbol
     plan = triggers.plan_for_scope(symbol=owner, pipeline_id=app_config.pipeline.version)
-    assert len(plan.scheduled_wakeups) == 2
-    assert plan.scheduled_wakeups[0].evidence_ids == (chair.new_fact_revisions[0].revision_id,)
-    assert plan.scheduled_wakeups[0].wake_at == datetime(
-        2026,
-        8,
-        28,
-        14,
-        tzinfo=UTC,
-    )
-    assert plan.scheduled_wakeups[1].evidence_ids == (calendar.new_fact_revisions[0].revision_id,)
-    assert plan.scheduled_wakeups[1].wake_at == datetime(
-        2026,
-        9,
-        16,
-        18,
-        tzinfo=UTC,
-    )
-    for symbol in set(app_config.analysis_symbols) - {owner}:
-        assert not triggers.plan_for_scope(
-            symbol=symbol,
-            pipeline_id=app_config.pipeline.version,
-        ).scheduled_wakeups
+    assert plan.scheduled_wakeups == ()
 
     revised_at = OBSERVED_AT + timedelta(minutes=1)
-    revised_calendar = fed.ingest_calendar(
+    fed.ingest_calendar(
         _calendar("16-17"),
         observed_at=revised_at,
     )
     publisher.publish_recent(revised_at)
     plan = triggers.plan_for_scope(symbol=owner, pipeline_id=app_config.pipeline.version)
-    assert len(plan.scheduled_wakeups) == 2
-    assert plan.scheduled_wakeups[1].evidence_ids == (
-        revised_calendar.new_fact_revisions[0].revision_id,
-    )
-    assert plan.scheduled_wakeups[1].wake_at == datetime(
-        2026,
-        9,
-        17,
-        18,
-        tzinfo=UTC,
-    )
+    assert plan.scheduled_wakeups == ()
 
     cancelled_at = OBSERVED_AT + timedelta(minutes=2)
     cancelled = fed.ingest_public_calendar(
@@ -493,7 +459,4 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
     assert cancelled.new_fact_revisions[0].status.value == "CANCELLED"
     publisher.publish_recent(cancelled_at)
     plan = triggers.plan_for_scope(symbol=owner, pipeline_id=app_config.pipeline.version)
-    assert len(plan.scheduled_wakeups) == 1
-    assert plan.scheduled_wakeups[0].evidence_ids == (
-        revised_calendar.new_fact_revisions[0].revision_id,
-    )
+    assert plan.scheduled_wakeups == ()

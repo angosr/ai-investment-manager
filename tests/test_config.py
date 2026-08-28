@@ -140,7 +140,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     )
     assert config.outcome_evaluation.research_poll_seconds == 5
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v32"
+    assert config.trigger.version == "analysis-trigger-v33"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v14"
     assert tuple(item.key for item in config.assessment.mandate.mandate_exposures) == (
         ("CRYPTO_NETWORK", "BTC"),

@@ -480,7 +480,6 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         delta_policy=loaded.decision_state.delta_policy,
         pipeline_id=loaded.pipeline.version,
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
-        required_freshness_seconds=(loaded.decision_state.packet_policy.maximum_market_age_seconds),
         analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
     )
     official_service = MacroOfficialCollectorService(

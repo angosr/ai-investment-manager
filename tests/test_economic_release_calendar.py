@@ -297,9 +297,6 @@ def test_calendar_sync_keeps_obligations_without_premature_ai_wakeups(
         delta_policy=app_config.decision_state.delta_policy,
         pipeline_id=app_config.pipeline.version,
         trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
-        required_freshness_seconds=(
-            app_config.decision_state.packet_policy.maximum_market_age_seconds
-        ),
     )
 
     publisher.publish_recent(OBSERVED_AT)
