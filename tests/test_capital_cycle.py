@@ -23,7 +23,10 @@ from investment_manager.entrypoints.dashboard.evaluation import EvaluationDashbo
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
-from investment_manager.forecast.context.producer import context_forecast_contract
+from investment_manager.forecast.context.producer import (
+    PortfolioContextForecastProducer,
+    context_forecast_contract,
+)
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -45,6 +48,7 @@ from investment_manager.forecast.models import (
     ForecastLeg,
     ForecastTarget,
 )
+from investment_manager.forecast.quant.runtime import PortfolioQuantForecastProducer
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
 from investment_manager.forecast.tables import forecast_decision_slots, forecasts
@@ -1509,6 +1513,14 @@ def test_context_forecast_uses_observation_only_perpetual_market_evidence(
         for source in service._source_by_family.values()
     )
     assert len(service._research_forecast_producers) == 2
+    assert isinstance(
+        service._research_forecast_producers[0],
+        PortfolioQuantForecastProducer,
+    )
+    assert isinstance(
+        service._research_forecast_producers[1],
+        PortfolioContextForecastProducer,
+    )
 
 
 def test_dashboard_hides_retired_no_opportunity_receipts() -> None:

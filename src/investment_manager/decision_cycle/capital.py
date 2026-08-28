@@ -1480,8 +1480,7 @@ def assemble_capital_cycle(
                     audit=SqlCodexAuditStore(engine),
                 ),
             )
-            if not authorization_by_family:
-                research_forecast_producers.append(program)
+            context_research_producer = program if not authorization_by_family else None
             quant_policy = config.outcome_evaluation.quant_baseline
             if quant_policy is not None and quant_policy.enabled:
                 assert producer_activation_at is not None
@@ -1552,6 +1551,11 @@ def assemble_capital_cycle(
                         activated_at=max(quant_activation_times),
                     )
                 )
+            if context_research_producer is not None:
+                # Context preflights can freeze a posterior that consumes the
+                # current-slot deterministic Quant prior.  Preserve that domain
+                # dependency explicitly instead of relying on incidental list order.
+                research_forecast_producers.append(context_research_producer)
             definition_by_family = {
                 item.contract.outcome_family_id: item for item in target_definitions
             }

@@ -92,7 +92,7 @@ ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不
 
 同一经济问题在一个决策时点最多只有一个获得资本权限的 Forecast。若存在多个来源，它们在同一合同和 Outcome 下评价；只有前瞻证据证明组合优于单一来源后，才允许发布组合政策。来源差异不能产生不同标签、不同成本口径或不同资本入口。
 
-研究 Forecast 复用同一 Contract、DecisionSlot、ProducerBinding、Forecast/`NO_ESTIMATE` 和 Outcome 账本。需要异步 Codex 的候选只持久化一份冻结 assignment 作为工作义务，成功或失败直接终结公共 Forecast 槽；禁止再复制一套候选结果表、结算器或资本流水。assignment 必须在任何候选调用前保存完整模型输入、Prompt、Schema、来源行为、截止和研究权限，worker 不得在执行时重新读取“最新”市场、世界认知或 Quant 状态来改写输入。研究 assignment 的缺失或持久化故障必须记录并降低该候选覆盖率，但不能阻断、延迟或改写唯一资本 Forecast。
+研究 Forecast 复用同一 Contract、DecisionSlot、ProducerBinding、Forecast/`NO_ESTIMATE` 和 Outcome 账本。需要异步 Codex 的候选只持久化一份冻结 assignment 作为工作义务，成功或失败直接终结公共 Forecast 槽；禁止再复制一套候选结果表、结算器或资本流水。assignment 必须在任何候选调用前保存完整模型输入、Prompt、Schema、来源行为、截止和研究权限，worker 不得在执行时重新读取“最新”市场、世界认知或 Quant 状态来改写输入。一个研究 producer 的冻结输入依赖同槽程序 prior 时，装配必须按依赖拓扑先终结 prior，再运行会登记 assignment 的 preflight；不能依赖列表碰巧排序，也不能用事后补扫、重试或当前数据回填缺失输入。研究 assignment 的缺失或持久化故障必须记录并降低该候选覆盖率，但不能阻断、延迟或改写唯一资本 Forecast。
 
 全部异步研究性 Codex 评价共用一条串行执行通道和一个短周期 assignment 发现间隔；它们可以在截止内排队，但不能并发占满账号而使 WorldModel 或正式 Forecast 无法启动。assignment 间隔只负责发现已经冻结的工作义务，不能变成各候选重复配置的调度政策，也不能复用较慢的 Outcome 结算周期给每项研究平白增加等待。该约束只隔离研究流量，不限制正式调用次数，也不是 AI 用量预算。
 
