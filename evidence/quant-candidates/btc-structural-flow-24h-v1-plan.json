@@ -1,0 +1,64 @@
+{
+  "schema_version": "quant-candidate-plan-v1",
+  "plan_id": "btc-structural-flow-24h-v1",
+  "frozen_at": "2026-08-28T18:32:35Z",
+  "base_commit": "9bf70c08b6d7ecec283195dc47f49688a04f36b6",
+  "permission": "REJECTION_ONLY_UNTIL_VALIDATION_PASSES",
+  "hypothesis": "在保守可用时间之后，BTC 现货 ETF 净流入强度与美元稳定币供给扩张共同表达的结构性边际资金，能够改善 BTC 后续 24 小时收益分布；二者不应被当作 4 小时即时信号。",
+  "datasets": {
+    "btc_spot_5m": {
+      "dataset_id": "historical_dataset_dbc898af147b44cbe744",
+      "manifest_sha256": "ed0fbdd26be3b7a8eeb1572228f58ee37bdad23209f3a1584e4663789692e620",
+      "bars_sha256": "7dde374c41c663e5bd70194a8ce00390da5464f28184f7307109296c4214ef6c",
+      "range": ["2024-08-19T00:00:00Z", "2026-08-19T00:00:00Z"]
+    },
+    "btc_etf_aggregate_flow": {
+      "source_tier": "AGGREGATOR",
+      "payload_id": "raw_source_payload_695098ded45772f22bb6",
+      "content_sha256": "92a60f8b9beaf1535ab94483804b0c4614dd1aac2fe12c1737cca8f53fbfd1c7",
+      "observed_at": "2026-08-28T07:25:43.666324Z"
+    },
+    "usd_stablecoin_supply": {
+      "source_tier": "AGGREGATOR",
+      "payload_id": "raw_source_payload_cbb881c0202b570d0623",
+      "content_sha256": "dbe382b6c1d43b5e2e3d83fb4659c673a9fb2abc9483d3c00ad1bf16e1155995",
+      "observed_at": "2026-08-28T18:06:29.857646Z"
+    }
+  },
+  "sample_contract": {
+    "decision_time": "00:00:00Z each UTC day",
+    "availability_rule": "只使用日期不晚于决策日前两个完整 UTC 日的流量记录；ETF 缺少周末记录时最多沿用最近四个日历日，稳定币必须存在精确日期；该保守滞后避免把未知历史发布时间当作点时可得。",
+    "outcome": "BTCUSDT spot 从决策时刻到 24 小时后的毛收益基点",
+    "overlap_rule": "每天一个样本；验证报告同时给出 day_index modulo 4 四个固定相位，不能把相位数冒充独立样本数。",
+    "split": "按时间排序 50% development / 25% validation / 25% blind；比例取整规则为 floor(0.50*n)、floor(0.25*n)，剩余给 blind。",
+    "purge": "development、validation 与 blind 边界各删除其后一个 24 小时 Outcome 会跨界的样本。"
+  },
+  "outcome_buckets": {
+    "ids": ["LARGE_LOSS", "LOSS", "FLAT", "GAIN", "LARGE_GAIN"],
+    "boundaries_bps": ["-239.1367302068927749377046271793172396710", "-70.73250800826667823929637303956572738000", "97.38149948795696055181130620501204590000", "281.9687664833457230041645073744359941500"],
+    "representative_bps": ["-354.2459609315250259954969414830090574610", "-139.1553552567692455596458887706412813410", "7.805928455642085697480789621166511960000", "166.3712950695159514081665698992933447000", "395.7094466433080024848626271375842638500"],
+    "origin": "冻结复用既有 btc-daily-momentum-v1 的开发期合同，避免为本候选重选边界。"
+  },
+  "baseline": "仅用 development 样本估计的五桶无条件分布，Dirichlet 每桶加一平滑。",
+  "candidate": {
+    "etf_feature": "最近可用 BTC ETF 日净流入 / max(日成交额, 1 USD)",
+    "stablecoin_feature": "美元稳定币总供给相对七日前的百分比变化",
+    "score": "在 development 中分别计算两个特征的经验百分位，取等权平均；validation 与 blind 只使用冻结的 development 经验分布。",
+    "cells": "按 development score 的 1/3 与 2/3 分位形成 LOW/MID/HIGH 三格；各格五桶计数向 baseline 以总伪样本 20 做收缩。",
+    "expected_return": "候选概率乘冻结代表基点之和。"
+  },
+  "primary_metric": "validation mean ranked probability score relative to unconditional baseline",
+  "validation_gate": {
+    "all_required": true,
+    "rules": [
+      "候选平均 RPS 严格优于 baseline",
+      "候选在四个固定相位中的 RPS 均严格优于 baseline",
+      "候选期望收益 MAE 不高于 baseline",
+      "候选期望收益与实现收益 Pearson 相关严格大于 0",
+      "HIGH 与 LOW 格实现收益均值差总体大于 20 bp，且四个固定相位均严格大于 0"
+    ]
+  },
+  "blind_rule": "仅当全部 validation gate 通过时允许恰好一次 blind 查询；否则 blind 保持未读并永久拒绝本候选。",
+  "capital_rule": "即使 validation 与 blind 通过，聚合来源的历史回填仍不能直接授予资本；只能登记新的 24h 前瞻 Shadow producer，以当前首次可见事实积累点时证据。",
+  "runtime_change_on_rejection": "NONE"
+}
