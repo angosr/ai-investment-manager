@@ -1,4 +1,4 @@
-"""Point-in-time, cost-after capital comparison across Forecast producers."""
+"""Point-in-time, cost-after capital evaluation for one Forecast producer."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from investment_manager.governance.evaluation.logical_account import (
     SqlProducerPanelReader,
 )
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
-from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.features import point_in_time_quote_views
@@ -42,24 +42,15 @@ from investment_manager.risk.portfolio import SleeveRiskProfile
 class ProducerCapitalPathEvidence(FrozenModel):
     """One producer's complete, independently advanced capital path."""
 
-    label: str
-    producer_id: str
-    producer_behavior_id: str
-    panel_ids: tuple[str, ...]
-    steps: tuple[LogicalAccountStep, ...]
-    path: LogicalAccountPath
-
-
-class ProducerCapitalComparisonEvidence(FrozenModel):
-    """Cost-after comparison on the exact DecisionSlot panels shared by all paths."""
-
-    comparison_id: str
     evaluation_version: str
     as_of: datetime
     initial_cash: Decimal
+    producer_id: str
+    producer_behavior_id: str
     included_strata: tuple[ForecastSlotStratum, ...]
-    shared_decision_slot_sets: tuple[tuple[str, ...], ...]
-    paths: tuple[ProducerCapitalPathEvidence, ...]
+    panel_ids: tuple[str, ...]
+    steps: tuple[LogicalAccountStep, ...]
+    path: LogicalAccountPath
 
 
 class ProductPayoffBuilder(Protocol):
@@ -392,17 +383,20 @@ class ProducerCapitalReplay:
         )
 
 
-def compare_producer_capital_paths(
+def evaluate_producer_capital_path(
     *,
     initial_cash: Decimal,
-    sources: Mapping[str, tuple[ProducerPanelLedger, ProducerCapitalReplay]],
+    ledger: ProducerPanelLedger,
+    replay: ProducerCapitalReplay,
     allowed_strata: Collection[ForecastSlotStratum] | None = None,
     mark_at: datetime | None = None,
-) -> ProducerCapitalComparisonEvidence | None:
-    """Replay exact shared panels while preserving each producer's own latency and state."""
+) -> ProducerCapitalPathEvidence | None:
+    """Replay one producer's complete panels with its actual latency and state."""
 
-    if initial_cash <= 0 or len(sources) < 2:
-        raise ValueError("Producer capital 对照需要至少两个来源和有效初始资金")
+    if initial_cash <= 0:
+        raise ValueError("Producer capital 评价需要有效初始资金")
+    if ledger.producer_behavior_id != replay.producer_behavior_id:
+        raise ValueError("Producer capital 账本与重放行为身份不一致")
     included_strata = tuple(
         sorted(
             set(ForecastSlotStratum) if allowed_strata is None else set(allowed_strata),
@@ -410,69 +404,41 @@ def compare_producer_capital_paths(
         )
     )
     if not included_strata:
-        raise ValueError("Producer capital 对照至少需要一个样本分层")
-    panels_by_source: dict[str, dict[tuple[str, ...], ProducerDecisionPanel]] = {}
-    for label, (ledger, replay) in sources.items():
-        if not label or ledger.producer_behavior_id != replay.producer_behavior_id:
-            raise ValueError("Producer capital 来源标签或行为身份不一致")
-        keyed: dict[tuple[str, ...], ProducerDecisionPanel] = {}
-        for panel in ledger.complete_panels:
-            panel_strata = {item.stratum for item in panel.slots}
-            if len(panel_strata) != 1:
-                raise ValueError("Producer capital panel 不能混合不同样本分层")
-            if panel_strata.isdisjoint(included_strata):
-                continue
-            key = tuple(sorted(item.slot_id for item in panel.slots))
-            if not key or key in keyed:
-                raise ValueError("Producer capital panel 的 DecisionSlot 集必须唯一且非空")
-            keyed[key] = panel
-        panels_by_source[label] = keyed
-    shared = set.intersection(*(set(items) for items in panels_by_source.values()))
-    if not shared:
+        raise ValueError("Producer capital 评价至少需要一个样本分层")
+    selected: list[ProducerDecisionPanel] = []
+    slot_sets: set[tuple[str, ...]] = set()
+    for panel in ledger.complete_panels:
+        panel_strata = {item.stratum for item in panel.slots}
+        if len(panel_strata) != 1:
+            raise ValueError("Producer capital panel 不能混合不同样本分层")
+        if panel_strata.isdisjoint(included_strata):
+            continue
+        slot_set = tuple(sorted(item.slot_id for item in panel.slots))
+        if not slot_set or slot_set in slot_sets:
+            raise ValueError("Producer capital panel 的 DecisionSlot 集必须唯一且非空")
+        slot_sets.add(slot_set)
+        selected.append(panel)
+    if not selected:
         return None
-    shared_slot_sets = tuple(sorted(shared))
-    latest_panel_at = max(
-        panel.available_at
-        for panels in panels_by_source.values()
-        for key, panel in panels.items()
-        if key in shared
-    )
+    selected_panels = tuple(selected)
+    latest_panel_at = selected_panels[-1].available_at
     if mark_at is not None:
         mark_at = require_utc(mark_at)
         if mark_at < latest_panel_at:
-            raise ValueError("Producer capital 共同估值时点不能早于最后一个 panel")
+            raise ValueError("Producer capital 估值时点不能早于最后一个 panel")
     as_of = mark_at or latest_panel_at
-    path_evidence: list[ProducerCapitalPathEvidence] = []
-    for label, (ledger, replay) in sources.items():
-        selected = tuple(
-            panel
-            for panel in ledger.complete_panels
-            if tuple(sorted(item.slot_id for item in panel.slots)) in shared
-        )
-        steps = tuple(replay.advance(panel) for panel in selected)
-        current = replay.account.current_account
-        if current is not None and current.as_of < as_of:
-            replay.mark(as_of=as_of)
-        path = replay.account.result()
-        path_evidence.append(
-            ProducerCapitalPathEvidence(
-                label=label,
-                producer_id=selected[0].producer_id,
-                producer_behavior_id=ledger.producer_behavior_id,
-                panel_ids=tuple(item.panel_id for item in selected),
-                steps=steps,
-                path=path,
-            )
-        )
-    values = {
-        "evaluation_version": LOGICAL_ACCOUNT_EVALUATION_VERSION,
-        "as_of": as_of,
-        "initial_cash": initial_cash,
-        "included_strata": included_strata,
-        "shared_decision_slot_sets": shared_slot_sets,
-        "paths": tuple(sorted(path_evidence, key=lambda item: item.label)),
-    }
-    return ProducerCapitalComparisonEvidence(
-        comparison_id=stable_id("producer_capital_comparison", content_hash(values)),
-        **values,
+    steps = tuple(replay.advance(panel) for panel in selected_panels)
+    current = replay.account.current_account
+    if current is not None and current.as_of < as_of:
+        replay.mark(as_of=as_of)
+    return ProducerCapitalPathEvidence(
+        evaluation_version=LOGICAL_ACCOUNT_EVALUATION_VERSION,
+        as_of=as_of,
+        initial_cash=initial_cash,
+        producer_id=selected_panels[0].producer_id,
+        producer_behavior_id=ledger.producer_behavior_id,
+        included_strata=included_strata,
+        panel_ids=tuple(item.panel_id for item in selected_panels),
+        steps=steps,
+        path=replay.account.result(),
     )

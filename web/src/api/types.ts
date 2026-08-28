@@ -225,6 +225,23 @@ export interface ForecastEvaluationEvidence {
     mapping_conservative_coverage: string | null;
     mapping_residual_sign_accuracy: string | null;
   } | null;
+  quant_capital_path_evidence: {
+    evaluation_version: string;
+    producer_behavior_id: string;
+    as_of: string;
+    first_decision_at: string;
+    initial_cash: string;
+    final_equity: string;
+    net_pnl: string;
+    price_pnl: string | null;
+    funding_pnl: string | null;
+    fee_cost: string | null;
+    gross_turnover: string;
+    decision_count: number;
+    execution_group_count: number;
+    open_position_count: number;
+    maximum_drawdown_fraction: string;
+  } | null;
   capital_choice_evidence: {
     evaluation_version: string;
     capital_behavior_id: string;

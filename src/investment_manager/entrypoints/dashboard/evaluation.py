@@ -20,6 +20,7 @@ from investment_manager.forecast.context.evaluation import (
     ForecastSourceEvidence,
     evaluate_forecast_evidence,
 )
+from investment_manager.forecast.context.targets import assemble_context_capital_targets
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
@@ -51,7 +52,14 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
+from investment_manager.governance.evaluation.logical_account import SqlProducerPanelReader
+from investment_manager.governance.evaluation.producer_capital import (
+    ProducerCapitalPathEvidence,
+    ProducerCapitalReplay,
+    evaluate_producer_capital_path,
+)
 from investment_manager.kernel.time import require_utc
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.evaluation import (
     CapitalChoiceCase,
     CapitalChoiceEvidence,
@@ -87,6 +95,9 @@ class EvaluationDashboardReader:
         ] | None = None
         self._trading_cost_cache: TradingCostEvidence | None = None
         self._trading_cost_cache_lock = Lock()
+        self._quant_capital_cache_key: tuple[str, tuple[str, ...]] | None = None
+        self._quant_capital_cache: ProducerCapitalPathEvidence | None = None
+        self._quant_capital_cache_lock = Lock()
 
     def quant_forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
         """Read the research-only Program producer on the same source-independent slots."""
@@ -178,6 +189,68 @@ class EvaluationDashboardReader:
             product_outcome_version=evaluation.product_payoff_version,
             forecast_outcome_version=evaluation.target_forecast_version,
         )
+
+    def quant_capital_path_evidence(
+        self,
+        *,
+        now: datetime,
+    ) -> ProducerCapitalPathEvidence | None:
+        """Replay the active Quant producer through the shared cost-after capital path."""
+
+        now = require_utc(now)
+        quant = self._config.outcome_evaluation.quant_baseline
+        context = self._config.capital.context_forecast
+        if (
+            not self._config.capital.enabled
+            or quant is None
+            or not quant.enabled
+            or context is None
+            or not context.enabled
+        ):
+            return None
+        with self._engine.connect() as connection:
+            contracts = self._active_forecast_contracts(connection)
+            if not contracts:
+                return None
+            behavior_id = self._quant_behavior_id(contracts)
+        ledger = SqlProducerPanelReader(self._engine).read(
+            producer_behavior_id=behavior_id,
+            as_of=now,
+        )
+        cache_key = (behavior_id, tuple(item.panel_id for item in ledger.complete_panels))
+        with self._quant_capital_cache_lock:
+            if cache_key == self._quant_capital_cache_key:
+                return self._quant_capital_cache
+            market = SqlMarketDataStore(self._engine)
+            definitions = assemble_context_capital_targets(
+                capital=self._config.capital,
+                feature=self._config.feature,
+                market_policy=self._config.market_data,
+                market=market,
+                product_store=SqlProductPayoffProjectionStore(self._engine),
+            )
+            projectors = {
+                item.contract.outcome_family_id: item.product_payoffs
+                for item in definitions
+                if item.product_payoffs is not None
+            }
+            evidence = None
+            if projectors:
+                evidence = evaluate_producer_capital_path(
+                    initial_cash=self._config.shadow.initial_quote_balance,
+                    ledger=ledger,
+                    replay=ProducerCapitalReplay(
+                        producer_behavior_id=behavior_id,
+                        capital_policy=self._config.capital,
+                        initial_cash=self._config.shadow.initial_quote_balance,
+                        market=market,
+                        product_payoffs_by_family=projectors,
+                        sleeve_risk=self._config.capital.sleeve_risk,
+                    ),
+                )
+            self._quant_capital_cache_key = cache_key
+            self._quant_capital_cache = evidence
+            return evidence
 
     def capital_choice_evidence(self) -> CapitalChoiceEvidence | None:
         """Evaluate the newest decision whose complete candidate set has settled."""
@@ -610,6 +683,38 @@ def serialize_product_payoff_evidence(
         value = getattr(evidence, field_name)
         payload[field_name] = None if value is None else str(value)
     return {"product_payoff_evidence": payload}
+
+
+def serialize_quant_capital_path_evidence(
+    evidence: ProducerCapitalPathEvidence | None,
+) -> dict:
+    if evidence is None:
+        return {"quant_capital_path_evidence": None}
+    account = evidence.path.account
+    accounting = account.accounting
+    return {
+        "quant_capital_path_evidence": {
+            "evaluation_version": evidence.evaluation_version,
+            "producer_behavior_id": evidence.producer_behavior_id,
+            "as_of": _iso(evidence.as_of),
+            "first_decision_at": _iso(evidence.steps[0].as_of),
+            "initial_cash": str(evidence.initial_cash),
+            "final_equity": str(account.equity),
+            "net_pnl": str(account.equity - evidence.initial_cash),
+            "price_pnl": None if accounting is None else str(accounting.price_pnl),
+            "funding_pnl": None if accounting is None else str(accounting.funding_pnl),
+            "fee_cost": None if accounting is None else str(accounting.fee_cost),
+            "gross_turnover": str(evidence.path.gross_turnover),
+            "decision_count": len(evidence.steps),
+            "execution_group_count": sum(
+                len(item.execution_groups) for item in evidence.steps
+            ),
+            "open_position_count": len(account.positions),
+            "maximum_drawdown_fraction": str(
+                max(item.account.drawdown_fraction for item in evidence.steps)
+            ),
+        }
+    }
 
 
 def serialize_capital_choice_evidence(

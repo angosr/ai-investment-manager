@@ -441,6 +441,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert forecast_evidence.json() == {
         "quant_forecast_evidence": None,
         "product_payoff_evidence": None,
+        "quant_capital_path_evidence": None,
         "capital_choice_evidence": None,
         "trading_cost_evidence": {
             "evaluation_version": "trading-cost-evidence-v1",

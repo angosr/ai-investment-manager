@@ -61,7 +61,7 @@ from investment_manager.governance.evaluation.logical_account import (
 from investment_manager.governance.evaluation.producer_capital import (
     ProducerCapitalReplay,
     ProducerProductProjectionRecorder,
-    compare_producer_capital_paths,
+    evaluate_producer_capital_path,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
@@ -1764,22 +1764,19 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
             sleeve_risk=risk,
         )
 
-    comparison = compare_producer_capital_paths(
+    capital_path = evaluate_producer_capital_path(
         initial_cash=Decimal("10000"),
-        sources={
-            "QUANT": (ledger, independent_replay()),
-            "AI_QUANT": (ledger, independent_replay()),
-        },
+        ledger=ledger,
+        replay=independent_replay(),
     )
 
-    assert comparison is not None
-    assert comparison.shared_decision_slot_sets == ((slot.slot_id,),)
-    assert comparison.included_strata == (
+    assert capital_path is not None
+    assert capital_path.panel_ids == (panel.panel_id,)
+    assert capital_path.included_strata == (
         ForecastSlotStratum.CADENCE_ONLY,
         ForecastSlotStratum.MATERIAL_STATE_ONLY,
     )
-    assert len(comparison.paths) == 2
-    assert comparison.paths[0].path.account.equity == comparison.paths[1].path.account.equity
+    assert capital_path.path.account == capital_path.steps[-1].account
 
     event_at = NOW + timedelta(minutes=5)
     event_cause = ForecastSlotCause.material_state(
@@ -1843,30 +1840,26 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
             "complete_panels": (panel, event_panel),
         }
     )
-    all_slots = compare_producer_capital_paths(
+    all_slots = evaluate_producer_capital_path(
         initial_cash=Decimal("10000"),
-        sources={
-            "QUANT": (event_ledger, independent_replay()),
-            "AI_QUANT": (event_ledger, independent_replay()),
-        },
+        ledger=event_ledger,
+        replay=independent_replay(),
     )
     assert all_slots is not None
-    cadence_only = compare_producer_capital_paths(
+    cadence_only = evaluate_producer_capital_path(
         initial_cash=Decimal("10000"),
-        sources={
-            "QUANT": (event_ledger, independent_replay()),
-            "AI_QUANT": (event_ledger, independent_replay()),
-        },
+        ledger=event_ledger,
+        replay=independent_replay(),
         allowed_strata=(ForecastSlotStratum.CADENCE_ONLY,),
         mark_at=all_slots.as_of,
     )
 
     assert cadence_only is not None
-    assert len(all_slots.shared_decision_slot_sets) == 2
-    assert cadence_only.shared_decision_slot_sets == ((slot.slot_id,),)
+    assert all_slots.panel_ids == (panel.panel_id, event_panel.panel_id)
+    assert cadence_only.panel_ids == (panel.panel_id,)
     assert cadence_only.included_strata == (ForecastSlotStratum.CADENCE_ONLY,)
     assert cadence_only.as_of == all_slots.as_of == event_available_at
-    assert all(len(item.steps) == 1 for item in cadence_only.paths)
+    assert len(cadence_only.steps) == 1
 
 
 def test_producer_logical_account_reuses_cost_after_capital_and_paper_execution(
