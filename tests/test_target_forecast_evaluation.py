@@ -142,7 +142,6 @@ def test_forecast_evidence_reports_continuous_return_resolution() -> None:
         due_slot_count=2,
         forecast_count=2,
         no_estimate_count=0,
-        required_non_overlapping_samples=2,
     )
 
     assert evidence.mean_absolute_return_error_bps == Decimal("20")
@@ -162,7 +161,6 @@ def test_forecast_evidence_rejects_duplicate_interval_within_source_stratum() ->
             due_slot_count=2,
             forecast_count=2,
             no_estimate_count=0,
-            required_non_overlapping_samples=2,
         )
 
 
@@ -187,11 +185,9 @@ def test_forecast_evidence_tie_break_never_depends_on_forecast_id() -> None:
         due_slot_count=2,
         forecast_count=2,
         no_estimate_count=0,
-        required_non_overlapping_samples=2,
-        permission_evidence_eligible=False,
     )
 
-    assert evidence.status == ForecastEvidenceStatus.DIAGNOSTIC_ONLY
+    assert evidence.status == ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
     assert evidence.mean_brier_score == Decimal("0.08")
 
 
@@ -218,7 +214,6 @@ def test_forecast_evidence_scores_only_non_overlapping_cases() -> None:
         due_slot_count=4,
         forecast_count=3,
         no_estimate_count=1,
-        required_non_overlapping_samples=2,
     )
 
     assert evidence.status == ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
@@ -232,14 +227,13 @@ def test_forecast_evidence_scores_only_non_overlapping_cases() -> None:
     assert evidence.result_coverage == Decimal("1")
 
 
-def test_forecast_evidence_never_claims_skill_before_sample_threshold() -> None:
+def test_forecast_evidence_never_claims_skill_without_dynamic_comparisons() -> None:
     start = datetime(2026, 8, 1, tzinfo=UTC)
     evidence = evaluate_forecast_evidence(
         (_case("first", start, "UP", (("DOWN", "0.1"), ("UP", "0.9"))),),
         due_slot_count=1,
         forecast_count=1,
         no_estimate_count=0,
-        required_non_overlapping_samples=30,
     )
 
     assert evidence.status == ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
@@ -273,7 +267,6 @@ def test_forecast_evidence_uses_only_prior_settled_history_for_dynamic_baseline(
         due_slot_count=6,
         forecast_count=6,
         no_estimate_count=0,
-        required_non_overlapping_samples=6,
     )
 
     assert evidence.rolling_baseline_ready_count == 1
@@ -321,7 +314,6 @@ def test_forecast_evidence_does_not_claim_a_tied_mean_is_skill() -> None:
         due_slot_count=7,
         forecast_count=7,
         no_estimate_count=0,
-        required_non_overlapping_samples=2,
     )
 
     assert evidence.status == ForecastEvidenceStatus.INCONCLUSIVE
@@ -366,7 +358,6 @@ def test_forecast_evidence_claims_skill_only_with_enough_dynamic_pairs() -> None
         due_slot_count=7,
         forecast_count=7,
         no_estimate_count=0,
-        required_non_overlapping_samples=2,
     )
 
     assert evidence.status == ForecastEvidenceStatus.ABOVE_BENCHMARK
@@ -407,7 +398,6 @@ def test_dynamic_baseline_excludes_outcomes_not_yet_settled_at_cutoff() -> None:
         due_slot_count=6,
         forecast_count=6,
         no_estimate_count=0,
-        required_non_overlapping_samples=6,
     )
 
     assert evidence.rolling_baseline_ready_count == 0
@@ -444,7 +434,6 @@ def test_market_baseline_is_distinct_from_rolling_unconditional_history() -> Non
         due_slot_count=11,
         forecast_count=11,
         no_estimate_count=0,
-        required_non_overlapping_samples=11,
     )
 
     assert evidence.rolling_baseline_ready_count == 6

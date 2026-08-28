@@ -47,12 +47,11 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
         due_slot_count=1,
         forecast_count=1,
         no_estimate_count=0,
-        required_non_overlapping_samples=30,
     )
 
     assert serialize_forecast_evidence(evidence) == {
         "forecast_evidence": {
-            "evaluation_version": "context-forecast-evidence-v6",
+            "evaluation_version": "context-forecast-evidence-v7",
             "status": "NO_SETTLED_SAMPLES",
             "terminal_result_count": 1,
             "due_slot_count": 1,
@@ -60,8 +59,6 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
             "no_estimate_count": 0,
             "settled_forecast_count": 0,
             "non_overlapping_sample_count": 0,
-            "required_non_overlapping_samples": 30,
-            "permission_evidence_eligible": True,
             "mean_ranked_probability_score": None,
             "benchmark_mean_ranked_probability_score": None,
             "ranked_probability_skill": None,

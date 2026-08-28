@@ -231,13 +231,12 @@ export interface ForecastEvaluationEvidence {
       instrument_keys: string[];
       maximum_rule_age_seconds: number;
     }[];
-    status: "NO_SETTLED_SAMPLES" | "COLLECTING" | "SUFFICIENT";
+    status: "NO_SETTLED_SAMPLES" | "OBSERVED";
     terminal_product_count: number;
     settled_product_count: number;
     unavailable_product_count: number;
     source_forecast_count: number;
     independent_source_forecast_count: number;
-    required_independent_source_forecasts: number;
     mean_absolute_mapping_error_bps: string | null;
     mapping_conservative_coverage: string | null;
     mapping_residual_sign_accuracy: string | null;
@@ -316,14 +315,12 @@ export interface ForecastEvidenceSummary {
     | "INSUFFICIENT_EVIDENCE"
     | "ABOVE_BENCHMARK"
     | "BELOW_BENCHMARK"
-    | "INCONCLUSIVE"
-    | "DIAGNOSTIC_ONLY";
+    | "INCONCLUSIVE";
   due_slot_count: number;
   forecast_count: number;
   no_estimate_count: number;
   settled_forecast_count: number;
   non_overlapping_sample_count: number;
-  required_non_overlapping_samples: number;
   result_coverage: string | null;
   mean_ranked_probability_score: string | null;
   mean_brier_score: string | null;

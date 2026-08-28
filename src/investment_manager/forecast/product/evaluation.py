@@ -20,13 +20,12 @@ from investment_manager.forecast.results import (
 )
 from investment_manager.kernel.identity import content_hash
 
-PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION = "product-payoff-residual-evidence-v2"
+PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION = "product-payoff-residual-evidence-v3"
 
 
 class ProductPayoffEvidenceStatus(StrEnum):
     NO_SETTLED_SAMPLES = "NO_SETTLED_SAMPLES"
-    COLLECTING = "COLLECTING"
-    SUFFICIENT = "SUFFICIENT"
+    OBSERVED = "OBSERVED"
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -78,7 +77,6 @@ class ProductPayoffEvidence:
     unavailable_product_count: int
     source_forecast_count: int
     independent_source_forecast_count: int
-    required_independent_source_forecasts: int
     mean_absolute_mapping_error_bps: Decimal | None
     mapping_conservative_coverage: Decimal | None
     mapping_residual_sign_accuracy: Decimal | None
@@ -98,12 +96,9 @@ def evaluate_product_payoff_evidence(
     mapping_cohort: tuple[ProductPayoffMappingIdentity, ...],
     product_outcome_version: str,
     forecast_outcome_version: str,
-    required_independent_source_forecasts: int,
 ) -> ProductPayoffEvidence:
     """Evaluate only product residuals after removing the realized economic return."""
 
-    if required_independent_source_forecasts < 1:
-        raise ValueError("Product payoff 最小独立样本数必须为正数")
     if not mapping_cohort or tuple(sorted(set(mapping_cohort))) != mapping_cohort:
         raise ValueError("Product payoff mapping cohort 必须唯一且排序")
     for case in cases:
@@ -183,9 +178,6 @@ def evaluate_product_payoff_evidence(
             unavailable_product_count=unavailable,
             source_forecast_count=len(first_source_groups),
             independent_source_forecast_count=0,
-            required_independent_source_forecasts=(
-                required_independent_source_forecasts
-            ),
             mean_absolute_mapping_error_bps=None,
             mapping_conservative_coverage=None,
             mapping_residual_sign_accuracy=None,
@@ -204,17 +196,12 @@ def evaluate_product_payoff_evidence(
     return ProductPayoffEvidence(
         evaluation_version=PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION,
         mapping_cohort=mapping_cohort,
-        status=(
-            ProductPayoffEvidenceStatus.SUFFICIENT
-            if independent_count >= required_independent_source_forecasts
-            else ProductPayoffEvidenceStatus.COLLECTING
-        ),
+        status=ProductPayoffEvidenceStatus.OBSERVED,
         terminal_product_count=len(cases),
         settled_product_count=len(settled),
         unavailable_product_count=unavailable,
         source_forecast_count=len(first_source_groups),
         independent_source_forecast_count=independent_count,
-        required_independent_source_forecasts=required_independent_source_forecasts,
         mean_absolute_mapping_error_bps=_mean(prediction_errors),
         mapping_conservative_coverage=_fraction(conservative_hits),
         mapping_residual_sign_accuracy=_fraction(sign_hits),

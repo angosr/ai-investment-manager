@@ -377,9 +377,7 @@ outcome_evaluation:
   version: typed-outcome-settlement-v49
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
-  target_forecast_minimum_sample_size: 30
   product_payoff_version: product-payoff-outcome-v1
-  product_payoff_minimum_sample_size: 30
   maximum_funding_gap_hours: 12
   window_hours: 24
   settlement_grace_minutes: 120

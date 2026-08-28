@@ -325,7 +325,6 @@ class EvaluationDashboardReader:
             mapping_cohort=mapping_cohort,
             product_outcome_version=evaluation.product_payoff_version,
             forecast_outcome_version=evaluation.target_forecast_version,
-            required_independent_source_forecasts=(evaluation.product_payoff_minimum_sample_size),
         )
 
     def capital_choice_evidence(self) -> CapitalChoiceEvidence | None:
@@ -663,11 +662,6 @@ class EvaluationDashboardReader:
                     no_estimate_count=sum(
                         due_slots[slot_id].stratum == stratum for slot_id in no_estimate_slot_ids
                     ),
-                    required_non_overlapping_samples=(
-                        self._config.outcome_evaluation.target_forecast_minimum_sample_size
-                        * len(contracts)
-                    ),
-                    permission_evidence_eligible=False,
                 ),
             )
             for stratum in ForecastSlotStratum
@@ -677,10 +671,6 @@ class EvaluationDashboardReader:
             due_slot_count=due_slot_count,
             forecast_count=forecast_count,
             no_estimate_count=no_estimate_count,
-            required_non_overlapping_samples=(
-                self._config.outcome_evaluation.target_forecast_minimum_sample_size * len(contracts)
-            ),
-            permission_evidence_eligible=False,
         )
         return replace(overall, source_evidence=source_evidence)
 

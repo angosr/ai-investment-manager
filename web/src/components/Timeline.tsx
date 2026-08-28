@@ -177,7 +177,6 @@ function ForecastEvidenceLine({
     ABOVE_BENCHMARK: "目前优于简单预测基线",
     BELOW_BENCHMARK: "目前落后于简单预测基线",
     INCONCLUSIVE: "与简单预测基线的差异尚不可靠",
-    DIAGNOSTIC_ONLY: "该批结果只用于回顾，不影响当前资金决策",
   }[evidence.status];
   const coverage = evidence.result_coverage === null
     ? null

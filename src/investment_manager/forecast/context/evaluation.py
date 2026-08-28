@@ -11,7 +11,7 @@ from enum import StrEnum
 from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.kernel.time import require_utc
 
-FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v6"
+FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v7"
 FORECAST_PAIR_EVALUATION_VERSION = "context-forecast-pair-evidence-v2"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
@@ -24,7 +24,6 @@ class ForecastEvidenceStatus(StrEnum):
     ABOVE_BENCHMARK = "ABOVE_BENCHMARK"
     BELOW_BENCHMARK = "BELOW_BENCHMARK"
     INCONCLUSIVE = "INCONCLUSIVE"
-    DIAGNOSTIC_ONLY = "DIAGNOSTIC_ONLY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,8 +71,6 @@ class ForecastEvidence:
     no_estimate_count: int
     settled_forecast_count: int
     non_overlapping_sample_count: int
-    required_non_overlapping_samples: int
-    permission_evidence_eligible: bool
     mean_ranked_probability_score: Decimal | None
     benchmark_mean_ranked_probability_score: Decimal | None
     ranked_probability_skill: Decimal | None
@@ -256,15 +253,11 @@ def evaluate_forecast_evidence(
     due_slot_count: int,
     forecast_count: int,
     no_estimate_count: int,
-    required_non_overlapping_samples: int,
-    permission_evidence_eligible: bool = True,
 ) -> ForecastEvidence:
     """Score only a non-overlapping prospective subset against the frozen benchmark."""
 
     if min(due_slot_count, forecast_count, no_estimate_count) < 0:
         raise ValueError("Forecast evidence 计数不能为负数")
-    if required_non_overlapping_samples < 2:
-        raise ValueError("Forecast evidence 最小非重叠样本数至少为 2")
     terminal = forecast_count + no_estimate_count
     if terminal > due_slot_count:
         raise ValueError("Forecast 终态结果数不能超过到期槽数")
@@ -280,8 +273,6 @@ def evaluate_forecast_evidence(
             no_estimate_count=no_estimate_count,
             settled_forecast_count=len(cases),
             non_overlapping_sample_count=0,
-            required_non_overlapping_samples=required_non_overlapping_samples,
-            permission_evidence_eligible=permission_evidence_eligible,
             mean_ranked_probability_score=None,
             benchmark_mean_ranked_probability_score=None,
             ranked_probability_skill=None,
@@ -453,14 +444,8 @@ def evaluate_forecast_evidence(
     rolling_ready_count = sum(ready for _item, _probabilities, ready in rolling_cases)
     market_ready_count = sum(ready for _item, _probabilities, ready in market_cases)
     status = (
-        ForecastEvidenceStatus.DIAGNOSTIC_ONLY
-        if not permission_evidence_eligible
-        else ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
-        if (
-            len(independent) < required_non_overlapping_samples
-            or rolling_ready_count < required_non_overlapping_samples
-            or market_ready_count < required_non_overlapping_samples
-        )
+        ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
+        if rolling_ranked_interval is None or market_ranked_interval is None
         else ForecastEvidenceStatus.ABOVE_BENCHMARK
         if (
             rolling_ranked_lower is not None
@@ -484,8 +469,6 @@ def evaluate_forecast_evidence(
         no_estimate_count=no_estimate_count,
         settled_forecast_count=len(cases),
         non_overlapping_sample_count=len(independent),
-        required_non_overlapping_samples=required_non_overlapping_samples,
-        permission_evidence_eligible=permission_evidence_eligible,
         mean_ranked_probability_score=model_ranked,
         benchmark_mean_ranked_probability_score=benchmark_ranked,
         ranked_probability_skill=benchmark_ranked - model_ranked,

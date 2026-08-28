@@ -1297,11 +1297,10 @@ def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
         mapping_cohort=_mapping_cohort(),
         product_outcome_version="product-payoff-outcome-v1",
         forecast_outcome_version=forecast_outcome_version,
-        required_independent_source_forecasts=30,
     )
 
-    assert evidence.status == ProductPayoffEvidenceStatus.COLLECTING
-    assert evidence.evaluation_version == "product-payoff-residual-evidence-v2"
+    assert evidence.status == ProductPayoffEvidenceStatus.OBSERVED
+    assert evidence.evaluation_version == "product-payoff-residual-evidence-v3"
     assert evidence.mapping_cohort == _mapping_cohort()
     assert evidence.source_forecast_count == 1
     assert evidence.settled_product_count == 4
@@ -1312,7 +1311,6 @@ def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
             mapping_cohort=_mapping_cohort(version="retired-product-payoff-v0"),
             product_outcome_version="product-payoff-outcome-v1",
             forecast_outcome_version=forecast_outcome_version,
-            required_independent_source_forecasts=30,
         )
     expected_residuals = (
         first.expected_gross_bps - forecast.expected_gross_bps,
