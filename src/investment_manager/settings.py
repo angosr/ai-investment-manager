@@ -166,21 +166,6 @@ class AppConfig(StrictConfig):
             }
             if not artifact_families or not artifact_families.issubset(target_families):
                 raise ValueError("Quant baseline 制品必须属于当前 Forecast targets")
-        posterior = self.outcome_evaluation.quant_context_posterior
-        if (
-            posterior is not None
-            and posterior.enabled
-            and (
-                context_forecast is None
-                or not context_forecast.enabled
-                or quant is None
-                or not quant.enabled
-                or not self.codex_runtime.enabled
-            )
-        ):
-            raise ValueError(
-                "Quant Context posterior 必须绑定已启用的 Context Forecast、Quant baseline 与 Codex"
-            )
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
                 raise ValueError("当前实验候选资本权限只允许 SHADOW")

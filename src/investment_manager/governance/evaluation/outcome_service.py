@@ -7,16 +7,6 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy.engine import Engine
-
-from investment_manager.forecast.context.posterior import (
-    QuantContextPosteriorRunner,
-    assemble_quant_context_posterior_runner,
-)
-from investment_manager.forecast.context.stability import (
-    ContextForecastStabilityRunner,
-    assemble_context_forecast_stability_runner,
-)
 from investment_manager.forecast.context.targets import (
     assemble_context_capital_targets,
     configured_context_capital_targets,
@@ -59,18 +49,9 @@ class OutcomeEvaluationSupervisorHealth:
     product_payoff_pending: int = 0
     research_product_projection_count: int = 0
     research_product_projection_unavailable: int = 0
-    forecast_stability_assignments: int = 0
-    forecast_stability_complete_samples: int = 0
-    forecast_stability_failed_replicas: int = 0
-    quant_posterior_assignments: int = 0
-    quant_posterior_forecasts: int = 0
-    quant_posterior_no_estimates: int = 0
-    quant_posterior_pending: int = 0
     last_target_forecast_error_class: str | None = None
     last_product_payoff_error_class: str | None = None
     last_research_product_projection_error_class: str | None = None
-    last_forecast_stability_error_class: str | None = None
-    last_quant_posterior_error_class: str | None = None
 
 
 @dataclass(slots=True)
@@ -79,19 +60,13 @@ class OutcomeEvaluationSupervisor:
     target_forecast_settler: ForecastOutcomeSettler
     product_payoff_settler: ProductPayoffOutcomeSettler | None = None
     research_product_projection_recorder: ProducerProductProjectionRecorder | None = None
-    forecast_stability_runners: tuple[ContextForecastStabilityRunner, ...] = ()
-    quant_posterior_runner: QuantContextPosteriorRunner | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
     )
     async def run(self, stop: asyncio.Event) -> None:
         workers = [self._run_settlement_loop(stop)]
-        if (
-            self.quant_posterior_runner is not None
-            or self.research_product_projection_recorder is not None
-            or self.forecast_stability_runners
-        ):
+        if self.research_product_projection_recorder is not None:
             workers.append(self._run_research_loop(stop))
         await asyncio.gather(*workers)
 
@@ -141,27 +116,11 @@ class OutcomeEvaluationSupervisor:
             )
 
     async def _run_research_loop(self, stop: asyncio.Event) -> None:
-        """Run the capital-relevant posterior before diagnostic replicas."""
+        """Record research product projections from the active Quant producer."""
 
         policy = self.config.outcome_evaluation
         while not stop.is_set():
             now = require_utc(self.clock())
-            runner = self.quant_posterior_runner
-            if runner is not None:
-                try:
-                    report = await asyncio.to_thread(runner.reconcile, as_of=now)
-                    self.health.quant_posterior_assignments = report.assignment_count
-                    self.health.quant_posterior_forecasts = report.forecast_count
-                    self.health.quant_posterior_no_estimates = report.no_estimate_count
-                    self.health.quant_posterior_pending = report.pending_count
-                    self.health.last_quant_posterior_error_class = None
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    if self.health.last_quant_posterior_error_class != type(exc).__name__:
-                        logger.exception("quant context posterior evaluation failed")
-                    self.health.last_quant_posterior_error_class = type(exc).__name__
-
             recorder = self.research_product_projection_recorder
             if recorder is not None:
                 try:
@@ -183,41 +142,6 @@ class OutcomeEvaluationSupervisor:
                         logger.exception("research product projection recording failed")
                     self.health.last_research_product_projection_error_class = type(exc).__name__
 
-            outcomes = []
-            stability_as_of = require_utc(self.clock())
-            for stability_runner in self.forecast_stability_runners:
-                try:
-                    outcomes.append(
-                        await asyncio.to_thread(
-                            stability_runner.reconcile,
-                            as_of=stability_as_of,
-                        )
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except BaseException as exc:
-                    outcomes.append(exc)
-            reports = tuple(item for item in outcomes if not isinstance(item, BaseException))
-            errors = tuple(item for item in outcomes if isinstance(item, BaseException))
-            self.health.forecast_stability_assignments = sum(
-                item.assignment_count for item in reports
-            )
-            self.health.forecast_stability_complete_samples = sum(
-                item.complete_sample_count for item in reports
-            )
-            self.health.forecast_stability_failed_replicas = sum(
-                item.failed_replica_count for item in reports
-            )
-            if not errors:
-                self.health.last_forecast_stability_error_class = None
-            else:
-                exc = errors[0]
-                if self.health.last_forecast_stability_error_class != type(exc).__name__:
-                    logger.error(
-                        "forecast stability evaluation failed",
-                        exc_info=(type(exc), exc, exc.__traceback__),
-                    )
-                self.health.last_forecast_stability_error_class = type(exc).__name__
             await _wait_for_next_poll(
                 stop,
                 now=require_utc(self.clock()),
@@ -251,28 +175,9 @@ def assemble_outcome_evaluation(
     release: ReleaseManifest | None = None,
 ) -> OutcomeEvaluationSupervisor:
     engine = build_engine(database_url)
-    posterior_runner, quant_behavior_id = _assemble_quant_research(
+    quant_behavior_id = _resolve_quant_behavior_id(
         config=config,
-        engine=engine,
         release=release,
-    )
-    stability_behaviors = (
-        ()
-        if posterior_runner is None
-        else (posterior_runner.producer_behavior_id,)
-    )
-    stability_runners = tuple(
-        runner
-        for behavior_id in stability_behaviors
-        if behavior_id is not None
-        and (
-            runner := assemble_context_forecast_stability_runner(
-                config,
-                engine=engine,
-                producer_behavior_id=behavior_id,
-            )
-        )
-        is not None
     )
     # Outcome owns already-recorded obligations across Release changes.  Whether the
     # current Capital policy can create new projections must not orphan old ones.
@@ -301,21 +206,9 @@ def assemble_outcome_evaluation(
             for item in definitions
             if item.product_payoffs is not None
         }
-        behavior_ids = tuple(
-            sorted(
-                {
-                    quant_behavior_id,
-                    *(
-                        ()
-                        if posterior_runner is None
-                        else (posterior_runner.producer_behavior_id,)
-                    ),
-                }
-            )
-        )
         if projectors:
             product_projection_recorder = ProducerProductProjectionRecorder(
-                producer_behavior_ids=behavior_ids,
+                producer_behavior_ids=(quant_behavior_id,),
                 panels=SqlProducerPanelReader(engine),
                 product_payoffs_by_family=projectors,
             )
@@ -332,24 +225,17 @@ def assemble_outcome_evaluation(
         ),
         product_payoff_settler=product_payoff_settler,
         research_product_projection_recorder=product_projection_recorder,
-        forecast_stability_runners=stability_runners,
-        quant_posterior_runner=posterior_runner,
     )
 
 
-def _assemble_quant_research(
+def _resolve_quant_behavior_id(
     *,
     config: AppConfig,
-    engine: Engine,
     release: ReleaseManifest | None,
-) -> tuple[QuantContextPosteriorRunner | None, str | None]:
-    posterior = config.outcome_evaluation.quant_context_posterior
+) -> str | None:
     quant = config.outcome_evaluation.quant_baseline
-    posterior_enabled = posterior is not None and posterior.enabled
     if quant is None or not quant.enabled:
-        if posterior_enabled:
-            raise ValueError("Quant Context posterior 运行必须绑定 Quant baseline")
-        return None, None
+        return None
     if release is None:
         raise ValueError("Quant 研究运行必须绑定 Release")
     targets = configured_context_capital_targets(
@@ -373,18 +259,4 @@ def _assemble_quant_research(
             (contract, artifacts.get(contract.outcome_family_id)) for contract in contracts
         ),
     )
-    runner = (
-        None
-        if not posterior_enabled
-        else assemble_quant_context_posterior_runner(
-            config,
-            engine=engine,
-            contracts=contracts,
-            target_state_behaviors=tuple(
-                (item.contract.outcome_family_id, item.state_behavior)
-                for item in targets
-            ),
-            quant_producer_behavior_id=quant_behavior_id,
-        )
-    )
-    return runner, quant_behavior_id
+    return quant_behavior_id

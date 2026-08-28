@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -27,24 +25,17 @@ def test_outcome_service_keeps_settling_recorded_product_obligations(app_config)
     config = app_config.model_copy(
         update={
             "capital": app_config.capital.model_copy(
-                update={
-                    "context_forecast": context.model_copy(
-                        update={"product_payoffs": None}
-                    )
-                }
+                update={"context_forecast": context.model_copy(update={"product_payoffs": None})}
             ),
         }
     )
 
-    supervisor = assemble_outcome_evaluation(
-        config,
-        "sqlite+pysqlite:///:memory:",
-    )
+    supervisor = assemble_outcome_evaluation(config, "sqlite+pysqlite:///:memory:")
 
     assert supervisor.product_payoff_settler is not None
 
 
-def test_outcome_supervisor_only_settles_current_release_cohorts(app_config) -> None:
+def test_outcome_supervisor_settles_current_release_cohorts(app_config) -> None:
     class Settler:
         def __init__(self, result, *, stop: asyncio.Event | None = None) -> None:
             self.result = result
@@ -59,9 +50,7 @@ def test_outcome_supervisor_only_settles_current_release_cohorts(app_config) -> 
 
     async def scenario() -> None:
         stop = asyncio.Event()
-        target_forecast = Settler(
-            SimpleNamespace(settled=9, outcome_unavailable=10, pending=11)
-        )
+        target_forecast = Settler(SimpleNamespace(settled=9, outcome_unavailable=10, pending=11))
         product_payoff = Settler(
             SimpleNamespace(settled=12, outcome_unavailable=13, pending=14),
             stop=stop,
@@ -86,12 +75,12 @@ def test_outcome_supervisor_only_settles_current_release_cohorts(app_config) -> 
     asyncio.run(scenario())
 
 
-def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config) -> None:
+def test_quant_product_projection_uses_independent_research_poll(app_config) -> None:
     class Settler:
         def settle(self, *, as_of):
             return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
 
-    class PosteriorRunner:
+    class ProductProjectionRecorder:
         def __init__(self, stop: asyncio.Event) -> None:
             self.stop = stop
             self.calls = 0
@@ -100,16 +89,11 @@ def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config)
             self.calls += 1
             if self.calls == 2:
                 self.stop.set()
-            return SimpleNamespace(
-                assignment_count=0,
-                forecast_count=0,
-                no_estimate_count=0,
-                pending_count=0,
-            )
+            return SimpleNamespace(projection_count=4, unavailable_forecast_count=1)
 
     async def scenario() -> None:
         stop = asyncio.Event()
-        runner = PosteriorRunner(stop)
+        recorder = ProductProjectionRecorder(stop)
         config = app_config.model_copy(
             update={
                 "outcome_evaluation": app_config.outcome_evaluation.model_copy(
@@ -120,152 +104,14 @@ def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config)
         supervisor = OutcomeEvaluationSupervisor(
             config=config,
             target_forecast_settler=Settler(),
-            quant_posterior_runner=runner,
-            clock=lambda: datetime.now(UTC),
-        )
-        await asyncio.wait_for(supervisor.run(stop), timeout=2)
-        assert runner.calls == 2
-
-    asyncio.run(scenario())
-
-
-def test_forecast_stability_behaviors_share_one_serial_research_lane(
-    app_config,
-) -> None:
-    class Settler:
-        def settle(self, *, as_of):
-            return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
-
-    async def scenario() -> None:
-        stop = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        lock = threading.Lock()
-        completed = 0
-        active = 0
-        maximum_active = 0
-
-        class StabilityRunner:
-            def __init__(self, assignments: int, samples: int) -> None:
-                self.assignments = assignments
-                self.samples = samples
-                self.calls = 0
-
-            def reconcile(self, *, as_of):
-                nonlocal active, completed, maximum_active
-                self.calls += 1
-                with lock:
-                    active += 1
-                    maximum_active = max(maximum_active, active)
-                time.sleep(0.02)
-                with lock:
-                    active -= 1
-                    completed += 1
-                    if completed == 2:
-                        loop.call_soon_threadsafe(stop.set)
-                return SimpleNamespace(
-                    assignment_count=self.assignments,
-                    complete_sample_count=self.samples,
-                    failed_replica_count=0,
-                )
-
-        formal = StabilityRunner(assignments=12, samples=12)
-        posterior = StabilityRunner(assignments=1, samples=1)
-        supervisor = OutcomeEvaluationSupervisor(
-            config=app_config,
-            target_forecast_settler=Settler(),
-            forecast_stability_runners=(formal, posterior),
-            clock=lambda: datetime.now(UTC),
-        )
-
-        await asyncio.wait_for(
-            supervisor._run_research_loop(stop),
-            timeout=2,
-        )
-
-        assert formal.calls == posterior.calls == 1
-        assert maximum_active == 1
-        assert supervisor.health.forecast_stability_assignments == 13
-        assert supervisor.health.forecast_stability_complete_samples == 13
-        assert supervisor.health.forecast_stability_failed_replicas == 0
-
-    asyncio.run(scenario())
-
-
-def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config) -> None:
-    class Settler:
-        def settle(self, *, as_of):
-            return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
-
-    async def scenario() -> None:
-        stop = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        lock = threading.Lock()
-        active = 0
-        completed = 0
-        maximum_active = 0
-        call_order = []
-
-        def measured(label, result):
-            nonlocal active, completed, maximum_active
-            with lock:
-                call_order.append(label)
-                active += 1
-                maximum_active = max(maximum_active, active)
-            time.sleep(0.02)
-            with lock:
-                active -= 1
-                completed += 1
-                if completed == 3:
-                    loop.call_soon_threadsafe(stop.set)
-            return result
-
-        class StabilityRunner:
-            def reconcile(self, *, as_of):
-                return measured(
-                    "stability",
-                    SimpleNamespace(
-                        assignment_count=1,
-                        complete_sample_count=1,
-                        failed_replica_count=0,
-                    )
-                )
-
-        class PosteriorRunner:
-            def reconcile(self, *, as_of):
-                return measured(
-                    "posterior",
-                    SimpleNamespace(
-                        assignment_count=1,
-                        forecast_count=1,
-                        no_estimate_count=0,
-                        pending_count=0,
-                    )
-                )
-
-        class ProductProjectionRecorder:
-            def reconcile(self, *, as_of):
-                return measured(
-                    "product-projection",
-                    SimpleNamespace(
-                        projection_count=4,
-                        unavailable_forecast_count=1,
-                    ),
-                )
-
-        supervisor = OutcomeEvaluationSupervisor(
-            config=app_config,
-            target_forecast_settler=Settler(),
-            forecast_stability_runners=(StabilityRunner(),),
-            quant_posterior_runner=PosteriorRunner(),
-            research_product_projection_recorder=ProductProjectionRecorder(),
+            research_product_projection_recorder=recorder,
             clock=lambda: datetime.now(UTC),
         )
 
         await asyncio.wait_for(supervisor.run(stop), timeout=2)
-        assert completed == 3
-        assert maximum_active == 1
-        assert call_order == ["posterior", "product-projection", "stability"]
-        assert supervisor.health.research_product_projection_count == 4
+
+        assert recorder.calls == 2
+        assert supervisor.health.research_product_projection_count == 8
         assert supervisor.health.research_product_projection_unavailable == 1
 
     asyncio.run(scenario())

@@ -27,9 +27,6 @@ from investment_manager.execution.planning.planner import TradePlan, TradePlanne
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product import ProductOrderVenue
-from investment_manager.forecast.context.posterior import (
-    assemble_quant_context_posterior_assignment_producer,
-)
 from investment_manager.forecast.context.targets import (
     assemble_context_capital_targets,
 )
@@ -1481,17 +1478,6 @@ def assemble_capital_cycle(
                         activated_at=max(quant_activation_times),
                     )
                 )
-                posterior_assignment = (
-                    assemble_quant_context_posterior_assignment_producer(
-                        config,
-                        engine=engine,
-                        targets=frozen_targets,
-                        quant_producer_behavior_id=behavior_id,
-                        producer_activation_at=producer_activation_at,
-                    )
-                )
-                if posterior_assignment is not None:
-                    research_forecast_producers.append(posterior_assignment)
         forecast_sources = tuple(configured_sources)
     portfolio = SqlPortfolioStore(engine)
     performance = SqlPortfolioPerformanceStore(engine)

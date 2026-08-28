@@ -180,7 +180,7 @@ class ContextForecastTargetPolicy(StrictConfig):
 
 
 class ContextForecastPolicy(StrictConfig):
-    """Shared economic contracts and AI runtime policy for the active posterior."""
+    """Shared economic Forecast contracts and source-independent slot policy."""
 
     version: str
     enabled: bool = False

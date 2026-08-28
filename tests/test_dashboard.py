@@ -20,11 +20,6 @@ from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_trading_cost_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
-from investment_manager.entrypoints.dashboard.producer_capital import (
-    ProducerCapitalEvidence,
-    serialize_forecast_stability_evidence,
-    serialize_producer_capital_evidence,
-)
 from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
     AnalysisRuntimeStatus,
@@ -40,67 +35,6 @@ from investment_manager.portfolio.evaluation import (
     CapitalChoiceExposureOutcome,
     evaluate_trading_cost,
 )
-
-
-def test_producer_capital_separates_material_trigger_cost_from_producer_paths() -> None:
-    at = datetime(2026, 8, 28, 14, 30, tzinfo=UTC)
-
-    def path(label: str, *, equity: str, fee: str, turnover: str, decisions: int):
-        accounting = SimpleNamespace(
-            net_pnl=Decimal(equity) - Decimal("10000"),
-            price_pnl=Decimal(equity) - Decimal("10000") + Decimal(fee),
-            funding_pnl=Decimal("0"),
-            fee_cost=Decimal(fee),
-        )
-        account = SimpleNamespace(
-            equity=Decimal(equity),
-            accounting=accounting,
-            drawdown_fraction=Decimal("0"),
-            positions=(),
-        )
-        return SimpleNamespace(
-            label=label,
-            producer_id=label.lower(),
-            producer_behavior_id=f"{label.lower()}-behavior",
-            panel_ids=tuple(f"panel-{index}" for index in range(decisions)),
-            steps=tuple(SimpleNamespace(execution_groups=()) for _ in range(decisions)),
-            path=SimpleNamespace(
-                account=account,
-                gross_turnover=Decimal(turnover),
-            ),
-        )
-
-    cadence = SimpleNamespace(
-        shared_decision_slot_sets=(("cadence",),),
-        paths=(path("AI_QUANT", equity="10005", fee="1", turnover="2000", decisions=1),),
-    )
-    all_slots = SimpleNamespace(
-        comparison_id="comparison",
-        evaluation_version="v1",
-        as_of=at,
-        initial_cash=Decimal("10000"),
-        shared_decision_slot_sets=(("cadence",), ("material",)),
-        paths=(path("AI_QUANT", equity="10003", fee="2.5", turnover="5000", decisions=2),),
-    )
-
-    payload = serialize_producer_capital_evidence(
-        ProducerCapitalEvidence(all_slots=all_slots, cadence_only=cadence)  # type: ignore[arg-type]
-    )["producer_capital_evidence"]
-
-    assert payload["shared_panel_count"] == 2
-    assert payload["trigger_policy"] == {
-        "cadence_panel_count": 1,
-        "material_panel_count": 1,
-        "paths": [
-            {
-                "label": "AI_QUANT",
-                "final_equity_delta": "-2",
-                "fee_cost_delta": "1.5",
-                "gross_turnover_delta": "3000",
-                "decision_count_delta": 1,
-            }
-        ],
-    }
 
 
 def test_capital_choice_evidence_has_a_plain_cost_after_projection() -> None:
@@ -183,116 +117,6 @@ def test_empty_trading_cost_evidence_is_explicit_and_non_judgmental() -> None:
             "minimum_holding_seconds": None,
             "median_holding_seconds": None,
             "maximum_holding_seconds": None,
-        }
-    }
-
-
-def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() -> None:
-    evidence = SimpleNamespace(
-        sources=(
-            SimpleNamespace(
-                label="CONTEXT_AI",
-                role="CAPITAL_CANDIDATE",
-                forecast=SimpleNamespace(
-                    assignment_count=4,
-                    successful_replica_count=3,
-                    failed_replica_count=0,
-                    not_required_replica_count=1,
-                    complete_sample_count=3,
-                    mean_max_expected_gross_difference_bps=Decimal("4.25"),
-                    maximum_expected_gross_difference_bps=Decimal("7.80"),
-                    canonical_direction_flip_count=0,
-                ),
-                capital=SimpleNamespace(
-                    replayable_case_count=3,
-                    unreplayable_case_count=0,
-                    cash_flip_count=0,
-                    expression_flip_count=0,
-                    target_change_count=1,
-                    maximum_allocation_fraction_delta=Decimal("0.04"),
-                    maximum_absolute_final_equity_delta=Decimal("1.20"),
-                    maximum_absolute_fee_cost_delta=Decimal("0.40"),
-                    maximum_absolute_turnover_delta=Decimal("800"),
-                ),
-            ),
-            SimpleNamespace(
-                label="AI_QUANT",
-                role="RESEARCH",
-                forecast=SimpleNamespace(
-                    assignment_count=2,
-                    successful_replica_count=2,
-                    failed_replica_count=0,
-                    not_required_replica_count=0,
-                    complete_sample_count=2,
-                    mean_max_expected_gross_difference_bps=Decimal("1.50"),
-                    maximum_expected_gross_difference_bps=Decimal("2.75"),
-                    canonical_direction_flip_count=1,
-                ),
-                capital=SimpleNamespace(
-                    replayable_case_count=2,
-                    unreplayable_case_count=0,
-                    cash_flip_count=0,
-                    expression_flip_count=0,
-                    target_change_count=0,
-                    maximum_allocation_fraction_delta=Decimal("0"),
-                    maximum_absolute_final_equity_delta=Decimal("0"),
-                    maximum_absolute_fee_cost_delta=Decimal("0"),
-                    maximum_absolute_turnover_delta=Decimal("0"),
-                ),
-            ),
-        ),
-    )
-
-    assert serialize_forecast_stability_evidence(evidence) == {
-        "forecast_stability_evidence": {
-            "sources": [
-                {
-                    "label": "CONTEXT_AI",
-                    "role": "CAPITAL_CANDIDATE",
-                    "assignment_count": 4,
-                    "successful_replica_count": 3,
-                    "failed_replica_count": 0,
-                    "not_required_replica_count": 1,
-                    "complete_sample_count": 3,
-                    "mean_expected_gross_difference_bps": "4.25",
-                    "maximum_expected_gross_difference_bps": "7.80",
-                    "direction_flip_count": 0,
-                    "capital": {
-                        "replayable_case_count": 3,
-                        "unreplayable_case_count": 0,
-                        "cash_flip_count": 0,
-                        "expression_flip_count": 0,
-                        "target_change_count": 1,
-                        "maximum_allocation_fraction_delta": "0.04",
-                        "maximum_absolute_final_equity_delta": "1.20",
-                        "maximum_absolute_fee_cost_delta": "0.40",
-                        "maximum_absolute_turnover_delta": "800",
-                    },
-                },
-                {
-                    "label": "AI_QUANT",
-                    "role": "RESEARCH",
-                    "assignment_count": 2,
-                    "successful_replica_count": 2,
-                    "failed_replica_count": 0,
-                    "not_required_replica_count": 0,
-                    "complete_sample_count": 2,
-                    "mean_expected_gross_difference_bps": "1.50",
-                    "maximum_expected_gross_difference_bps": "2.75",
-                    "direction_flip_count": 1,
-                    "capital": {
-                        "replayable_case_count": 2,
-                        "unreplayable_case_count": 0,
-                        "cash_flip_count": 0,
-                        "expression_flip_count": 0,
-                        "target_change_count": 0,
-                        "maximum_allocation_fraction_delta": "0",
-                        "maximum_absolute_final_equity_delta": "0",
-                        "maximum_absolute_fee_cost_delta": "0",
-                        "maximum_absolute_turnover_delta": "0",
-                    },
-                },
-            ]
         }
     }
 

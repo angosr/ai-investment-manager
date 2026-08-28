@@ -86,12 +86,6 @@ function CapitalTimeline({
           {forecastEvaluation?.capital_choice_evidence ? (
             <CapitalChoiceEvidenceLine evidence={forecastEvaluation.capital_choice_evidence} />
           ) : null}
-          {forecastEvaluation?.forecast_stability_evidence ? (
-            <ForecastStabilityLine evidence={forecastEvaluation.forecast_stability_evidence} />
-          ) : null}
-          {forecastEvaluation?.quant_context_posterior_evidence ? (
-            <ForecastEvidenceLine evidence={forecastEvaluation.quant_context_posterior_evidence} />
-          ) : null}
           {assessmentStatus?.quality ? (
             <AssessmentQualityLine quality={assessmentStatus.quality} />
           ) : null}
@@ -173,98 +167,6 @@ function capitalCandidateLabel(instrumentKey: string, direction: "LONG" | "SHORT
 function signedBps(value: string): string {
   const parsed = Number(value);
   return `${parsed >= 0 ? "+" : ""}${bps(value)} bp`;
-}
-
-function ForecastEvidenceLine({
-  evidence,
-}: {
-  evidence: NonNullable<ForecastEvaluationEvidence["quant_context_posterior_evidence"]>;
-}) {
-  if (evidence.non_overlapping_panel_count === 0) return null;
-  const verdict = {
-    NO_SETTLED_SAMPLES: "尚无可评价结果",
-    INSUFFICIENT_EVIDENCE: "结果仍少，暂时无法判断预测能力",
-    ABOVE_BENCHMARK: "目前优于简单预测基线",
-    BELOW_BENCHMARK: "目前落后于简单预测基线",
-    INCONCLUSIVE: "与简单预测基线的差异尚不可靠",
-  }[evidence.status];
-  const coverage = evidence.result_coverage === null
-    ? null
-    : `${(Number(evidence.result_coverage) * 100).toFixed(0)}%`;
-  return (
-    <div className={styles.forecastEvidence}>
-      <b>AI + 量化前瞻验证</b>
-      <span>
-        已结算 {evidence.non_overlapping_panel_count} 个互不重叠的预测时点
-        {coverage ? ` · 按时输出 ${coverage}` : ""}
-        {` · ${verdict}`}
-      </span>
-    </div>
-  );
-}
-
-function ForecastStabilityLine({
-  evidence,
-}: {
-  evidence: NonNullable<ForecastEvaluationEvidence["forecast_stability_evidence"]>;
-}) {
-  const sources = evidence.sources.filter((item) => (
-    item.complete_sample_count > 0 || item.capital.replayable_case_count > 0
-  ));
-  if (sources.length === 0) return null;
-  const unstable = sources.some((item) => (
-    item.direction_flip_count > 0
-    || item.capital.cash_flip_count > 0
-    || item.capital.expression_flip_count > 0
-  ));
-  return (
-    <div className={styles.forecastEvidence}>
-      <b>{unstable ? "同一输入仍可能产生不同判断" : "同一输入复算暂时一致"}</b>
-      {sources.map((item) => {
-        const name = item.label === "CONTEXT_AI" ? "独立 AI" : "AI + 量化";
-        const maximumDifference = item.maximum_expected_gross_difference_bps === null
-          ? null
-          : Number(item.maximum_expected_gross_difference_bps).toFixed(2);
-        const capital = item.capital;
-        const allocationDelta = capital.maximum_allocation_fraction_delta === null
-          ? null
-          : `${(Number(capital.maximum_allocation_fraction_delta) * 100).toFixed(1)}%`;
-        const capitalChanges = capital.cash_flip_count > 0 || capital.expression_flip_count > 0
-            ? `${capital.replayable_case_count} 次资本复算中，${Math.max(
-                capital.cash_flip_count,
-                capital.expression_flip_count,
-              )} 次改变是否持仓、产品或方向`
-            : capital.target_change_count > 0
-              ? `${capital.replayable_case_count} 次资本复算中，${capital.target_change_count} 次改变仓位金额`
-              : `${capital.replayable_case_count} 次资本复算的交易动作一致`;
-        const feeDelta = capital.maximum_absolute_fee_cost_delta === null
-          ? null
-          : Number(capital.maximum_absolute_fee_cost_delta).toFixed(2);
-        const equityDelta = capital.maximum_absolute_final_equity_delta === null
-          ? null
-          : Number(capital.maximum_absolute_final_equity_delta).toFixed(2);
-        const turnoverDelta = capital.maximum_absolute_turnover_delta === null
-          ? null
-          : Number(capital.maximum_absolute_turnover_delta).toFixed(0);
-        return (
-          <span key={item.label}>
-            {name}{item.role === "RESEARCH" ? "（研究）" : ""}：
-            {item.complete_sample_count} 组同输入完整复算
-            {maximumDifference === null ? "" : `，预测的 4 小时收益最大相差 ${maximumDifference} bp`}
-            {item.direction_flip_count > 0 ? `，${item.direction_flip_count} 组方向跨过零点` : ""}
-            ；{capitalChanges}{allocationDelta ? `，仓位最大相差账户权益 ${allocationDelta}` : ""}
-            {feeDelta === null ? "" : `，手续费最大相差 ${feeDelta} USDT`}
-            {equityDelta === null ? "" : `，最终权益最大相差 ${equityDelta} USDT`}
-            {turnoverDelta === null ? "" : `，累计买卖金额最大相差 ${turnoverDelta} USDT`}
-            {item.not_required_replica_count > 0 ? `；${item.not_required_replica_count} 组正式预测未改变量化基准，未重复调用 AI` : ""}
-            {item.failed_replica_count > 0 ? `；${item.failed_replica_count} 次复算未形成预测，已按空仓计算` : ""}
-            {capital.unreplayable_case_count > 0 ? `；${capital.unreplayable_case_count} 次因缺少当时可成交行情无法复算` : ""}。
-          </span>
-        );
-      })}
-      <span>这里只衡量生成稳定性，不代表预测正确或能够盈利。</span>
-    </div>
-  );
 }
 
 function Pager<T>({ feed }: { feed: PagedLive<T> }) {

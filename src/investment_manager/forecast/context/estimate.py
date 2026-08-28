@@ -52,20 +52,6 @@ class ContextForecastStructuredOutput(FrozenModel):
     forecasts: tuple[ContextForecastDraft, ...] = Field(min_length=1)
 
 
-class QuantContextPosteriorDraft(FrozenModel):
-    """Posterior output; a no-op relative to Quant does not need invented evidence."""
-
-    decision_slot_id: str = Field(min_length=1)
-    outcome_probabilities: tuple[ContextForecastProbabilityDraft, ...] = Field(min_length=3)
-    mechanism_contributions: tuple[ContextForecastContributionDraft, ...] = Field(min_length=1)
-    evidence_refs: tuple[str, ...] = ()
-    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
-
-
-class QuantContextPosteriorStructuredOutput(FrozenModel):
-    forecasts: tuple[QuantContextPosteriorDraft, ...] = Field(min_length=1)
-
-
 class ContextForecastComparisonState(FrozenModel):
     """Point-in-time economic cross-check; never an Outcome or capital product."""
 
@@ -368,7 +354,7 @@ def context_forecast_world_model_projection(
 ) -> dict[str, object]:
     """Keep causal decision content; exclude WorldModel maintenance metadata."""
 
-    structural_evidence_ids = _posterior_structural_evidence_ids(packet)
+    structural_evidence_ids = _structural_evidence_ids(packet)
 
     return {
         "assessment_id": assessment.assessment_id,
@@ -419,7 +405,7 @@ def context_forecast_world_model_projection(
     }
 
 
-def _posterior_structural_evidence_ids(packet: DecisionPacket) -> frozenset[str]:
+def _structural_evidence_ids(packet: DecisionPacket) -> frozenset[str]:
     """Separate external causal evidence from repeatable market-state observations."""
 
     eligible_events = {

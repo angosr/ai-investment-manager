@@ -1331,19 +1331,12 @@ def test_dashboard_has_one_current_capital_and_world_model_read_path() -> None:
         "trading_cost_evidence",
     }
     assert methods(dashboard_root / "capital.py", "CapitalDashboardReader").isdisjoint(
-        {*evaluation_methods, "forecast_stability_evidence"}
+        evaluation_methods
     )
     assert evaluation_methods.issubset(
         methods(dashboard_root / "evaluation.py", "EvaluationDashboardReader")
     )
-    producer_methods = methods(
-        dashboard_root / "producer_capital.py",
-        "ProducerCapitalDashboardReader",
-    )
-    assert {"evidence", "forecast_stability_evidence"}.issubset(producer_methods)
-    assert "forecast_stability_evidence" not in methods(
-        dashboard_root / "evaluation.py", "EvaluationDashboardReader"
-    )
+    assert not (dashboard_root / "producer_capital.py").exists()
 
 
 def test_package_root_contains_only_composition_entries() -> None:

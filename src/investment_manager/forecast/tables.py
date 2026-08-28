@@ -97,6 +97,8 @@ Index(
     assessment_executions.c.completed_at,
 )
 
+# Retired experiment ledgers remain in metadata so schema validation and future
+# migrations preserve immutable historical facts. No runtime code reads or writes them.
 context_forecast_stability_assignments = Table(
     "context_forecast_stability_assignments",
     metadata,

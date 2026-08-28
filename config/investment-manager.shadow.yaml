@@ -4,18 +4,12 @@ capital:
   enabled: true
   context_forecast:
     enabled: true
-  # 前瞻研究只比较 Quant 与 AI+Quant，尚未授予任何一方资本权限。
+  # 当前仅运行透明 Quant 研究；没有任何 Forecast producer 获得资本权限。
   candidate_capital_authorizations: []
 
 outcome_evaluation:
-  context_forecast_stability:
-    # v14 在 5 个定时槽与 5 个材料事件槽的 20 个目标上逐位复制 Quant，
-    # 没有可复算的预测增量；退役运行调用，历史事实继续由统一账本保存。
-    enabled: false
   quant_baseline:
     enabled: true
-  quant_context_posterior:
-    enabled: false
 
 codex_runtime:
   enabled: true

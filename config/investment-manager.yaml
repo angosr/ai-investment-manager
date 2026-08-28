@@ -380,13 +380,6 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   research_poll_seconds: 5
-  context_forecast_stability:
-    version: context-forecast-stability-forward-v2
-    enabled: false
-    # 先冻结义务；只有正式 posterior 改变量化基准时才运行精确输入副本。
-    activated_at: 2026-08-27T12:00:00Z
-    replicas_per_input: 1
-    decision_relevant_only: true
   quant_baseline:
     version: transparent-ordinal-quant-v8
     enabled: false
@@ -398,11 +391,6 @@ outcome_evaluation:
       - outcome_family_id: paxg-price-directional-4h
         artifact_id: quant_forecast_artifact_c730529eb5cd931235d8
         relative_path: evidence/quant-forecasts/quant_forecast_artifact_c730529eb5cd931235d8.json
-  quant_context_posterior:
-    version: quant-context-posterior-forward-v14
-    enabled: false
-    producer_id: codex-quant-context-posterior
-    activated_at: 2026-08-28T10:00:00Z
 
 governance:
   version: governance-cycle-v2

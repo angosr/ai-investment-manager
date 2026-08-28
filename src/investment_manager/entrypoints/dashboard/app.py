@@ -31,8 +31,6 @@ from investment_manager.entrypoints.dashboard.evaluation import (
     EvaluationDashboardReader,
     serialize_capital_choice_evidence,
     serialize_product_payoff_evidence,
-    serialize_quant_context_pair_evidence,
-    serialize_quant_context_posterior_evidence,
     serialize_quant_forecast_evidence,
     serialize_trading_cost_evidence,
 )
@@ -42,11 +40,6 @@ from investment_manager.entrypoints.dashboard.pagination import (
     PageCursor,
     decode_page_cursor,
     page_slice,
-)
-from investment_manager.entrypoints.dashboard.producer_capital import (
-    ProducerCapitalDashboardReader,
-    serialize_forecast_stability_evidence,
-    serialize_producer_capital_evidence,
 )
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.entrypoints.dashboard.resources import (
@@ -92,7 +85,6 @@ def create_app(
     assessment_store = SqlContextAssessmentStore(engine)
     capital_reader = CapitalDashboardReader(engine, config)
     evaluation_reader = EvaluationDashboardReader(engine, config)
-    producer_capital_reader = ProducerCapitalDashboardReader(engine, config)
     prime_cpu_sampler()
     temporal_client = None
     temporal_lock = asyncio.Lock()
@@ -167,25 +159,11 @@ def create_app(
         now = datetime.now(UTC)
         (
             quant_evidence,
-            posterior_evidence,
-            posterior_pair_evidence,
-            producer_capital_evidence,
-            stability,
             product_payoff,
             capital_choice,
             trading_cost,
         ) = await asyncio.gather(
             run_in_threadpool(evaluation_reader.quant_forecast_evidence, now=now),
-            run_in_threadpool(
-                evaluation_reader.quant_context_posterior_evidence,
-                now=now,
-            ),
-            run_in_threadpool(evaluation_reader.quant_context_pair_evidence),
-            run_in_threadpool(producer_capital_reader.evidence, now=now),
-            run_in_threadpool(
-                producer_capital_reader.forecast_stability_evidence,
-                now=now,
-            ),
             run_in_threadpool(evaluation_reader.product_payoff_evidence),
             run_in_threadpool(evaluation_reader.capital_choice_evidence),
             run_in_threadpool(evaluation_reader.trading_cost_evidence),
@@ -193,10 +171,6 @@ def create_app(
         return _json(
             {
                 **serialize_quant_forecast_evidence(quant_evidence),
-                **serialize_quant_context_posterior_evidence(posterior_evidence),
-                **serialize_quant_context_pair_evidence(posterior_pair_evidence),
-                **serialize_producer_capital_evidence(producer_capital_evidence),
-                **serialize_forecast_stability_evidence(stability),
                 **serialize_product_payoff_evidence(product_payoff),
                 **serialize_capital_choice_evidence(capital_choice),
                 **serialize_trading_cost_evidence(trading_cost),

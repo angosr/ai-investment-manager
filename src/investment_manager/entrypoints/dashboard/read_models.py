@@ -772,10 +772,10 @@ class DashboardReader:
             ).scalar_one_or_none()
             if latest_assessment_completed is not None:
                 latest_assessment_completed = database_utc(latest_assessment_completed)
-            posterior = self._config.outcome_evaluation.quant_context_posterior
+            quant = self._config.outcome_evaluation.quant_baseline
             forecast_producer_id = (
-                posterior.producer_id
-                if posterior is not None and posterior.enabled
+                quant.producer_id
+                if quant is not None and quant.enabled
                 else "DISABLED"
             )
             overdue_analyses = (
