@@ -255,7 +255,7 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: portfolio-context-forecast-v35
+    version: portfolio-context-forecast-v36
     enabled: false
     # 世界认知保留 high；后验只把已冻结联合解释与量化先验映射为三份概率分布。
     reasoning_effort: medium
@@ -371,7 +371,7 @@ capital:
           - {bucket_id: EXTREME_GAIN, probability: "0.05"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v52
+  version: typed-outcome-settlement-v53
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   product_payoff_version: product-payoff-outcome-v1
