@@ -98,12 +98,14 @@ class _PointInTimeMarketStore:
         perpetual_quote=None,
         funding_settlements=(),
         cross_venue_quotes=(),
+        spot_quote_lag_seconds=0,
     ) -> None:
         self.market = market
         self.perpetual_state = perpetual_state
         self.perpetual_quote = perpetual_quote
         self.settlements = funding_settlements
         self.cross_venue_quotes = cross_venue_quotes
+        self.spot_quote_lag_seconds = spot_quote_lag_seconds
 
     def snapshot(self, *, cycle_id, symbol, interval, as_of, bar_window, source):
         assert symbol == self.market.symbol
@@ -126,7 +128,7 @@ class _PointInTimeMarketStore:
 
     def latest_spot_quote(self, *, instrument, evaluation_at, visible_at):
         assert instrument.symbol == self.market.symbol
-        observed_at = evaluation_at
+        observed_at = evaluation_at - timedelta(seconds=self.spot_quote_lag_seconds)
         return MarketQuote(
             quote_id=stable_id("aligned_spot_quote", instrument.key, observed_at),
             symbol=instrument.symbol,
@@ -600,6 +602,33 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
     evidence = SqlStateEvidenceStore(engine).get(evidence_ref)
     assert evidence is not None
     assert evidence[0] == StateEvidenceKind.DERIVATIVE
+
+    # A locally incoherent derivative panel is an unavailable evidence domain,
+    # not grounds to discard an otherwise valid structural-event analysis.
+    market_store.spot_quote_lag_seconds = 31
+    degraded_at = OBSERVED_AT + timedelta(seconds=1)
+    degraded = preparation.prepare(
+        analysis_id="derivative-review-degraded",
+        as_of=degraded_at,
+        mandate=mandate,
+        review_requests=(
+            PacketReviewRequest.create(
+                requested_at=degraded_at,
+                reason="政策事件触发复核",
+            ),
+        ),
+    )
+
+    assert degraded.status == PacketPreparationStatus.READY
+    assert degraded.packet is not None
+    assert degraded.packet.asset_states
+    assert degraded.packet.derivative_states == ()
+    assert degraded.packet.data_quality_codes == (
+        "DERIVATIVE_CONTEXT.BTCUSDT.QUOTE_SKEW",
+    )
+    assert decision_packet_analysis_projection(degraded.packet)["data_quality_codes"] == [
+        "DERIVATIVE_CONTEXT.BTCUSDT.QUOTE_SKEW"
+    ]
 
 
 def test_packet_preparation_exact_retry_recovers_persisted_delta(

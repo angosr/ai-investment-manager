@@ -379,7 +379,6 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     for field_name in (
         "content_hash",
         "coverage_gap_codes",
-        "data_quality_codes",
         "missing_fact_revision_ids",
         "mandate_version",
         "omitted_fact_revision_ids",
@@ -392,6 +391,8 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "trigger_ids",
     ):
         payload.pop(field_name)
+    if not packet.data_quality_codes:
+        payload.pop("data_quality_codes")
     payload["asset_states"] = _analysis_state_table(
         packet.asset_states,
         (

@@ -14,6 +14,7 @@ from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.features import (
+    DerivativeContextUnavailable,
     FeatureEngine,
     build_derivative_context_snapshot,
 )
@@ -284,7 +285,7 @@ class DecisionPacketPreparation:
         if stale_symbols:
             raise ValueError("DecisionPacket 行情已过期: " + ", ".join(stale_symbols))
         feature_snapshots = tuple(self._features.compute(market) for market in markets)
-        derivatives = self._derivative_context(
+        derivatives, derivative_quality_codes = self._derivative_context(
             analysis_id=analysis_id,
             as_of=as_of,
             mandate=mandate,
@@ -313,7 +314,7 @@ class DecisionPacketPreparation:
             intelligence_affected_assets=intelligence_affected_assets,
             market_shock_symbols=market_shock_symbols,
             market_affected_assets=market_affected_assets,
-            data_quality_codes=(),
+            data_quality_codes=derivative_quality_codes,
             coverage_gap_codes=coverage_gap_codes,
             information_coverage=information_coverage,
         )
@@ -393,9 +394,9 @@ class DecisionPacketPreparation:
         as_of: datetime,
         mandate: AnalysisMandate,
         markets: tuple[MarketSnapshot, ...],
-    ) -> tuple[DerivativeContextSnapshot, ...]:
+    ) -> tuple[tuple[DerivativeContextSnapshot, ...], tuple[str, ...]]:
         if not self._perpetual_by_symbol:
-            return ()
+            return (), ()
         mandate_symbols = tuple(item.market_symbol for item in mandate.observation_assets)
         missing_symbols = tuple(
             symbol for symbol in mandate_symbols if symbol not in self._perpetual_by_symbol
@@ -406,6 +407,7 @@ class DecisionPacketPreparation:
             )
         market_by_symbol = {item.symbol: item for item in markets}
         snapshots: list[DerivativeContextSnapshot] = []
+        unavailable: list[str] = []
         for asset in mandate.observation_assets:
             instrument = self._perpetual_by_symbol[asset.market_symbol]
             state = self._market_store.latest_perpetual_state(
@@ -418,7 +420,10 @@ class DecisionPacketPreparation:
                 visible_at=as_of,
             )
             if state is None or quote is None:
-                raise ValueError(f"DecisionPacket 缺少 {asset.market_symbol} Perpetual 状态或报价")
+                unavailable.append(
+                    f"DERIVATIVE_CONTEXT.{asset.market_symbol}.STATE_OR_QUOTE_MISSING"
+                )
+                continue
             if (
                 max(
                     (as_of - state.observed_at).total_seconds(),
@@ -426,7 +431,8 @@ class DecisionPacketPreparation:
                 )
                 > self._maximum_perpetual_age_seconds
             ):
-                raise ValueError(f"DecisionPacket {asset.market_symbol} Perpetual 行情已过期")
+                unavailable.append(f"DERIVATIVE_CONTEXT.{asset.market_symbol}.STALE")
+                continue
             aligned_spot_quote = self._market_store.latest_spot_quote(
                 instrument=InstrumentId.binance_spot(
                     symbol=asset.market_symbol,
@@ -437,7 +443,10 @@ class DecisionPacketPreparation:
                 visible_at=as_of,
             )
             if aligned_spot_quote is None:
-                raise ValueError(f"DecisionPacket 缺少 {asset.market_symbol} 点时对齐 Spot 报价")
+                unavailable.append(
+                    f"DERIVATIVE_CONTEXT.{asset.market_symbol}.ALIGNED_SPOT_MISSING"
+                )
+                continue
             settlements = self._market_store.funding_settlements(
                 instrument=instrument,
                 start=as_of - timedelta(hours=self._funding_history_lookback_hours),
@@ -457,8 +466,8 @@ class DecisionPacketPreparation:
                     for item in cross_venue_quotes
                 ):
                     cross_venue_quotes = ()
-            snapshots.append(
-                build_derivative_context_snapshot(
+            try:
+                snapshot = build_derivative_context_snapshot(
                     cycle_id=analysis_id,
                     asset=asset.asset,
                     spot=market_by_symbol[asset.market_symbol],
@@ -471,8 +480,19 @@ class DecisionPacketPreparation:
                     cross_venue_quotes=cross_venue_quotes,
                     maximum_cross_venue_age_seconds=(self._maximum_cross_venue_spot_age_seconds),
                 )
-            )
-        return tuple(sorted(snapshots, key=lambda item: item.asset))
+            except DerivativeContextUnavailable as exc:
+                unavailable.append(
+                    f"DERIVATIVE_CONTEXT.{asset.market_symbol}.{exc.reason_code}"
+                )
+            else:
+                snapshots.append(snapshot)
+        if unavailable:
+            # Derivative states are one internally comparable evidence domain.
+            # A partial cross-asset panel can create false relative signals, so
+            # freeze the whole domain as unavailable while retaining policy,
+            # rates, spot and other independent evidence in this same packet.
+            return (), tuple(sorted(unavailable))
+        return tuple(sorted(snapshots, key=lambda item: item.asset)), ()
 
     def _has_predecessor(
         self,

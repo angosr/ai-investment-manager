@@ -32,6 +32,14 @@ if TYPE_CHECKING:
     from investment_manager.market.repository import MarketDataStore
 
 
+class DerivativeContextUnavailable(ValueError):
+    """A coherent point-in-time derivative snapshot cannot be formed."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 class FeatureEngine:
     def __init__(self, policy: FeaturePolicy) -> None:
         self._policy = policy
@@ -126,7 +134,10 @@ def build_derivative_context_snapshot(
     if abs(
         (quote.observed_at - aligned_spot_quote.observed_at).total_seconds()
     ) > maximum_quote_skew_seconds:
-        raise ValueError("Spot/Perpetual 报价时间偏差过大")
+        raise DerivativeContextUnavailable(
+            "QUOTE_SKEW",
+            "Spot/Perpetual 报价时间偏差过大",
+        )
     visible, funding = _funding_summary(
         instrument=state.instrument,
         as_of=spot.as_of,
