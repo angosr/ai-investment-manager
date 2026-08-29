@@ -143,7 +143,11 @@ class ContextPredicateOperator(StrEnum):
 
 class ContextCausalNode(FrozenModel):
     statement: str = Field(min_length=1, max_length=600)
-    evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=12)
+    # A causal chain contains both observed anchors and explicitly inferred
+    # transmission steps. Requiring every step to pretend it has a direct
+    # observation conflates evidence with inference; the assessment contract
+    # instead requires evidence for the mechanism as a whole.
+    evidence_ids: tuple[str, ...] = Field(max_length=12)
 
     @model_validator(mode="after")
     def evidence_must_be_unique(self):

@@ -286,6 +286,72 @@ def _world_model_output() -> WorldModelStructuredOutput:
     )
 
 
+def test_world_model_allows_inferred_causal_node_without_direct_evidence(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    output = _world_model_output()
+    mechanism = output.world_model.mechanisms[0]
+    inferred_chain = (
+        mechanism.causal_chain[0],
+        mechanism.causal_chain[1].model_copy(update={"evidence_ids": ()}),
+    )
+
+    assessment = finalize_world_model(
+        output=output.model_copy(
+            update={
+                "world_model": output.world_model.model_copy(
+                    update={
+                        "mechanisms": (
+                            mechanism.model_copy(update={"causal_chain": inferred_chain}),
+                        )
+                    }
+                )
+            }
+        ),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.mechanisms[0].causal_chain[1].evidence_ids == ()
+
+
+def test_world_model_rejects_mechanism_without_any_direct_evidence(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    output = _world_model_output()
+    mechanism = output.world_model.mechanisms[0]
+    inferred_chain = tuple(
+        node.model_copy(update={"evidence_ids": ()})
+        for node in mechanism.causal_chain
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="至少需要一个直接证据锚点",
+    ):
+        finalize_world_model(
+            output=output.model_copy(
+                update={
+                    "world_model": output.world_model.model_copy(
+                        update={
+                            "mechanisms": (
+                                mechanism.model_copy(update={"causal_chain": inferred_chain}),
+                            )
+                        }
+                    )
+                }
+            ),
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
 def _previous_world_model(as_of: datetime, *, assessment_id: str) -> PacketPreviousContext:
     predicate = PacketPreviousVerificationPredicate(operator="GT", value=Decimal("0"))
     return PacketPreviousContext(
