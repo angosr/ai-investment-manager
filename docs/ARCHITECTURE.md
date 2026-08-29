@@ -316,11 +316,13 @@ Binance 同账户现金收益可行性已经完成一次只读核验：USDT Flex
 
 预测时域本身属于 ForecastContract 和研究假设，不能由 AI 或运行时在看到当轮行情后选择。候选时域必须同时来自因子的原生经济持续期、可获得的独立样本和现实往返成本；当前合同时域的预测幅度长期小于成本时，应停止或另行预登记更匹配的合同，而不是事后提高入场阈值、延长持仓或搜索相邻周期。时域研究一次只揭示事前指定的目标、特征窗口和一个候选终点，并把不同 UTC 锚点分别视为相关稳健性切片；历史通过仍只允许建立新的前瞻研究行为，不能把较长时域的回测收益直接授予现役 4 小时生产者。
 
+Quant prior 的研究资格与资本 Alpha 资格是两个不同问题。prior 首先是一份不读取 WorldModel、点时可重建且与 ForecastContract 同时域的统计分布；最简单的滚动无条件分布本身就可以承担这一对照，只要其样本、可见时间、更新规则和校准误差完整冻结。技术或资金流模型若不能优于它，就删除该模型而回到简单 prior，不能因此阻止检验 WorldModel 是否相对简单 prior 增加信息。反过来，prior 或 posterior 的 proper score 改善都不构成资本资格：只有对应完整政策在相同产品、延迟、成本和风险下产生费用后增量，才允许进入 Portfolio。这样既不要求传统 Quant 在 AI 实验开始前已经解决盈利问题，也不把一个诚实但无 Alpha 的基准误写成可交易策略。
+
 AI + Quant 行为读取同一 State、WorldModel 和 Quant prior，并输出唯一 posterior。模型可见 Quant 投影暴露实际因子值、胜出 prior、程序计算的适用度、可靠性与候选分歧摘要，使 AI 能识别“历史模型未覆盖的结构变化”，但不把离线落选候选的完整分布重新交给 AI 做隐式择模。凡能从行情、主动流、OI、funding、仓位、basis 或跨资产价格状态重复计算的方向信息，都必须先成为点时可回测的 Quant 候选并经程序筛选；尚未进入 Quant prior 的技术状态只能验证外部机制是否正在传导，不能由 AI 临场解释成第二套技术信号。WorldModel 中完全由这类市场状态构成的机制只保留认知与验证价值，不得实质改变 posterior。AI 只能依据有时间边界、并至少由一项非市场状态事实或事件支撑的政策、资金流、制度变化和跨域因果机制修正最终 bucket，不能改模型权重、点名启停算法或再建立一套 regime 分类。输出必须逐 bucket 说明相对 prior 的概率变化，并把每次实质偏离绑定到该结构证据、竞争解释和反向证据；当前 cell 样本稀薄或最弱阶段没有增量时，AI 不得把模型的平均样本外分数包装成确定性确信。未形成可验证增量时原样保持 prior，而不是为展示 AI 价值强行偏离。AI 不重新计算因子、收益、波动、成本、仓位或订单。Quant 期望毛收益只帮助 AI 理解 prior 的方向和尺度；规范 Forecast 始终预测同一 gross economic Outcome，产品 break-even、预测延迟和完整未来成本只由后续统一 Product/Portfolio 与资本评价计算，AI 不判断净可交易性，也不能在三处各维护一套成本公式。
 
-研究期的 challenger 不能成为正式资金链前的第二个同步 Codex 调用。当前没有 AI Forecast challenger，因此仓库不保留 assignment、runner、稳定性复算或比较面板的禁用实现。未来只有新假设先在离线点时数据上通过预注册验证后，才允许以一个纵向切片重新实现：同一 DecisionSlot 和 information cutoff、唯一冻结输入、独立 Evaluation worker、公共 Forecast/Outcome 账本及明确 `NO_ESTIMATE`；实现必须直接绑定合同、WorldModel、Quant、Prompt、Schema 和 Codex 行为身份，不得恢复纯 Context 前置调用或第二套结果系统。研究调用不能阻塞 Trigger、行情、结算和账户对账；同一时点不能保留两个获授权生产者并行投票。
+研究期的 challenger 不能成为正式资金链前的第二个同步 Codex 调用。当前没有 AI Forecast challenger，因此仓库不保留 assignment、runner、稳定性复算或比较面板的禁用实现。未来新假设必须先用离线点时数据证明合同、Outcome、简单 prior、缺失语义和计算链没有泄漏；离线历史只能否决统计模型或验证 AI 管线，不能证明 AI Alpha。随后才允许以一个纵向切片重新实现：同一 DecisionSlot 和 information cutoff、唯一冻结输入、独立 Evaluation worker、公共 Forecast/Outcome 账本及明确 `NO_ESTIMATE`；实现必须直接绑定合同、WorldModel、prior、Prompt、Schema 和 Codex 行为身份，不得恢复纯 Context 前置调用或第二套结果系统。研究调用不能阻塞 Trigger、行情、结算和账户对账；同一时点不能保留两个获授权生产者并行投票。
 
-前瞻研究的长期对照只有两种方法：纯 Quant prior 与 AI + Quant posterior；冻结的现有 Context 行为仅作为迁移期历史参照，不扩建为第三套长期架构。它们共享槽、信息截止、完成后 Outcome 起点、bucket、缺失语义和评分；分别报告覆盖、proper score、校准、预测幅度与真实收益的单调性、同输入离散度，以及把相同预测映射到当时合法产品后的费用后资本反事实。样本数量只描述不确定性，不构成固定交易门槛。若 Quant 不能优于滚动无条件/简单市场基线，删除该模型假设；若 AI + Quant 不能相对 Quant 提供前瞻增量，删除 posterior 复杂度；只有获授权的唯一行为继续进入正式 Portfolio。
+前瞻研究的长期对照只有两种方法：不读取 WorldModel 的透明 prior 与 AI + prior posterior；冻结的现有 Context 行为仅作为历史参照，不扩建为第三套长期架构。它们共享槽、信息截止、完成后 Outcome 起点、bucket、缺失语义和评分；分别报告覆盖、proper score、校准、预测幅度与真实收益的单调性、同输入离散度，以及把相同预测映射到当时合法产品后的费用后资本反事实。样本数量只描述不确定性，不构成固定交易门槛。若一个主动 Quant 模型不能优于滚动无条件/简单市场基线，删除该模型假设并让简单基线继续承担 prior；若 AI posterior 不能相对同槽 prior 提供前瞻增量，删除 posterior 复杂度；只有通过完整费用后资本评价的唯一行为才进入正式 Portfolio。
 
 生产者之间的增量只能在同一 `DecisionSlot`、同一已结算 Outcome 且双方都给出概率分布的交集上配对计算，不能拿各自覆盖不同资产、事件来源或时期的平均分直接相减。配对报告同时保留各自全部义务的 Forecast、`NO_ESTIMATE` 与覆盖率，使低覆盖不能靠缩小交集获得好成绩；无论单生产者评分还是生产者配对，同一联合调用的多个目标都先在时点内等权聚合，再按不重叠时间区间计算点估计与不确定性，连续收益误差和相关性也遵守同一面板口径，不能把相关资产数量冒充独立样本。资产级 Forecast 与 Outcome 仍分别永久保留，面板只是现有账本的只读统计投影，不新增结果表、Worker、调度或晋升门槛。
 
@@ -334,7 +336,7 @@ AI + Quant 行为读取同一 State、WorldModel 和 Quant prior，并输出唯�
 
 因此一次结构合法的 AI 输出只是随机 Forecast 行为的一次样本，不是已经校准的确定性收益率。研究资本权限必须把这种行为作为整体评价，并把精确输入离散度纳入估计不确定性；稳定性不足时可以继续保存 Forecast、产品反事实和到期 Outcome，但不能把单次采样恰好越过零点解释为可靠 Edge。若未来用多副本聚合降低推理方差，副本数量、并发与失败规则、聚合函数和最终唯一 Forecast 身份必须共同构成一个新的预登记 producer behavior，完整组件输出只作审计；该行为仍须以真实前瞻、费用后资本结果证明增量，不能在下单前临时重问到“答案一致”为止。
 
-WorldModel 的投资价值由同槽 Quant prior 与 AI+Quant posterior 的前瞻差异识别：Quant 表达点时市场状态和历史关系，posterior 只增加 WorldModel 所表达的结构变化。两者共享 State、合同、信息截止和 Outcome，posterior 的输入与输出在调用前持久化；逐资产配对结算，但一次联合调用只形成一个独立时间区间，不能把资产数冒充独立样本数。对照只进入 Evaluation 逻辑账户，不进入 Portfolio。Forecast 相对基线的均值改善只是点估计；资本权限还必须读取依赖结构、校准、覆盖率、完整搜索历史和多种市场状态下的成本后结果。若无法把增量归因于 WorldModel，而 posterior 只增加延迟或噪声，则删除 posterior 复杂度，不再增加第三条无 WorldModel 的 Codex 消融链。
+WorldModel 的投资价值由同槽透明 prior 与 AI posterior 的前瞻差异识别：prior 只表达截止前已知的基础分布和已通过的程序化市场关系，posterior 只增加 WorldModel 所表达的结构变化。两者共享 State、合同、信息截止和 Outcome，posterior 的输入与输出在调用前持久化；逐资产配对结算，但一次联合调用只形成一个独立时间区间，不能把资产数冒充独立样本数。对照只进入 Evaluation 逻辑账户，不进入 Portfolio。Forecast 相对基线的均值改善只是点估计；资本权限还必须读取依赖结构、校准、覆盖率、完整搜索历史和多种市场状态下的成本后结果。若无法把增量归因于 WorldModel，而 posterior 只增加延迟或噪声，则删除 posterior 复杂度，不再增加第三条无 WorldModel 的 Codex 消融链。
 
 Forecast 的采样政策也是行为的一部分。Cadence 是不依赖市场状态的覆盖义务；每个固定时点都必须保留独立的仅定时槽。材料来源回答“满足冻结条件时是否及时重估”，不能消费、提前履行或改写 cadence 义务；否则重大事件附近的固定样本会被选择性删除，既污染一般预测能力，也无法构造仅定时资本反事实。每个终态按仅定时或仅材料来源分层计算覆盖率、评分和不确定性；共同 Outcome 和重叠时域按预登记时间簇处理，不能把相关事件当成多个独立成功。
 
