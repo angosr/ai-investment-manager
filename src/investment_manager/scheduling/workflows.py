@@ -211,8 +211,7 @@ class TriggerCoordinatorWorkflow:
                     self._frozen_retry_batch = None
                     self._active_batch_id = None
                 self._input_retry_not_before = deferred_until or (
-                    workflow.now()
-                    + timedelta(seconds=int(self._settings["retry_maximum_seconds"]))
+                    workflow.now() + timedelta(seconds=int(self._settings["retry_maximum_seconds"]))
                 )
                 continue
             self._frozen_retry_batch = None
@@ -276,10 +275,10 @@ class TriggerCoordinatorWorkflow:
             )
         except ActivityError as exc:
             cause = exc.cause
-            if (
-                isinstance(cause, ApplicationError)
-                and cause.type in {"InvalidTriggerBatch", "PermanentDomainError"}
-            ):
+            if isinstance(cause, ApplicationError) and cause.type in {
+                "InvalidTriggerBatch",
+                "PermanentDomainError",
+            }:
                 return None, None, False, True
             return None, None, False, False
         retry_frozen_batch = result.get("retry_frozen_batch") is True
@@ -302,7 +301,7 @@ class TriggerCoordinatorWorkflow:
     @staticmethod
     async def _execute_dispatch(dispatch: AnalysisDispatchRequest) -> bool:
         try:
-            await workflow.execute_child_workflow(
+            result = await workflow.execute_child_workflow(
                 dispatch.workflow_name,
                 dispatch.payload,
                 id=dispatch.workflow_id,
@@ -313,7 +312,13 @@ class TriggerCoordinatorWorkflow:
             )
         except ChildWorkflowError:
             return False
-        return True
+        # Child workflows use FAILED only when durable orchestration could not
+        # produce a business terminal (for example Forecast or NO_ESTIMATE).
+        # A normally returned FAILED must therefore remain visible in coordinator
+        # health just like an exception; business terminals such as NO_ESTIMATE
+        # and NO_ASSESSMENT are successful dispatch completion.
+        status = result.get("status") if isinstance(result, dict) else None
+        return isinstance(status, str) and status != "FAILED"
 
     def _accepts(self, trigger: dict[str, Any]) -> bool:
         assert self._plan is not None
@@ -385,8 +390,7 @@ class TriggerCoordinatorWorkflow:
         if anchor is None:
             anchor = (
                 started_at - timedelta(seconds=int(heartbeat))
-                if heartbeat is not None
-                and workflow.patched("immediate-initial-heartbeat-v1")
+                if heartbeat is not None and workflow.patched("immediate-initial-heartbeat-v1")
                 else started_at
             )
         if heartbeat is not None and now >= anchor + timedelta(seconds=int(heartbeat)):
@@ -410,9 +414,7 @@ class TriggerCoordinatorWorkflow:
             unseen = trigger.trigger_id not in self._seen
             if unseen:
                 self._remember(trigger.trigger_id)
-            if trigger.trigger_id not in self._pending and (
-                durable_heartbeat or unseen
-            ):
+            if trigger.trigger_id not in self._pending and (durable_heartbeat or unseen):
                 self._pending[trigger.trigger_id] = trigger.model_dump(mode="json")
 
     def _discard_expired(self, now: datetime) -> None:
