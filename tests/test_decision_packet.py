@@ -2207,7 +2207,7 @@ def test_previous_world_model_projection_bounds_historical_test_inventory(
     )
 
 
-def test_world_model_continuous_cause_requires_connected_fact_test(
+def test_world_model_allows_connected_downstream_response_test(
     app_config,
     replay_input,
 ) -> None:
@@ -2234,9 +2234,49 @@ def test_world_model_continuous_cause_requires_connected_fact_test(
         }
     )
 
+    assessment = finalize_world_model(
+        output=output,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.mechanisms[0].verification_tests[0].feature_selector == (
+        "asset_state:BTC.return_fraction"
+    )
+
+
+def test_world_model_rejects_test_unrelated_to_cited_evidence_assets(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    continuous = packet.facts[0].model_copy(
+        update={
+            "fact_type": "US_TREASURY_CASH_SNAPSHOT",
+            "claim": "tga_change_5d_usd_m=-31510 USD_MILLIONS.",
+            "affected_assets": ("ETH",),
+        }
+    )
+    packet = packet.model_copy(update={"facts": (continuous, *packet.facts[1:])})
+    mechanism = _world_model_output().world_model.mechanisms[0]
+    causal_chain = tuple(
+        node.model_copy(update={"evidence_ids": (continuous.revision_id,)})
+        for node in mechanism.causal_chain
+    )
+    output = _world_model_output().model_copy(
+        update={
+            "world_model": _world_model_output().world_model.model_copy(
+                update={
+                    "mechanisms": (mechanism.model_copy(update={"causal_chain": causal_chain}),)
+                }
+            )
+        }
+    )
+
     with pytest.raises(
         ContextAssessmentContractError,
-        match="同一事实类型的数值测试因果路径",
+        match="与所引证据或受影响资产相连",
     ):
         finalize_world_model(
             output=output,
