@@ -611,6 +611,30 @@ def trigger_reconsideration(
     return TriggerTiming(reconsider_at=max(earliest, current))
 
 
+def select_trigger_batch_members(
+    pending: Sequence[Mapping[str, Any]],
+    *,
+    maximum_batch_size: int,
+) -> tuple[Mapping[str, Any], ...]:
+    """Keep immediate control/downstream work from bypassing ordinary cooldowns."""
+
+    if maximum_batch_size < 1:
+        raise ValueError("TriggerBatch 最大成员数必须为正数")
+    ordered = tuple(
+        sorted(
+            pending,
+            key=lambda item: (
+                -int(item.get("priority", 0)),
+                str(item.get("observed_at", "")),
+                str(item.get("trigger_id", "")),
+            ),
+        )
+    )
+    if ordered and int(ordered[0].get("priority", 0)) == 100:
+        ordered = tuple(item for item in ordered if int(item.get("priority", 0)) == 100)
+    return ordered[:maximum_batch_size]
+
+
 def _trigger_payload_time(value: str | datetime) -> datetime:
     parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
     return require_utc(parsed)

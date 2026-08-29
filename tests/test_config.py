@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-capital-shadow-v90"
+    assert config.pipeline.version == "world-capital-shadow-v91"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -158,7 +158,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "forecast_baseline_7edf2cf090b47cdad2e5"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v38"
+    assert config.trigger.version == "analysis-trigger-v39"
     assert config.trigger.debounce_seconds == 300
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v15"
     assert tuple(

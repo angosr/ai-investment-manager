@@ -380,7 +380,7 @@ Scheduling 只表达“何时重新运行哪项用例”，触发来源只有四
 
 组合只有一个 Scheduling owner 和一份现役 TriggerPlan。行情、事实与信息仍覆盖全部 observation assets，但在形成触发时把实际受影响资产写入 `affected_symbols`，统一投递给组合 owner；不能为每个观察品种复制 heartbeat、事件规则、Forecast cadence 或主 Agent 控制面。非 owner 品种只是 Evidence/State 的观察维度，不拥有第二个 AI、Forecast 或资本协调器。这样既保留跨资产冲击来源，又避免多个 symbol coordinator 对同一组合重复空转或产生相互竞争的调度状态。
 
-日历外 Intelligence Event 的四项裁决必须分离：`attention_priority` 只负责有界输入排序；`immediate_review_eligible` 只负责是否唤醒 WorldModel；`directional_support_eligible` 负责能否支持因果链；Trigger 冻结的 `material_forecast_eligible` 才负责能否建立材料 Forecast 槽。来源可靠度不得乘进注意力优先级，否则最需要核验的重大低等级线索会在 AI 之前被静默删除；反过来，通过注意力门或立即复核资格也不构成事实确认、材料 Delta、Forecast 槽或资本权限。直接触发的低等级线索进入本次冻结信息面板供核验，但明确不可单独支持方向，后续不能在没有新 Evidence 时成为现役引用；同批强弱线索只能把强 Evidence 身份绑定到材料槽。不得再按 `INTELLIGENCE_INSERTED` 类型整体创建材料样本。
+日历外 Intelligence Event 的四项裁决必须分离：`attention_priority` 只负责有界输入排序；`immediate_review_eligible` 只负责是否唤醒 WorldModel；`directional_support_eligible` 负责能否支持因果链；Trigger 冻结的 `material_forecast_eligible` 才负责能否建立材料 Forecast 槽。来源可靠度不得乘进注意力优先级，否则最需要核验的重大低等级线索会在 AI 之前被静默删除；反过来，通过注意力门或立即复核资格也不构成事实确认、材料 Delta、Forecast 槽或资本权限。直接触发的低等级线索进入本次冻结信息面板供核验，但明确不可单独支持方向，后续不能在没有新 Evidence 时成为现役引用；同批强弱线索只能把强 Evidence 身份绑定到材料槽。不得再按 `INTELLIGENCE_INSERTED` 类型整体创建材料样本。优先级 100 的内部下游通知或明确立即触发可以即时形成自己的批次，但不得把仍在合并或冷却窗口内的普通情报一起带过时间边界；普通情报随后仍按原 TriggerPlan 重算，避免 WorldModel 输出反过来放大 AI 调用频率。
 
 Forecast 槽的来源只有两种：合同 cadence，以及冻结触发政策产生的材料 `State/Delta`。每个槽只有一个来源、一个身份、一个 information cutoff、一次生产义务和一个终态。完成期限、Outcome、生产者行为和缺失处理都必须在结果可见前确定；每个合格槽都必须以 Forecast 或 `NO_ESTIMATE` 终结。事件槽不是临时插单，也不能只挑 AI 想交易的事件；它是一个显式的条件采样机制，永远不是定时样本的替代品。
 

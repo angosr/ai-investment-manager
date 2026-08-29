@@ -33,6 +33,7 @@ from investment_manager.scheduling.models import (
     build_trigger_plan_patch,
     carry_forward_trigger_plan,
     decide_analysis_call_admission,
+    select_trigger_batch_members,
     trigger_plan_accepts,
     trigger_reconsideration,
     trigger_rule_value,
@@ -477,6 +478,65 @@ def test_shared_trigger_timing_has_no_hourly_budget(app_config, replay_input) ->
     )
 
     assert timing.reconsider_at == now
+
+
+def test_immediate_internal_batch_does_not_drag_news_through_cooldown(
+    app_config, replay_input
+) -> None:
+    now = replay_input.market.as_of
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=now,
+        heartbeat_seconds=None,
+        event_rules=(
+            AnalysisEventRule(
+                rule_id="news",
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                minimum_priority=80,
+                coalesce_seconds=300,
+                ordinary_cooldown_seconds=300,
+            ),
+        ),
+    )
+    world_update = build_trigger_event(
+        trigger_type=AnalysisTriggerType.WORLD_MODEL_UPDATED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=now,
+        observed_at=now,
+        priority=100,
+        dedup_key="world-update",
+        evidence_ids=("assessment-1",),
+    ).model_dump(mode="json")
+    news = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=now,
+        observed_at=now,
+        priority=99,
+        dedup_key="news-1",
+        evidence_ids=("evidence-1",),
+        expires_at=now + timedelta(minutes=15),
+    ).model_dump(mode="json")
+
+    selected = select_trigger_batch_members(
+        (news, world_update),
+        maximum_batch_size=10,
+    )
+
+    assert selected == (world_update,)
+    later = trigger_reconsideration(
+        plan=plan.model_dump(mode="json"),
+        pending=(news,),
+        now=now,
+        last_analysis_at=now,
+        input_retry_not_before=None,
+        wake_at_expiry=True,
+    )
+    assert later.reconsider_at == now + timedelta(minutes=5)
 
 
 def test_trigger_plan_patch_has_full_bounded_scheduling_authority(app_config, replay_input) -> None:

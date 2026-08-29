@@ -20,6 +20,7 @@ from investment_manager.scheduling.models import (
     TriggerOutboxKind,
     build_trigger_batch,
     build_trigger_event,
+    select_trigger_batch_members,
     trigger_plan_accepts,
     trigger_reconsideration,
     trigger_rule_value,
@@ -175,8 +176,10 @@ class TriggerCoordinatorWorkflow:
                     await self._wait_for_change(delay)
                     continue
                 self._next_reconsider_at = None
-                maximum = int(self._settings["maximum_batch_size"])
-                selected = tuple(eligible[:maximum])
+                selected = select_trigger_batch_members(
+                    eligible,
+                    maximum_batch_size=int(self._settings["maximum_batch_size"]),
+                )
                 plan = AnalysisTriggerPlan.model_validate(self._plan)
                 triggers = tuple(
                     AnalysisTriggerEvent.model_validate(item)

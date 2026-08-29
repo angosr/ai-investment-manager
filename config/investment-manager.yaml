@@ -299,7 +299,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v38
+  version: analysis-trigger-v39
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   # 聚合弱线索合并五分钟；官方直达事件以 priority=100 绕过等待。
