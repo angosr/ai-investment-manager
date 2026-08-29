@@ -205,6 +205,10 @@ def test_forecast_baseline_is_deterministic_non_overlapping_and_round_trips(tmp_
     assert sum(first.results[0].mean_rolling_probabilities) == 1
     assert sum(first.results[0].terminal_probabilities) == 1
     assert (
+        sum(first.results[0].terminal_bucket_counts)
+        == first.results[0].terminal_history_count
+    )
+    assert (
         first.results[0].terminal_history_count
         >= first.results[0].maximum_visible_history_count
     )

@@ -139,6 +139,7 @@ class ForecastBaselineTargetResult(FrozenModel):
     fixed_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
     mean_rolling_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
     terminal_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
+    terminal_bucket_counts: tuple[int, ...] = Field(min_length=5, max_length=5)
     realized_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
     minimum_visible_history_count: int = Field(gt=0)
     maximum_visible_history_count: int = Field(gt=0)
@@ -170,6 +171,13 @@ class ForecastBaselineTargetResult(FrozenModel):
             raise ValueError("预测先验可见历史数量边界非法")
         if self.terminal_history_count < self.maximum_visible_history_count:
             raise ValueError("预测先验终态历史不能少于最后验证时点")
+        if (
+            any(item < 0 for item in self.terminal_bucket_counts)
+            or sum(self.terminal_bucket_counts) != self.terminal_history_count
+            or _probabilities_from_counts(self.terminal_bucket_counts)
+            != self.terminal_probabilities
+        ):
+            raise ValueError("预测先验终态计数与概率不一致")
         if self.first_validation_cutoff_at >= self.last_validation_outcome_at:
             raise ValueError("预测先验验证时间边界非法")
         return self
@@ -341,6 +349,14 @@ def evaluate_forecast_baseline(
             boundaries_bps=boundaries,
             information_cutoff_at=dataset.manifest.last_close_time,
         )
+        terminal_bucket_counts = tuple(
+            sum(
+                item.outcome_available_at <= dataset.manifest.last_close_time
+                and _bucket_index(item.return_bps, boundaries) == bucket_index
+                for item in outcomes
+            )
+            for bucket_index in range(len(_BUCKET_IDS))
+        )
         results.append(
             ForecastBaselineTargetResult(
                 symbol=target.symbol,
@@ -356,6 +372,7 @@ def evaluate_forecast_baseline(
                 fixed_probabilities=fixed,
                 mean_rolling_probabilities=mean_rolling,
                 terminal_probabilities=terminal,
+                terminal_bucket_counts=terminal_bucket_counts,
                 realized_probabilities=realized,
                 minimum_visible_history_count=min(visible_counts),
                 maximum_visible_history_count=max(visible_counts),
@@ -428,7 +445,14 @@ def _frequencies(values: tuple[int, ...], bucket_count: int) -> tuple[Decimal, .
     if not values:
         raise ValueError("概率频率样本不能为空")
     counts = tuple(values.count(index) for index in range(bucket_count))
-    probabilities = [Decimal(count) / Decimal(len(values)) for count in counts[:-1]]
+    return _probabilities_from_counts(counts)
+
+
+def _probabilities_from_counts(counts: tuple[int, ...]) -> tuple[Decimal, ...]:
+    total = sum(counts)
+    if total < 1 or any(item < 0 for item in counts):
+        raise ValueError("概率计数必须非负且总数为正")
+    probabilities = [Decimal(count) / Decimal(total) for count in counts[:-1]]
     probabilities.append(Decimal("1") - sum(probabilities, Decimal("0")))
     return tuple(probabilities)
 
