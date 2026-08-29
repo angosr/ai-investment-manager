@@ -1,0 +1,78 @@
+schema_version: orthogonal-quant-prior-plan-v1
+plan_id: orthogonal-quant-prior-72h-v1
+evaluation_family_id: directional-72h-quant-prior
+
+hypothesis: >-
+  在与现役 WorldModel 完全相同的 72 小时现货收益合同下，趋势延续、短期反转和
+  条件波动三个经济语义正交的透明专家，经稀疏状态混合后，能够比截止前已结算
+  Outcome 的滚动无条件分布提供稳定的有序概率增量；不能稳定改善即继续使用无条件 prior。
+
+targets:
+  - symbol: BTCUSDT
+    dataset_id: historical_dataset_d54a1c9f090efe425800
+    bars_hash: 883beb7b7dd75cada797613151501e7e30edf8eead3c18c6fb3c01e305a90a27
+  - symbol: PAXGUSDT
+    dataset_id: historical_dataset_b1a3cbad1cca6e90e80f
+    bars_hash: c1d44d89522f08e023a4afd5ed64cd22f480a757825ba6d62c1d214b66318067
+
+contract:
+  interval: 1d
+  horizon_days: 3
+  information_cutoff: completed_bar_close
+  outcome: close_to_close_return_bps
+  buckets: development_nearest_rank_quintiles
+  representatives: development_bucket_medians
+  evaluation_phases: [0, 1, 2]
+
+chronology:
+  fit_fraction: "0.50"
+  selection_fraction: "0.20"
+  validation_fraction: "0.15"
+  blind_fraction: "0.15"
+  purge_full_horizon_at_boundaries: true
+
+experts:
+  - expert_id: time_series_momentum
+    state: return_20d_tertiles
+    role: direction_continuation
+  - expert_id: standardized_reversal
+    state: return_3d_div_realized_volatility_20d_tertiles
+    role: short_deviation_repair
+  - expert_id: har_realized_volatility
+    state: predicted_3d_variance_tertiles
+    role: distribution_width
+
+probability_model:
+  expert_distribution: empirical_state_bucket_distribution
+  shrinkage: development_global_distribution_with_five_effective_observations
+  qualification: selection_ranked_probability_score_strictly_below_unconditional
+  mixture: equal_weight_unconditional_and_selection_qualified_experts
+  missing_state: unconditional_distribution
+  online_adaptation: none
+
+evaluation:
+  primary_metric: normalized_ranked_probability_score
+  diagnostics:
+    - multiclass_brier
+    - expected_return_mae_bps
+    - expected_return_realized_return_correlation
+    - bucket_calibration
+  validation_rule: >-
+    每个目标的冻结混合必须在 validation 总体及三个非重叠相位的每一个都严格优于
+    同槽滚动无条件分布，才允许对该目标读取一次 blind；相同分数选择无条件分布。
+  blind_rule: >-
+    预先选定的同一混合必须在 blind 总体及三个相位的每一个继续严格优于无条件分布；
+    揭盲后不得改变专家、窗口、状态边界、收缩、权重、时域或桶。
+  capital_rule: >-
+    历史通过只允许建立新的 RESEARCH prior producer；还须以前瞻同槽 proper score、
+    完整成本逻辑账户和换手稳定性证明增量，不能直接授予资本权限。
+
+scope:
+  candidate_count: 1
+  result_permission: REJECTION_OR_FORWARD_RESEARCH_ONLY
+  excluded_experts: >-
+    carry 和 liquidity 当前没有同时覆盖 BTC、PAXG、72 小时合同且可点时回放的同口径历史；
+    不以缺失值、当前网页数据或其他资产代理补齐。breakout 与冻结趋势专家信息重叠，不重复加入。
+  prohibited_follow_ups: >-
+    结果揭示后不得在相同 validation 或 blind 区间搜索相邻窗口、阈值、平滑强度、权重、
+    专家组合或目标时域；失败专家不进入运行时，既有无条件 prior 保持唯一现役基线。
