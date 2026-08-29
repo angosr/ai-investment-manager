@@ -251,6 +251,43 @@ def test_qualified_information_event_creates_separate_material_forecast_panel(
     assert material_cause.trigger_refs == (evidence_id,)
 
 
+def test_evidence_free_agent_review_does_not_create_material_forecast_panel(
+    app_config,
+) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=90,
+        dedup_key="world-model-review",
+        review_reason="到期复核既有世界机制",
+    )
+    producer = RecordingForecastProducer()
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
+
+    TriggerDispatchBuilder(
+        config=config,
+        program_forecast_producers=(producer,),
+    ).build(batch)
+
+    assert producer.calls == [(NOW, None)]
+
+
 def test_trigger_service_assembly_passes_enabled_forecast_producer_as_tuple(
     app_config,
     monkeypatch,

@@ -100,9 +100,9 @@ class ProgramBatchConsumer(Protocol):
 def _material_forecast_cause(batch: TriggerBatch) -> ForecastSlotCause | None:
     """Turn an admitted structural event batch into one independent obligation.
 
-    Scheduling has already applied source qualification and priority.  Market
-    shocks are deliberately excluded: an endogenous price move may refresh the
-    WorldModel, but it is not an external information surprise by itself.
+    A material slot must bind immutable evidence, not merely the identity of a
+    wake-up. Market shocks and evidence-free reviews may refresh the WorldModel,
+    but neither is an external information surprise by itself.
     """
 
     eligible_types = {
@@ -111,7 +111,9 @@ def _material_forecast_cause(batch: TriggerBatch) -> ForecastSlotCause | None:
         AnalysisTriggerType.AGENT_WAKEUP,
     }
     eligible = tuple(
-        item for item in batch.triggers if item.trigger_type in eligible_types
+        item
+        for item in batch.triggers
+        if item.trigger_type in eligible_types and item.evidence_ids
     )
     if not eligible:
         return None
@@ -120,7 +122,7 @@ def _material_forecast_cause(batch: TriggerBatch) -> ForecastSlotCause | None:
             {
                 reference
                 for trigger in eligible
-                for reference in (trigger.evidence_ids or (trigger.trigger_id,))
+                for reference in trigger.evidence_ids
             }
         )
     )
