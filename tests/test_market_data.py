@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine
 
+from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.features import (
@@ -1734,6 +1735,32 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
     assert snapshot.last == Decimal("100.05")
     assert snapshot.observed_at == NOW
     assert snapshot.bars[-1].volume == Decimal("10")
+
+
+def test_core_market_health_ignores_observation_only_product_without_new_trade(
+    app_config,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_market_schema(engine)
+    store = SqlMarketDataStore(engine)
+    for index, symbol in enumerate(app_config.analysis_symbols, start=1):
+        assert store.put_quote(
+            _quote(update_id=index).model_copy(
+                update={"quote_id": f"quote-{symbol}", "symbol": symbol}
+            )
+        )
+        assert store.put_trade(
+            _trade(trade_id=index).model_copy(
+                update={"trade_id": f"trade-{symbol}", "symbol": symbol}
+            )
+        )
+    assert store.put_quote(
+        _quote(NOW + timedelta(seconds=1), update_id=99).model_copy(
+            update={"quote_id": "quote-SPYBUSDT", "symbol": "SPYBUSDT"}
+        )
+    )
+
+    assert DashboardReader(engine, app_config).latest_market_observed_at() == NOW
 
 
 @pytest.mark.parametrize("backend", ["memory", "sql"])

@@ -548,7 +548,7 @@ class DashboardReader:
 
         observed: list[datetime] = []
         with self._engine.connect() as connection:
-            for symbol in self._config.market_data.symbols:
+            for symbol in self._config.analysis_symbols:
                 quote_at = connection.execute(
                     select(market_quotes.c.observed_at)
                     .where(market_quotes.c.symbol == symbol)
