@@ -1,6 +1,7 @@
 schema_version: orthogonal-quant-prior-plan-v1
 plan_id: orthogonal-quant-prior-72h-v1
 evaluation_family_id: directional-72h-quant-prior
+baseline_artifact_id: forecast_baseline_7edf2cf090b47cdad2e5
 
 hypothesis: >-
   在与现役 WorldModel 完全相同的 72 小时现货收益合同下，趋势延续、短期反转和
@@ -20,15 +21,15 @@ contract:
   horizon_days: 3
   information_cutoff: completed_bar_close
   outcome: close_to_close_return_bps
-  buckets: development_nearest_rank_quintiles
-  representatives: development_bucket_medians
+  buckets: frozen_by_baseline_artifact
+  representatives: frozen_by_baseline_artifact
   evaluation_phases: [0, 1, 2]
 
 chronology:
-  fit_fraction: "0.50"
-  selection_fraction: "0.20"
-  validation_fraction: "0.15"
-  blind_fraction: "0.15"
+  fit_end_exclusive: 2024-01-01
+  selection_end_exclusive: 2024-09-01
+  validation_end_exclusive: 2025-08-01
+  held_out_end_exclusive: 2026-08-19
   purge_full_horizon_at_boundaries: true
 
 experts:
@@ -60,9 +61,10 @@ evaluation:
   validation_rule: >-
     每个目标的冻结混合必须在 validation 总体及三个非重叠相位的每一个都严格优于
     同槽滚动无条件分布，才允许对该目标读取一次 blind；相同分数选择无条件分布。
-  blind_rule: >-
-    预先选定的同一混合必须在 blind 总体及三个相位的每一个继续严格优于无条件分布；
-    揭盲后不得改变专家、窗口、状态边界、收缩、权重、时域或桶。
+  held_out_rule: >-
+    预先选定的同一混合必须在 held-out 总体及三个相位的每一个继续严格优于无条件分布；
+    揭示后不得改变专家、窗口、状态边界、收缩、权重、时域或桶。该时间窗已被同家族其他
+    历史候选间接观察，只能继续否决或决定是否建立全新前瞻研究，不能作为未污染盲测授权资本。
   capital_rule: >-
     历史通过只允许建立新的 RESEARCH prior producer；还须以前瞻同槽 proper score、
     完整成本逻辑账户和换手稳定性证明增量，不能直接授予资本权限。
@@ -70,6 +72,10 @@ evaluation:
 scope:
   candidate_count: 1
   result_permission: REJECTION_OR_FORWARD_RESEARCH_ONLY
+  prior_search_evidence:
+    - evidence/quant-candidates/btc-daily-momentum-v1-result.json
+    - evidence/quant-candidates/btc-funding-state-24h-v1-result.json
+    - evidence/quant-candidates/quant-order-flow-4h-v1-result.json
   excluded_experts: >-
     carry 和 liquidity 当前没有同时覆盖 BTC、PAXG、72 小时合同且可点时回放的同口径历史；
     不以缺失值、当前网页数据或其他资产代理补齐。breakout 与冻结趋势专家信息重叠，不重复加入。
