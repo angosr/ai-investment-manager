@@ -1,16 +1,16 @@
-manifest_id: release-framework-forecast-baseline-v3
-created_at: 2026-08-26T14:20:00Z
+manifest_id: release-framework-trigger-review-boundary-v4
+created_at: 2026-08-29T15:18:00Z
 status: CHALLENGER
-code_version: cd0fb5c95c0e95c032bb05df63836813a4719d79
+code_version: dabf4ef432d264e616b16b78a98dce356e3d5b55
 constitution_version: constitution-v2
-parent_manifest_id: release-framework-forecast-baseline-v2
+parent_manifest_id: release-framework-forecast-baseline-v3
 complexity_score: 1
 component_versions:
   - [feature, feature-v1]
   - [decision_state, portfolio-state-v56]
   - [capital, total-portfolio-capital-v81]
   - [outcome_evaluation, typed-outcome-settlement-v60]
-  - [trigger, analysis-trigger-v36]
+  - [trigger, analysis-trigger-v37]
   - [temporal, temporal-analysis-v5]
   - [market_data, binance-public-shadow-v18]
   - [shadow, shadow-simulation-v2]
