@@ -1,0 +1,63 @@
+{
+  "schema_version": "cash-product-component-evaluation-result-v2",
+  "evaluated_at": "2026-08-29T00:42:41Z",
+  "plan": {
+    "path": "evidence/reference-selections/usdt-flexible-cash-implementation-v2-plan.json",
+    "sha256": "63786ee0e94df7f66661502086aa07cf87d461d5fb2f5c90f9fd8910cac69c21",
+    "registration_commit": "0e728c2b57c1b06afc25fc16728ce45a9a74d547"
+  },
+  "fixed_candidate": "BINANCE:SIMPLE_EARN_FLEXIBLE:USDT001",
+  "evidence": {
+    "capital_config": {
+      "path": "config/investment-manager.yaml",
+      "sha256": "7ee15439f09a3d26d9900a331baff31120765ff06e4aa4992e82fccfb6c43872",
+      "facts": [
+        "reference_policy 为空",
+        "现有 PortfolioTarget 只表达方向 sleeve，不表达自由现金与收益现金之间的目标转换",
+        "现役资本没有任何获授权 Forecast 来源"
+      ]
+    },
+    "architecture": {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "891f49bd1be562a4bbe2edbbdd9195c63c76bdc687d58bfd03618e4d6896425b",
+      "base_commit": "7026eedeee2ee41f46b46bbdb966c6c1ded7dbae",
+      "facts": [
+        "现金产品转换只能由同一资本决策、账户恢复或产品规则实质变化触发",
+        "现金产品不得拥有独立决策器、账户状态机或轮询节奏"
+      ]
+    },
+    "candidate_trial": {
+      "scope": "只实现不可变申购、奖励和赎回事实到现有账户快照的纯投影，并覆盖未知响应、重复、乱序、冲突和赎回未终态场景",
+      "local_result": "纯会计和恢复语义可通过测试，但没有合法 Portfolio 消费者；继续增加存储、命令或 Mock Venue 会形成无调用者的第二条产品旁路",
+      "retained_runtime_code": "NONE"
+    }
+  },
+  "gate_results": [
+    {
+      "gate": "会计恒等、无重复计量、PAID 前零可用流动性和确定性恢复",
+      "status": "PROVISIONALLY_DEMONSTRATED",
+      "capital_meaning": "NONE"
+    },
+    {
+      "gate": "由同一 PortfolioTarget 合法触发完整生命周期",
+      "status": "MISSING_INPUT_CONTRACT",
+      "capital_meaning": "BLOCKING"
+    },
+    {
+      "gate": "不增加第二套决策、账户、调度或运行链",
+      "status": "WOULD_FAIL_IF_IMPLEMENTATION_CONTINUED_NOW",
+      "capital_meaning": "BLOCKING"
+    }
+  ],
+  "decision": "INCONCLUSIVE",
+  "capital_authorization": "NONE",
+  "runtime_permission": "NONE",
+  "reason_codes": [
+    "REFERENCE_POLICY_NOT_SELECTED",
+    "PORTFOLIO_CASH_IMPLEMENTATION_TARGET_UNDEFINED",
+    "STANDALONE_LIFECYCLE_WOULD_HAVE_NO_AUTHORIZED_CONSUMER"
+  ],
+  "cleanup": "未提交的候选实现和测试已删除；不保留配置、表、服务、Worker、客户端或前端字段。",
+  "next_action": "先在当前可投资域内解决唯一可执行 Reference 及其经济现金目标；Reference 可以先使用自由 USDT。只有同一 Portfolio 能够产生可回放的现金实现目标后，才允许在本评价家族中以新的未来事实重新评价 USDT Flexible，且不得复用本次试验作为通过证据。",
+  "conclusion": "USDT Flexible 不是当前最先应实现的模块。其产品合同问题真实存在，但现在继续开发只会制造死代码；当前更靠近费用后盈利验证的第一断点是 Reference 与当前 Binance-only 产品域是否能够形成一个真实可执行、风险匹配的基准。"
+}
