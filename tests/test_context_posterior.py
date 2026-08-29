@@ -5,12 +5,13 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, delete
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
 from investment_manager.forecast.codex.router import AnalystResult
+from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
 from investment_manager.forecast.context.executor import (
     AssessmentExecution,
@@ -74,6 +75,7 @@ from investment_manager.forecast.program.baseline import load_forecast_baseline
 from investment_manager.forecast.program.prior import (
     PRIOR_PRODUCER_ID,
     RollingPriorForecastProducer,
+    build_prior_targets,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import (
@@ -83,7 +85,13 @@ from investment_manager.forecast.results import (
     ForecastOutcome,
     ForecastOutcomeStatus,
 )
-from investment_manager.forecast.tables import forecasts as forecast_rows
+from investment_manager.forecast.tables import (
+    forecast_producer_bindings,
+    forecast_slot_obligations,
+)
+from investment_manager.forecast.tables import (
+    forecasts as forecast_rows,
+)
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.information.models import SourceTier
 from investment_manager.kernel.identity import stable_id
@@ -182,7 +190,7 @@ def _packet() -> DecisionPacket:
     )
 
 
-def _prior_targets():
+def _prior_runtime():
     root = Path(__file__).resolve().parents[1]
     artifact = load_forecast_baseline(
         root / "evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json"
@@ -218,7 +226,16 @@ def _prior_targets():
         activated_at=SLOT_AT - timedelta(hours=1),
         maximum_quote_age_seconds=300,
         clock=lambda: SLOT_AT + timedelta(minutes=1),
-    ).produce(as_of=SLOT_AT + timedelta(minutes=1))
+    )
+    runtime_targets = tuple(
+        sorted(build_prior_targets(artifact), key=lambda item: item.contract.contract_id)
+    )
+    return contracts, forecasts, market, engine, prior, runtime_targets
+
+
+def _prior_targets():
+    contracts, forecasts, market, engine, producer, _runtime_targets = _prior_runtime()
+    prior = producer.produce(as_of=SLOT_AT + timedelta(minutes=1))
     targets = tuple(
         PosteriorPriorTarget(
             contract=contracts.contract(item.contract_id),
@@ -1430,53 +1447,53 @@ def _posterior_trigger_config_and_batch(app_config):
 
 
 def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -> None:
-    frozen = _input()
-    seed = ContextPosteriorSeed.create(
-        information_cutoff_at=SLOT_AT,
-        targets=frozen.targets,
+    contracts, forecasts, _market, engine, prior, targets = _prior_runtime()
+    config, batch = _posterior_trigger_config_and_batch(app_config)
+    preparation = ContextPosteriorPreparation(
+        contracts=tuple(item.contract for item in targets),
+        prior_bindings=tuple(item.binding for item in targets),
+        runtime=config.codex_runtime,
+        world_model_behavior_id=configured_assess_behavior_hash(config),
+        activated_at=SLOT_AT - timedelta(hours=1),
+        contract_store=contracts,
+        forecast_store=forecasts,
     )
     command = AssessmentCommand.create(
         packet=_packet(),
         analysis_behavior_hash="a" * 64,
     )
-
-    class PriorProducer:
-        def produce(self, *, as_of):
-            assert as_of == SLOT_AT + timedelta(minutes=1)
-            return tuple(item.prior for item in frozen.targets)
-
-    class PosteriorPreparation:
-        producer_behavior_id = "posterior-behavior-v1"
-
-        def activate(self):
-            return ()
-
-        def reserve(self, prior_results, *, as_of):
-            assert prior_results == tuple(item.prior for item in frozen.targets)
-            assert as_of == SLOT_AT + timedelta(minutes=1)
-            return seed
+    analysis_identities = []
 
     class DispatchBuilder(TriggerDispatchBuilder):
         def _assessment_command(self, batch, *, as_of, analysis_identity):
             assert as_of == SLOT_AT
-            assert analysis_identity == seed.seed_id
+            analysis_identities.append(analysis_identity)
             return command
-
-    config, batch = _posterior_trigger_config_and_batch(app_config)
 
     dispatches = DispatchBuilder(
         config=config,
-        program_forecast_producers=(PriorProducer(),),
-        posterior_preparation=PosteriorPreparation(),
+        program_forecast_producers=(prior,),
+        posterior_preparation=preparation,
     ).build(batch)
 
     assert len(dispatches) == 1
     dispatch = dispatches[0]
     assert dispatch.workflow_name == "ContextPosteriorWorkflow"
     request = PosteriorWorkflowRequest.model_validate(dispatch.payload)
-    assert request.seed == seed
+    assert request.seed.information_cutoff_at == SLOT_AT
+    assert len(request.seed.targets) == 2
+    assert all(item.prior.producer_id == PRIOR_PRODUCER_ID for item in request.seed.targets)
+    assert analysis_identities == [request.seed.seed_id]
     assert request.assessment_command == command
-    assert request.producer_behavior_id == "posterior-behavior-v1"
+    assert request.producer_behavior_id == preparation.producer_behavior_id
+    with engine.connect() as connection:
+        assert connection.execute(
+            select(func.count()).select_from(forecast_producer_bindings)
+        ).scalar_one() == 4
+        assert connection.execute(
+            select(func.count()).select_from(forecast_slot_obligations)
+        ).scalar_one() == 4
+        assert connection.execute(select(func.count()).select_from(forecast_rows)).scalar_one() == 2
 
 
 def test_trigger_closes_reserved_posterior_when_world_packet_is_unavailable(
