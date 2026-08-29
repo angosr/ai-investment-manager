@@ -273,6 +273,10 @@ class ForecastOutcomeSettler:
     ) -> ForecastOutcome:
         economic_start = slot.outcome_start_at or slot.information_cutoff_at
         cutoff_references = {item.instrument_id: item.price for item in slot.cutoff_prices}
+        if slot.outcome_start_at is None and any(
+            leg.instrument.key not in cutoff_references for leg in contract.target.legs
+        ):
+            raise MarketFactsIncomplete
         legs = tuple(
             self._leg_outcome(
                 leg=leg,
