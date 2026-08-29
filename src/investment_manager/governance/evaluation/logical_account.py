@@ -63,7 +63,7 @@ from investment_manager.risk.portfolio import (
     SleeveRiskProfile,
 )
 
-LOGICAL_ACCOUNT_EVALUATION_VERSION = "producer-logical-account-v1"
+LOGICAL_ACCOUNT_EVALUATION_VERSION = "producer-logical-account-v2"
 
 
 class LogicalAccountStep(FrozenModel):

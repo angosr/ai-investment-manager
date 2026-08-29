@@ -1785,6 +1785,11 @@ def test_world_model_capital_increment_replays_prior_and_posterior_with_same_cos
     assert evidence.settled_panel_count == 1
     assert evidence.candidate is not None and evidence.comparator is not None
     assert evidence.candidate.fee_cost > 0 and evidence.comparator.fee_cost > 0
+    assert evidence.candidate.gross_turnover > Decimal("5000")
+    assert evidence.candidate.fee_cost > Decimal("2.5")
+    assert evidence.candidate.fee_cost == (
+        evidence.candidate.gross_turnover * Decimal("5") / Decimal("10000")
+    )
     assert evidence.net_equity_increment is not None
     assert evidence.net_equity_increment > 0
 

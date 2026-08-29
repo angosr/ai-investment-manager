@@ -38,8 +38,8 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.policy import CapitalPolicy
 
-WORLD_MODEL_CAPITAL_INCREMENT_VERSION = "world-model-capital-increment-v2"
-EVENT_RESPONSE_CAPITAL_VERSION = "event-response-capital-v1"
+WORLD_MODEL_CAPITAL_INCREMENT_VERSION = "world-model-capital-increment-v3"
+EVENT_RESPONSE_CAPITAL_VERSION = "event-response-capital-v2"
 
 
 class CapitalIncrementStatus(StrEnum):

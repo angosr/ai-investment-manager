@@ -522,7 +522,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             ],
         },
         "world_model_capital_increment_evidence": {
-            "evaluation_version": "world-model-capital-increment-v2",
+            "evaluation_version": "world-model-capital-increment-v3",
             "status": "NOT_STARTED",
             "candidate_behavior_id": None,
             "comparator_behavior_id": None,
@@ -536,7 +536,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             "reason_code": None,
         },
         "event_response_capital_evidence": {
-            "evaluation_version": "event-response-capital-v1",
+            "evaluation_version": "event-response-capital-v2",
             "status": "NOT_STARTED",
             "candidate_behavior_id": None,
             "settled_material_panel_count": 0,

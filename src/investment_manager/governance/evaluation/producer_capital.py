@@ -156,6 +156,46 @@ class ProducerCapitalReplay:
             funding_settlements=self._funding(as_of=as_of),
         )
 
+    def liquidate(self, *, as_of: datetime) -> LogicalAccountStep | None:
+        """Close the evaluation path at executable prices through the capital stack."""
+
+        terminal_at = require_utc(as_of)
+        current = self._account.current_account
+        if current is None:
+            raise ValueError("Producer capital 尚不能在首个 panel 前清算")
+        if not current.sleeves:
+            self.mark(as_of=terminal_at)
+            return None
+        sleeves = tuple(
+            sorted(
+                (self._terminal_support(position) for position in current.sleeves),
+                key=lambda item: item.sleeve_id,
+            )
+        )
+        step = self._account.advance(
+            as_of=terminal_at,
+            sleeves=sleeves,
+            quotes=self._quotes(sleeves=sleeves, as_of=terminal_at),
+            risk_profiles=tuple(self._risk_profile(item) for item in sleeves),
+            funding_settlements=self._funding(as_of=terminal_at),
+        )
+        if step.account.positions:
+            raise PointInTimeInputUnavailable("逻辑账户无法在共同评价终点完整清算")
+        return step
+
+    def _terminal_support(self, position: SleevePosition) -> PortfolioSleeveInput:
+        original = self._support_by_sleeve.get(position.sleeve_id)
+        if original is None or original.payoff_projection is None:
+            raise ValueError("逻辑账户终点清算缺少自身原始产品投影")
+        return PortfolioSleeveInput(
+            sleeve_id=position.sleeve_id,
+            forecast=original.forecast,
+            payoff_projection=original.payoff_projection,
+            payoff_projection_current=False,
+            capital_authorization=None,
+            new_capital_allowed=False,
+        )
+
     def _held_support(
         self,
         position: SleevePosition,
@@ -372,7 +412,9 @@ def evaluate_producer_capital_path(
     as_of = mark_at or latest_panel_at
     current = replay.account.current_account
     if current is not None and current.as_of < as_of:
-        replay.mark(as_of=as_of)
+        terminal_step = replay.liquidate(as_of=as_of)
+        if terminal_step is not None:
+            steps.append(terminal_step)
     return ProducerCapitalPathEvidence(
         evaluation_version=LOGICAL_ACCOUNT_EVALUATION_VERSION,
         as_of=as_of,
