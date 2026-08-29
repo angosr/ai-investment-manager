@@ -158,6 +158,8 @@ def operate_release(
         elif current is not None:
             _require_interrupted_release_stopped(current)
             rollback_unit = current.rollback_unit
+        if rollback_unit is not None and rollback_unit.manifest_id == unit.manifest_id:
+            rollback_unit = None
         writer_lease.acquire(blocking=True)
         try:
             group, active_rollback_unit = _start_candidate_or_rollback(
@@ -440,7 +442,10 @@ def _required_release_artifacts(config: AppConfig) -> tuple[str, ...]:
     if reference is not None:
         required.add(reference.selection_artifact_id)
     if config.outcome_evaluation.forecast_prior.enabled:
-        required.add(config.outcome_evaluation.forecast_prior.artifact_id)
+        artifact_id = config.outcome_evaluation.forecast_prior.artifact_id
+        if artifact_id is None:
+            raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
+        required.add(artifact_id)
     return tuple(sorted(required))
 
 
@@ -453,6 +458,9 @@ def _require_safe_cutover(
 ) -> None:
     if previous.status != RuntimeStateStatus.READY:
         raise ValueError("当前受管 Release 不是 READY，必须先恢复运行状态")
+    # Recovery runs inside the challenger supervisor, so it must be able to
+    # parse the previous unit before that unit is stopped.
+    load_config(previous.unit.config_path)
     if not process_exists(previous.supervisor_pid):
         raise ValueError("当前 Release supervisor 已消失，拒绝猜测孤儿写进程状态")
     lease = RuntimeLease(runtime_directory / "writer.lock")

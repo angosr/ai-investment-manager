@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from investment_manager.decision_cycle import service as decision_service
 from investment_manager.decision_cycle.capital import CapitalTriggerConsumer
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
 from investment_manager.scheduling.models import (
@@ -89,6 +90,18 @@ class RecordingBatchConsumer:
     def consume(self, batch):
         self.batch = batch
         return None
+
+
+class RecordingBatchRecorder:
+    def __init__(self) -> None:
+        self.batch = None
+
+    def record_batch(self, batch, *, analysis_submitted_at):
+        self.batch = batch
+        return True
+
+    def admit_analysis_call(self, batch, *, requested_at):
+        raise AssertionError("无 AI dispatch 时不应请求调用准入")
 
 
 class RecordingCapital:
@@ -190,6 +203,67 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
     assert dispatches == ()
     assert producer.as_of == NOW
     assert consumer.batch == batch
+
+
+def test_trigger_service_assembly_passes_enabled_forecast_producer_as_tuple(
+    app_config,
+    monkeypatch,
+) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "capital": app_config.capital.model_copy(update={"enabled": False}),
+            "assessment": app_config.assessment.model_copy(update={"enabled": False}),
+            "outcome_evaluation": app_config.outcome_evaluation.model_copy(
+                update={
+                    "forecast_prior": (
+                        app_config.outcome_evaluation.forecast_prior.model_copy(
+                            update={"enabled": True}
+                        )
+                    )
+                }
+            ),
+        }
+    )
+    producer = RecordingForecastProducer()
+    recorder = RecordingBatchRecorder()
+    monkeypatch.setattr(
+        decision_service,
+        "_assemble_forecast_prior",
+        lambda **_kwargs: producer,
+    )
+    assembly = decision_service.assemble_trigger_service(
+        config=config,
+        manifest=object(),
+        engine=object(),
+        repository=recorder,
+    )
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(
+            build_trigger_event(
+                trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
+                symbol=plan.symbol,
+                pipeline_id=plan.pipeline_id,
+                occurred_at=NOW,
+                observed_at=NOW,
+                priority=1,
+                dedup_key="assembled-forecast-slot-1",
+            ),
+        ),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
+
+    assert assembly.activities.builder.build(batch) == ()
+    assert producer.as_of == NOW
+    assert recorder.batch == batch
 
 
 def test_heartbeat_reviews_consumers_without_updating_world_model(app_config) -> None:

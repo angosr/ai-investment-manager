@@ -81,7 +81,11 @@ def assemble_trigger_service(
             ),
             batch_recorder=repository,
             program_forecast_producers=(
-                _assemble_forecast_prior(config=config, manifest=manifest, engine=engine)
+                _assemble_forecast_prior(
+                    config=config,
+                    manifest=manifest,
+                    engine=engine,
+                ),
             )
             if config.outcome_evaluation.forecast_prior.enabled
             else (),
@@ -187,6 +191,8 @@ def _assemble_forecast_prior(
     engine,
 ) -> RollingPriorForecastProducer:
     policy = config.outcome_evaluation.forecast_prior
+    if policy.artifact_id is None:
+        raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
     artifact = load_forecast_baseline(
         resolve_manifest_artifact(manifest, policy.artifact_id)
     )

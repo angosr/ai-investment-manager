@@ -5,9 +5,15 @@ from investment_manager.kernel.configuration import StrictConfig
 
 
 class ForecastPriorRuntimePolicy(StrictConfig):
-    version: str
+    version: str = "forecast-prior-disabled-v1"
     enabled: bool = False
-    artifact_id: str = Field(min_length=1)
+    artifact_id: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def enabled_prior_requires_artifact(self):
+        if self.enabled and self.artifact_id is None:
+            raise ValueError("启用 Forecast prior 时必须指定 Release 制品 ID")
+        return self
 
 
 class OutcomeEvaluationPolicy(StrictConfig):
@@ -19,7 +25,7 @@ class OutcomeEvaluationPolicy(StrictConfig):
     window_hours: int = Field(default=24, ge=1, le=168)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)
-    forecast_prior: ForecastPriorRuntimePolicy
+    forecast_prior: ForecastPriorRuntimePolicy = ForecastPriorRuntimePolicy()
 
 
 class GovernancePolicy(StrictConfig):

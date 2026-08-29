@@ -276,6 +276,16 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
 
 
+def test_previous_release_config_defaults_new_forecast_prior_to_disabled() -> None:
+    payload = load_config("config/investment-manager.yaml").model_dump(mode="python")
+    payload["outcome_evaluation"].pop("forecast_prior")
+
+    loaded = AppConfig.model_validate(payload)
+
+    assert not loaded.outcome_evaluation.forecast_prior.enabled
+    assert loaded.outcome_evaluation.forecast_prior.artifact_id is None
+
+
 def test_world_model_economic_targets_must_equal_capital_universe() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
