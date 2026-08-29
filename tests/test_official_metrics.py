@@ -23,7 +23,10 @@ from investment_manager.information.official.metrics import (
     STABLECOIN_SUPPLY_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_AUCTION_STREAM_ID,
+    TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+    TREASURY_INTEREST_EXPENSE_STREAM_ID,
     TREASURY_REAL_YIELD_STREAM_ID,
+    TREASURY_REFINANCING_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
     OfficialMetricName,
     parse_official_metric_document,
@@ -185,6 +188,109 @@ def _documents() -> dict[str, OfficialMetricDocument]:
             ).encode(),
             "application/json",
         ),
+        TREASURY_REFINANCING_STREAM_ID: (
+            "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+            "v1/debt/mspd/mspd_table_3_market",
+            json.dumps(
+                {
+                    "data": [
+                        {
+                            "record_date": "2026-07-31",
+                            "security_class1_desc": "Total Marketable",
+                            "maturity_date": "null",
+                            "outstanding_amt": "1000",
+                        },
+                        {
+                            "record_date": "2026-07-31",
+                            "security_class1_desc": "Bills Maturity Value",
+                            "maturity_date": "2026-12-31",
+                            "outstanding_amt": "200",
+                        },
+                        {
+                            "record_date": "2026-07-31",
+                            "security_class1_desc": "Notes",
+                            "maturity_date": "2028-07-31",
+                            "outstanding_amt": "300",
+                        },
+                        {
+                            "record_date": "2026-07-31",
+                            "security_class1_desc": "Bonds",
+                            "maturity_date": "2031-07-31",
+                            "outstanding_amt": "500",
+                        },
+                        {
+                            "record_date": "2026-06-30",
+                            "security_class1_desc": "Total Marketable",
+                            "maturity_date": "null",
+                            "outstanding_amt": "990",
+                        },
+                    ]
+                }
+            ).encode(),
+            "application/json",
+        ),
+        TREASURY_AVERAGE_INTEREST_COST_STREAM_ID: (
+            "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+            "v2/accounting/od/avg_interest_rates",
+            json.dumps(
+                {
+                    "data": [
+                        {
+                            "record_date": "2026-07-31",
+                            "security_desc": "Total Marketable",
+                            "avg_interest_rate_amt": "3.443",
+                        },
+                        {
+                            "record_date": "2026-07-31",
+                            "security_desc": "Total Interest-bearing Debt",
+                            "avg_interest_rate_amt": "3.447",
+                        },
+                        {
+                            "record_date": "2025-07-31",
+                            "security_desc": "Total Marketable",
+                            "avg_interest_rate_amt": "3.399",
+                        },
+                        {
+                            "record_date": "2025-07-31",
+                            "security_desc": "Total Interest-bearing Debt",
+                            "avg_interest_rate_amt": "3.352",
+                        },
+                    ]
+                }
+            ).encode(),
+            "application/json",
+        ),
+        TREASURY_INTEREST_EXPENSE_STREAM_ID: (
+            "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+            "v2/accounting/od/interest_expense",
+            json.dumps(
+                {
+                    "data": [
+                        {
+                            "record_date": "2026-07-31",
+                            "month_expense_amt": "60000000",
+                            "fytd_expense_amt": "700000000",
+                        },
+                        {
+                            "record_date": "2026-07-31",
+                            "month_expense_amt": "40000000",
+                            "fytd_expense_amt": "300000000",
+                        },
+                        {
+                            "record_date": "2025-07-31",
+                            "month_expense_amt": "50000000",
+                            "fytd_expense_amt": "600000000",
+                        },
+                        {
+                            "record_date": "2025-07-31",
+                            "month_expense_amt": "30000000",
+                            "fytd_expense_amt": "200000000",
+                        },
+                    ]
+                }
+            ).encode(),
+            "application/json",
+        ),
         TREASURY_YIELD_STREAM_ID: (
             "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml",
             treasury_xml,
@@ -309,7 +415,7 @@ def _documents() -> dict[str, OfficialMetricDocument]:
         BITB_HOLDINGS_STREAM_ID: (
             "https://bitbetf.com/",
             (
-                "<html><body><script id=\"__NEXT_DATA__\" type=\"application/json\">"
+                '<html><body><script id="__NEXT_DATA__" type="application/json">'
                 + json.dumps(
                     {
                         "props": {
@@ -384,39 +490,49 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
         assert len(serialized) < 2_000
         assert "E+" not in serialized
 
-    assert len({item.fact_type for item in snapshots}) == 15
+    assert len({item.fact_type for item in snapshots}) == 18
     assert {
-        item.observation.source_tier
-        for item in snapshots
-        if item.stream_id.startswith("fred-")
+        item.observation.source_tier for item in snapshots if item.stream_id.startswith("fred-")
     } == {SourceTier.AGGREGATOR}
     assert all(
         item.observation.source_tier == SourceTier.FIRST_PARTY
         for item in snapshots
-        if not item.stream_id.startswith("fred-")
-        and item.stream_id != STABLECOIN_SUPPLY_STREAM_ID
+        if not item.stream_id.startswith("fred-") and item.stream_id != STABLECOIN_SUPPLY_STREAM_ID
     )
     tga = next(item for item in snapshots if item.stream_id == TGA_STREAM_ID)
     assert {item.name.value: item.value for item in tga.metrics}["tga_change_1d_usd_m"] == -1329
-    auctions = next(
-        item for item in snapshots if item.stream_id == TREASURY_AUCTION_STREAM_ID
-    )
+    auctions = next(item for item in snapshots if item.stream_id == TREASURY_AUCTION_STREAM_ID)
     auction_values = {item.name.value: item.value for item in auctions.metrics}
     assert auction_values["treasury_coupon_offering_14d_usd_m"] == 24_000
     assert auction_values["treasury_bill_offering_14d_usd_m"] == 110_000
     assert auction_values["treasury_coupon_bid_to_cover"] == Decimal("2.6267")
-    nominal_yields = next(
-        item for item in snapshots if item.stream_id == TREASURY_YIELD_STREAM_ID
+    refinancing = next(
+        item for item in snapshots if item.stream_id == TREASURY_REFINANCING_STREAM_ID
     )
-    nominal_yield_values = {
-        item.name.value: item.value for item in nominal_yields.metrics
-    }
+    refinancing_values = {item.name.value: item.value for item in refinancing.metrics}
+    assert refinancing_values["treasury_marketable_debt_outstanding_usd_m"] == 1_000
+    assert refinancing_values["treasury_debt_maturing_1y_pct"] == 20
+    assert refinancing_values["treasury_debt_maturing_3y_pct"] == 50
+    average_cost = next(
+        item for item in snapshots if item.stream_id == TREASURY_AVERAGE_INTEREST_COST_STREAM_ID
+    )
+    average_cost_values = {item.name.value: item.value for item in average_cost.metrics}
+    assert average_cost_values["treasury_marketable_avg_interest_rate_change_1y_bps"] == Decimal(
+        "4.4"
+    )
+    assert average_cost_values["treasury_total_avg_interest_rate_change_1y_bps"] == Decimal("9.5")
+    interest_expense = next(
+        item for item in snapshots if item.stream_id == TREASURY_INTEREST_EXPENSE_STREAM_ID
+    )
+    interest_expense_values = {item.name.value: item.value for item in interest_expense.metrics}
+    assert interest_expense_values["treasury_interest_expense_month_usd_m"] == 100
+    assert interest_expense_values["treasury_interest_expense_month_change_1y_pct"] == 25
+    assert interest_expense_values["treasury_interest_expense_fytd_change_1y_pct"] == 25
+    nominal_yields = next(item for item in snapshots if item.stream_id == TREASURY_YIELD_STREAM_ID)
+    nominal_yield_values = {item.name.value: item.value for item in nominal_yields.metrics}
     assert nominal_yield_values["treasury_2y_change_1d_bps"] == Decimal("5")
     assert nominal_yields.change_context is not None
-    assert (
-        nominal_yields.change_context.metric_name
-        == OfficialMetricName.TREASURY_2Y_CHANGE_1D_BPS
-    )
+    assert nominal_yields.change_context.metric_name == OfficialMetricName.TREASURY_2Y_CHANGE_1D_BPS
     real_yields = next(
         item for item in snapshots if item.stream_id == TREASURY_REAL_YIELD_STREAM_ID
     )
@@ -429,8 +545,7 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
     }
     assert real_yields.change_context is not None
     assert (
-        real_yields.change_context.metric_name
-        == OfficialMetricName.TREASURY_REAL_10Y_CHANGE_1D_BPS
+        real_yields.change_context.metric_name == OfficialMetricName.TREASURY_REAL_10Y_CHANGE_1D_BPS
     )
     ibit = next(item for item in snapshots if item.stream_id == IBIT_HOLDINGS_STREAM_ID)
     assert {item.name.value: item.value for item in ibit.metrics}["ibit_btc_holdings"] == Decimal(
@@ -444,12 +559,8 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
     bitb_values = {item.name.value: item.value for item in bitb.metrics}
     assert bitb_values["btc_etp_holdings"] == Decimal("37871.96676424")
     assert bitb_values["btc_etp_shares_outstanding"] == Decimal("69780000")
-    stablecoin = next(
-        item for item in snapshots if item.stream_id == STABLECOIN_SUPPLY_STREAM_ID
-    )
-    stablecoin_values = {
-        item.name.value: item.value for item in stablecoin.metrics
-    }
+    stablecoin = next(item for item in snapshots if item.stream_id == STABLECOIN_SUPPLY_STREAM_ID)
+    stablecoin_values = {item.name.value: item.value for item in stablecoin.metrics}
     assert stablecoin.observation.source_tier == SourceTier.AGGREGATOR
     assert stablecoin.effective_date == OBSERVED_AT.date() - timedelta(days=1)
     assert stablecoin_values["usd_stablecoin_supply_change_1d_usd_m"] == 100
@@ -468,9 +579,7 @@ def test_pre_v10_ibit_metric_name_remains_readable_but_is_not_emitted() -> None:
 
     assert OfficialMetricName("ibit_net_assets_usd_m") == OfficialMetricName.IBIT_NET_ASSETS_USD_M
     assert "ibit_net_assets_usd_m" not in {item.name.value for item in snapshot.metrics}
-    assert "ibit_holdings_market_value_usd_m" in {
-        item.name.value for item in snapshot.metrics
-    }
+    assert "ibit_holdings_market_value_usd_m" in {item.name.value for item in snapshot.metrics}
 
 
 def test_stablecoin_supply_rejects_future_rows_instead_of_hiding_them() -> None:
@@ -515,10 +624,7 @@ def test_metric_ingestion_is_idempotent_and_appends_only_semantic_revision() -> 
     revised = ingestor.ingest(changed, observed_at=OBSERVED_AT + timedelta(minutes=2))
 
     assert first.new_fact_revision is not None
-    assert (
-        first.new_fact_revision.decision_materiality
-        == FactDecisionMateriality.BACKGROUND
-    )
+    assert first.new_fact_revision.decision_materiality == FactDecisionMateriality.BACKGROUND
     assert duplicate.new_fact_revision is None
     assert revised.new_fact_revision is not None
     assert revised.new_fact_revision.previous_revision_id == first.new_fact_revision.revision_id
@@ -557,10 +663,7 @@ def test_empirically_extreme_metric_change_becomes_material_candidate() -> None:
     assert result.record.record.change_context.absolute_change_percentile == 1
     assert result.record.record.change_context.sample_size >= 30
     assert result.new_fact_revision is not None
-    assert (
-        result.new_fact_revision.decision_materiality
-        == FactDecisionMateriality.CANDIDATE
-    )
+    assert result.new_fact_revision.decision_materiality == FactDecisionMateriality.CANDIDATE
 
 
 def test_latest_only_issuer_feed_builds_honest_change_after_second_day() -> None:
@@ -571,8 +674,7 @@ def test_latest_only_issuer_feed_builds_honest_change_after_second_day() -> None
     second_document = replace(
         first_document,
         content=(
-            first_document.content
-            .replace(b"Aug 20, 2026", b"Aug 21, 2026")
+            first_document.content.replace(b"Aug 20, 2026", b"Aug 21, 2026")
             .replace(b"1,333,840,000.00", b"1,343,840,000.00")
             .replace(b"762,287.03650", b"768,287.03650")
         ),
@@ -591,10 +693,7 @@ def test_latest_only_issuer_feed_builds_honest_change_after_second_day() -> None
     assert second.record.record.change_context is not None
     assert second.record.record.change_context.sample_size == 1
     assert second.new_fact_revision is not None
-    assert (
-        second.new_fact_revision.decision_materiality
-        == FactDecisionMateriality.BACKGROUND
-    )
+    assert second.new_fact_revision.decision_materiality == FactDecisionMateriality.BACKGROUND
 
 
 @pytest.mark.parametrize(

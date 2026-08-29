@@ -83,7 +83,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
     )
     assert config.capital.decision.version == "portfolio-net-edge-v17"
-    assert config.information.version == "information-intake-v46"
+    assert config.information.version == "information-intake-v47"
     assert config.information.normalizer_version == "trendradar-collector-v12"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.economic_release_actual_poll_seconds == 15
@@ -99,8 +99,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         if item.immediate_review_eligible
     } == {"fed-speeches", "fed-testimony"}
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v53"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v20"
+    assert config.decision_state.version == "portfolio-state-v54"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v21"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v57"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"
@@ -146,7 +146,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BTCUSDT",
         "ETHUSDT",
     )
-    assert config.assessment.version == "context-assessment-v56"
+    assert config.assessment.version == "context-assessment-v57"
     assert config.outcome_evaluation.version == "typed-outcome-settlement-v58"
     assert config.outcome_evaluation.forecast_prior.enabled
     assert config.outcome_evaluation.forecast_prior.artifact_id == (
@@ -154,7 +154,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v33"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v14"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v15"
     assert tuple(item.key for item in config.assessment.mandate.mandate_exposures) == (
         ("CRYPTO_NETWORK", "BTC"),
         ("INFLATION_SENSITIVE", "PAXG"),
@@ -201,6 +201,9 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "AUCTION_ABSORPTION",
         "DEBT_ISSUANCE",
     )
+    assert fiscal_sources["treasury-average-interest-cost"].capabilities == ("DEBT_SERVICE_BURDEN",)
+    assert fiscal_sources["treasury-interest-expense"].capabilities == ("DEBT_SERVICE_BURDEN",)
+    assert fiscal_sources["treasury-refinancing-profile"].capabilities == ("REFINANCING_PROFILE",)
     cross_asset = next(
         item
         for item in config.information.coverage_requirements
@@ -269,6 +272,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "US_EMPLOYMENT",
         "US_GROWTH",
         "US_FISCAL_LIQUIDITY",
+        "US_FISCAL_CAPACITY",
         "US_REAL_INTEREST_RATES",
         "US_DOLLAR",
         "US_EQUITY_RISK_APPETITE",

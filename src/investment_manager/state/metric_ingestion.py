@@ -36,7 +36,10 @@ from investment_manager.information.official.metrics import (
     STABLECOIN_SUPPLY_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_AUCTION_STREAM_ID,
+    TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+    TREASURY_INTEREST_EXPENSE_STREAM_ID,
     TREASURY_REAL_YIELD_STREAM_ID,
+    TREASURY_REFINANCING_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
     parse_official_metric_document,
     with_official_metric_history,
@@ -64,7 +67,10 @@ OFFICIAL_METRIC_STREAM_DOMAINS = {
     ARKB_HOLDINGS_STREAM_ID: CausalDomain.INSTITUTIONAL_FLOWS,
     BITB_HOLDINGS_STREAM_ID: CausalDomain.INSTITUTIONAL_FLOWS,
     TGA_STREAM_ID: CausalDomain.FISCAL_DEBT,
+    TREASURY_AVERAGE_INTEREST_COST_STREAM_ID: CausalDomain.FISCAL_DEBT,
     TREASURY_AUCTION_STREAM_ID: CausalDomain.FISCAL_DEBT,
+    TREASURY_INTEREST_EXPENSE_STREAM_ID: CausalDomain.FISCAL_DEBT,
+    TREASURY_REFINANCING_STREAM_ID: CausalDomain.FISCAL_DEBT,
     TREASURY_REAL_YIELD_STREAM_ID: CausalDomain.CROSS_ASSET_EXTERNAL,
     TREASURY_YIELD_STREAM_ID: CausalDomain.CROSS_ASSET_EXTERNAL,
     FED_BROAD_DOLLAR_STREAM_ID: CausalDomain.CROSS_ASSET_EXTERNAL,
@@ -88,6 +94,9 @@ SLOW_OFFICIAL_METRIC_STREAMS = {
     NYFED_SOMA_STREAM_ID,
     STABLECOIN_SUPPLY_STREAM_ID,
     TREASURY_REAL_YIELD_STREAM_ID,
+    TREASURY_REFINANCING_STREAM_ID,
+    TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+    TREASURY_INTEREST_EXPENSE_STREAM_ID,
 }
 
 
@@ -406,9 +415,7 @@ class OfficialMetricCollectorService:
         try:
             self._poll_recorder.put(poll)
         except Exception as exc:
-            raise SourcePollAuditError(
-                f"官方指标 {stream_id} 来源轮询事实无法持久化"
-            ) from exc
+            raise SourcePollAuditError(f"官方指标 {stream_id} 来源轮询事实无法持久化") from exc
 
 
 @dataclass(slots=True)
@@ -521,14 +528,10 @@ class AggregatedEtfFlowCollectorService:
             poll_interval_seconds=self._poll_seconds,
             latest_publication_at=max(publications, default=None),
             observation_count=0 if result is None else len(result.records),
-            new_fact_count=(
-                0 if result is None else len(result.new_fact_revisions)
-            ),
+            new_fact_count=(0 if result is None else len(result.new_fact_revisions)),
             error_class=error_class,
         )
         try:
             self._poll_recorder.put(poll)
         except Exception as exc:
-            raise SourcePollAuditError(
-                "ETF 合计流来源轮询事实无法持久化"
-            ) from exc
+            raise SourcePollAuditError("ETF 合计流来源轮询事实无法持久化") from exc

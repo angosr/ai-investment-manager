@@ -37,6 +37,9 @@ DEFILLAMA_SOURCE_ID = "defillama"
 
 TGA_STREAM_ID = "treasury-tga-balance"
 TREASURY_AUCTION_STREAM_ID = "treasury-auction-results"
+TREASURY_REFINANCING_STREAM_ID = "treasury-refinancing-profile"
+TREASURY_AVERAGE_INTEREST_COST_STREAM_ID = "treasury-average-interest-cost"
+TREASURY_INTEREST_EXPENSE_STREAM_ID = "treasury-interest-expense"
 TREASURY_REAL_YIELD_STREAM_ID = "treasury-real-yield-curve"
 TREASURY_YIELD_STREAM_ID = "treasury-yield-curve"
 FED_BROAD_DOLLAR_STREAM_ID = "fed-broad-dollar"
@@ -53,6 +56,9 @@ STABLECOIN_SUPPLY_STREAM_ID = "defillama-usd-stablecoin-supply"
 
 TGA_FACT_TYPE = "US_TREASURY_CASH_SNAPSHOT"
 TREASURY_AUCTION_FACT_TYPE = "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT"
+TREASURY_REFINANCING_FACT_TYPE = "US_TREASURY_REFINANCING_PROFILE_SNAPSHOT"
+TREASURY_AVERAGE_INTEREST_COST_FACT_TYPE = "US_TREASURY_AVERAGE_INTEREST_COST_SNAPSHOT"
+TREASURY_INTEREST_EXPENSE_FACT_TYPE = "US_TREASURY_INTEREST_EXPENSE_SNAPSHOT"
 TREASURY_REAL_YIELD_FACT_TYPE = "US_TREASURY_REAL_YIELD_CURVE_SNAPSHOT"
 TREASURY_YIELD_FACT_TYPE = "US_TREASURY_YIELD_CURVE_SNAPSHOT"
 FED_BROAD_DOLLAR_FACT_TYPE = "FED_BROAD_DOLLAR_SNAPSHOT"
@@ -69,9 +75,10 @@ USD_STABLECOIN_SUPPLY_FACT_TYPE = "USD_STABLECOIN_SUPPLY_SNAPSHOT"
 
 OFFICIAL_METRIC_RISK_FACTORS_BY_TYPE = {
     TGA_FACT_TYPE: frozenset({"US_FISCAL_LIQUIDITY"}),
-    TREASURY_AUCTION_FACT_TYPE: frozenset(
-        {"US_FISCAL_LIQUIDITY", "US_INTEREST_RATES"}
-    ),
+    TREASURY_AUCTION_FACT_TYPE: frozenset({"US_FISCAL_LIQUIDITY", "US_INTEREST_RATES"}),
+    TREASURY_REFINANCING_FACT_TYPE: frozenset({"US_FISCAL_CAPACITY"}),
+    TREASURY_AVERAGE_INTEREST_COST_FACT_TYPE: frozenset({"US_FISCAL_CAPACITY"}),
+    TREASURY_INTEREST_EXPENSE_FACT_TYPE: frozenset({"US_FISCAL_CAPACITY"}),
     TREASURY_REAL_YIELD_FACT_TYPE: frozenset({"US_REAL_INTEREST_RATES"}),
     TREASURY_YIELD_FACT_TYPE: frozenset({"US_INTEREST_RATES"}),
     FED_BROAD_DOLLAR_FACT_TYPE: frozenset({"US_DOLLAR"}),
@@ -100,14 +107,10 @@ class OfficialMetricName(StrEnum):
     IBIT_SHARES_OUTSTANDING_CHANGE_1D = "ibit_shares_outstanding_change_1d"
     BTC_ETP_HOLDINGS = "btc_etp_holdings"
     BTC_ETP_HOLDINGS_CHANGE_1D = "btc_etp_holdings_change_1d"
-    BTC_ETP_HOLDINGS_MARKET_VALUE_USD_M = (
-        "btc_etp_holdings_market_value_usd_m"
-    )
+    BTC_ETP_HOLDINGS_MARKET_VALUE_USD_M = "btc_etp_holdings_market_value_usd_m"
     BTC_ETP_NET_ASSETS_USD_M = "btc_etp_net_assets_usd_m"
     BTC_ETP_SHARES_OUTSTANDING = "btc_etp_shares_outstanding"
-    BTC_ETP_SHARES_OUTSTANDING_CHANGE_1D = (
-        "btc_etp_shares_outstanding_change_1d"
-    )
+    BTC_ETP_SHARES_OUTSTANDING_CHANGE_1D = "btc_etp_shares_outstanding_change_1d"
     TGA_BALANCE_USD_M = "tga_balance_usd_m"
     TGA_CHANGE_1D_USD_M = "tga_change_1d_usd_m"
     TGA_CHANGE_5D_USD_M = "tga_change_5d_usd_m"
@@ -116,10 +119,25 @@ class OfficialMetricName(StrEnum):
     TREASURY_COUPON_BID_TO_COVER = "treasury_coupon_bid_to_cover"
     TREASURY_COUPON_DIRECT_SHARE_PCT = "treasury_coupon_direct_share_pct"
     TREASURY_COUPON_INDIRECT_SHARE_PCT = "treasury_coupon_indirect_share_pct"
-    TREASURY_COUPON_PRIMARY_DEALER_SHARE_PCT = (
-        "treasury_coupon_primary_dealer_share_pct"
-    )
+    TREASURY_COUPON_PRIMARY_DEALER_SHARE_PCT = "treasury_coupon_primary_dealer_share_pct"
     TREASURY_COUPON_SOMA_ADDON_14D_USD_M = "treasury_coupon_soma_addon_14d_usd_m"
+    TREASURY_MARKETABLE_DEBT_OUTSTANDING_USD_M = "treasury_marketable_debt_outstanding_usd_m"
+    TREASURY_DEBT_MATURING_1Y_USD_M = "treasury_debt_maturing_1y_usd_m"
+    TREASURY_DEBT_MATURING_1Y_PCT = "treasury_debt_maturing_1y_pct"
+    TREASURY_DEBT_MATURING_3Y_PCT = "treasury_debt_maturing_3y_pct"
+    TREASURY_WEIGHTED_REMAINING_MATURITY_YEARS = "treasury_weighted_remaining_maturity_years"
+    TREASURY_MARKETABLE_AVG_INTEREST_RATE_PCT = "treasury_marketable_avg_interest_rate_pct"
+    TREASURY_MARKETABLE_AVG_INTEREST_RATE_CHANGE_1Y_BPS = (
+        "treasury_marketable_avg_interest_rate_change_1y_bps"
+    )
+    TREASURY_TOTAL_AVG_INTEREST_RATE_PCT = "treasury_total_avg_interest_rate_pct"
+    TREASURY_TOTAL_AVG_INTEREST_RATE_CHANGE_1Y_BPS = (
+        "treasury_total_avg_interest_rate_change_1y_bps"
+    )
+    TREASURY_INTEREST_EXPENSE_MONTH_USD_M = "treasury_interest_expense_month_usd_m"
+    TREASURY_INTEREST_EXPENSE_MONTH_CHANGE_1Y_PCT = "treasury_interest_expense_month_change_1y_pct"
+    TREASURY_INTEREST_EXPENSE_FYTD_USD_M = "treasury_interest_expense_fytd_usd_m"
+    TREASURY_INTEREST_EXPENSE_FYTD_CHANGE_1Y_PCT = "treasury_interest_expense_fytd_change_1y_pct"
     TREASURY_2Y_PCT = "treasury_2y_pct"
     TREASURY_2Y_CHANGE_1D_BPS = "treasury_2y_change_1d_bps"
     TREASURY_10Y_PCT = "treasury_10y_pct"
@@ -149,15 +167,9 @@ class OfficialMetricName(StrEnum):
     WTI_USD_PER_BARREL = "wti_usd_per_barrel"
     WTI_CHANGE_1D_PCT = "wti_change_1d_pct"
     USD_STABLECOIN_SUPPLY_USD_M = "usd_stablecoin_supply_usd_m"
-    USD_STABLECOIN_SUPPLY_CHANGE_1D_USD_M = (
-        "usd_stablecoin_supply_change_1d_usd_m"
-    )
-    USD_STABLECOIN_SUPPLY_CHANGE_7D_USD_M = (
-        "usd_stablecoin_supply_change_7d_usd_m"
-    )
-    USD_STABLECOIN_SUPPLY_CHANGE_30D_USD_M = (
-        "usd_stablecoin_supply_change_30d_usd_m"
-    )
+    USD_STABLECOIN_SUPPLY_CHANGE_1D_USD_M = "usd_stablecoin_supply_change_1d_usd_m"
+    USD_STABLECOIN_SUPPLY_CHANGE_7D_USD_M = "usd_stablecoin_supply_change_7d_usd_m"
+    USD_STABLECOIN_SUPPLY_CHANGE_30D_USD_M = "usd_stablecoin_supply_change_30d_usd_m"
 
 
 class OfficialMetricUnit(StrEnum):
@@ -168,6 +180,7 @@ class OfficialMetricUnit(StrEnum):
     BASIS_POINTS = "BASIS_POINTS"
     INDEX = "INDEX"
     USD_PER_BARREL = "USD_PER_BARREL"
+    YEARS = "YEARS"
 
 
 class OfficialMetricValue(FrozenModel):
@@ -250,11 +263,7 @@ class OfficialMetricSnapshot(FrozenModel):
             raise ValueError("官方指标 risk_factors 必须唯一且排序")
         if self.change_context is not None:
             contextual_metric = next(
-                (
-                    item
-                    for item in self.metrics
-                    if item.name == self.change_context.metric_name
-                ),
+                (item for item in self.metrics if item.name == self.change_context.metric_name),
                 None,
             )
             if contextual_metric is None:
@@ -310,6 +319,9 @@ def parse_official_metric_document(
     parsers = {
         TGA_STREAM_ID: _parse_tga,
         TREASURY_AUCTION_STREAM_ID: _parse_treasury_auctions,
+        TREASURY_REFINANCING_STREAM_ID: _parse_treasury_refinancing,
+        TREASURY_AVERAGE_INTEREST_COST_STREAM_ID: _parse_treasury_average_interest_cost,
+        TREASURY_INTEREST_EXPENSE_STREAM_ID: _parse_treasury_interest_expense,
         TREASURY_REAL_YIELD_STREAM_ID: _parse_treasury_real_yields,
         TREASURY_YIELD_STREAM_ID: _parse_treasury_yields,
         FED_BROAD_DOLLAR_STREAM_ID: _parse_broad_dollar,
@@ -399,11 +411,14 @@ def _parse_treasury_auctions(
         private_accepted = accepted - soma
         if offered <= 0 or private_accepted <= 0:
             raise ValueError("TreasuryDirect coupon auction 金额非法")
-        bid_to_cover = sum(
-            _decimal(row.get("bidToCoverRatio"), name="bidToCoverRatio")
-            * _decimal(row.get("offeringAmount"), name="offeringAmount")
-            for row in coupons
-        ) / offered
+        bid_to_cover = (
+            sum(
+                _decimal(row.get("bidToCoverRatio"), name="bidToCoverRatio")
+                * _decimal(row.get("offeringAmount"), name="offeringAmount")
+                for row in coupons
+            )
+            / offered
+        )
         metrics.extend(
             (
                 _metric(
@@ -413,23 +428,17 @@ def _parse_treasury_auctions(
                 ),
                 _metric(
                     OfficialMetricName.TREASURY_COUPON_DIRECT_SHARE_PCT,
-                    total(coupons, "directBidderAccepted")
-                    / private_accepted
-                    * Decimal("100"),
+                    total(coupons, "directBidderAccepted") / private_accepted * Decimal("100"),
                     OfficialMetricUnit.PERCENT,
                 ),
                 _metric(
                     OfficialMetricName.TREASURY_COUPON_INDIRECT_SHARE_PCT,
-                    total(coupons, "indirectBidderAccepted")
-                    / private_accepted
-                    * Decimal("100"),
+                    total(coupons, "indirectBidderAccepted") / private_accepted * Decimal("100"),
                     OfficialMetricUnit.PERCENT,
                 ),
                 _metric(
                     OfficialMetricName.TREASURY_COUPON_PRIMARY_DEALER_SHARE_PCT,
-                    total(coupons, "primaryDealerAccepted")
-                    / private_accepted
-                    * Decimal("100"),
+                    total(coupons, "primaryDealerAccepted") / private_accepted * Decimal("100"),
                     OfficialMetricUnit.PERCENT,
                 ),
                 _metric(
@@ -451,6 +460,263 @@ def _parse_treasury_auctions(
         source_url=source_url,
         observed_at=observed_at,
         source_published_at=_effective_at(latest_date, observed_at),
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_treasury_refinancing(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    """Compress the current marketable debt stock and maturity wall.
+
+    FiscalData exposes reopened securities as additional rows while only one row
+    carries the outstanding amount.  Requiring a numeric amount and maturity
+    therefore avoids double counting without relying on a security-name list.
+    """
+
+    document = _json_object(content)
+    rows = document.get("data")
+    if not isinstance(rows, list):
+        raise ValueError("Treasury MSPD API 缺少 data")
+    eligible_rows = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and _date(row.get("record_date"), name="MSPD record_date") <= observed_at.date()
+    ]
+    if not eligible_rows:
+        raise ValueError("Treasury MSPD API 不含截止时点前记录")
+    effective_date = max(
+        _date(row.get("record_date"), name="MSPD record_date") for row in eligible_rows
+    )
+    current = [
+        row
+        for row in eligible_rows
+        if _date(row.get("record_date"), name="MSPD record_date") == effective_date
+    ]
+    total_rows = [row for row in current if row.get("security_class1_desc") == "Total Marketable"]
+    if len(total_rows) != 1:
+        raise ValueError("Treasury MSPD API 缺少唯一 Total Marketable")
+    total_outstanding = _decimal(
+        total_rows[0].get("outstanding_amt"), name="marketable debt outstanding"
+    )
+    if total_outstanding <= 0:
+        raise ValueError("Treasury MSPD marketable debt outstanding 必须为正数")
+
+    securities: list[tuple[Decimal, int]] = []
+    for row in current:
+        maturity_value = row.get("maturity_date")
+        amount_value = row.get("outstanding_amt")
+        if maturity_value in {None, "", "null"} or amount_value in {
+            None,
+            "",
+            "null",
+            "*",
+        }:
+            continue
+        maturity = _date(maturity_value, name="MSPD maturity_date")
+        remaining_days = (maturity - effective_date).days
+        amount = _decimal(amount_value, name="MSPD outstanding_amt")
+        if remaining_days >= 0 and amount > 0:
+            securities.append((amount, remaining_days))
+    if not securities:
+        raise ValueError("Treasury MSPD API 不含可计算的未到期证券")
+    represented_outstanding = sum((amount for amount, _ in securities), Decimal("0"))
+    if represented_outstanding <= 0:
+        raise ValueError("Treasury MSPD 未到期证券余额必须为正数")
+    maturing_1y = sum((amount for amount, days in securities if days <= 365), Decimal("0"))
+    maturing_3y = sum((amount for amount, days in securities if days <= 1095), Decimal("0"))
+    weighted_maturity_years = (
+        sum((amount * days for amount, days in securities), Decimal("0"))
+        / represented_outstanding
+        / Decimal("365.2425")
+    )
+    return _snapshot(
+        source_id=TREASURY_FISCAL_SOURCE_ID,
+        stream_id=TREASURY_REFINANCING_STREAM_ID,
+        domain=CausalDomain.FISCAL_DEBT,
+        fact_type=TREASURY_REFINANCING_FACT_TYPE,
+        effective_date=effective_date,
+        headline="U.S. Treasury marketable debt refinancing profile",
+        risk_factors=("US_FISCAL_CAPACITY",),
+        metrics=(
+            _metric(
+                OfficialMetricName.TREASURY_MARKETABLE_DEBT_OUTSTANDING_USD_M,
+                total_outstanding,
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_DEBT_MATURING_1Y_USD_M,
+                maturing_1y,
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_DEBT_MATURING_1Y_PCT,
+                maturing_1y / total_outstanding * Decimal("100"),
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_DEBT_MATURING_3Y_PCT,
+                maturing_3y / total_outstanding * Decimal("100"),
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_WEIGHTED_REMAINING_MATURITY_YEARS,
+                weighted_maturity_years,
+                OfficialMetricUnit.YEARS,
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=_effective_at(effective_date, observed_at),
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_treasury_average_interest_cost(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    document = _json_object(content)
+    rows = document.get("data")
+    if not isinstance(rows, list):
+        raise ValueError("Treasury average interest rate API 缺少 data")
+    values: dict[date, dict[str, Decimal]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        record_date = _date(row.get("record_date"), name="average rate record_date")
+        if record_date > observed_at.date():
+            continue
+        description = row.get("security_desc")
+        if description not in {"Total Marketable", "Total Interest-bearing Debt"}:
+            continue
+        values.setdefault(record_date, {})[str(description)] = _decimal(
+            row.get("avg_interest_rate_amt"), name="average interest rate"
+        )
+    complete_dates = sorted(
+        record_date
+        for record_date, by_description in values.items()
+        if {"Total Marketable", "Total Interest-bearing Debt"} <= set(by_description)
+    )
+    if not complete_dates:
+        raise ValueError("Treasury average interest rate API 不含完整汇总记录")
+    effective_date = complete_dates[-1]
+    prior_date = _prior_year_date(complete_dates, effective_date)
+    latest = values[effective_date]
+    prior = values[prior_date]
+    marketable = latest["Total Marketable"]
+    total = latest["Total Interest-bearing Debt"]
+    return _snapshot(
+        source_id=TREASURY_FISCAL_SOURCE_ID,
+        stream_id=TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+        domain=CausalDomain.FISCAL_DEBT,
+        fact_type=TREASURY_AVERAGE_INTEREST_COST_FACT_TYPE,
+        effective_date=effective_date,
+        headline="U.S. Treasury average interest cost",
+        risk_factors=("US_FISCAL_CAPACITY",),
+        metrics=(
+            _metric(
+                OfficialMetricName.TREASURY_MARKETABLE_AVG_INTEREST_RATE_PCT,
+                marketable,
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_MARKETABLE_AVG_INTEREST_RATE_CHANGE_1Y_BPS,
+                (marketable - prior["Total Marketable"]) * Decimal("100"),
+                OfficialMetricUnit.BASIS_POINTS,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_TOTAL_AVG_INTEREST_RATE_PCT,
+                total,
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_TOTAL_AVG_INTEREST_RATE_CHANGE_1Y_BPS,
+                (total - prior["Total Interest-bearing Debt"]) * Decimal("100"),
+                OfficialMetricUnit.BASIS_POINTS,
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=_effective_at(effective_date, observed_at),
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_treasury_interest_expense(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    document = _json_object(content)
+    rows = document.get("data")
+    if not isinstance(rows, list):
+        raise ValueError("Treasury interest expense API 缺少 data")
+    by_date: dict[date, list[dict]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        record_date = _date(row.get("record_date"), name="interest expense record_date")
+        if record_date <= observed_at.date():
+            by_date.setdefault(record_date, []).append(row)
+    if not by_date:
+        raise ValueError("Treasury interest expense API 不含截止时点前记录")
+    effective_date = max(by_date)
+    prior_date = _prior_year_date(sorted(by_date), effective_date)
+
+    def totals(record_date: date) -> tuple[Decimal, Decimal]:
+        current = by_date[record_date]
+        month = sum(
+            (
+                _decimal(row.get("month_expense_amt"), name="month interest expense")
+                for row in current
+            ),
+            Decimal("0"),
+        )
+        fytd = sum(
+            (
+                _decimal(row.get("fytd_expense_amt"), name="FYTD interest expense")
+                for row in current
+            ),
+            Decimal("0"),
+        )
+        return month, fytd
+
+    month, fytd = totals(effective_date)
+    prior_month, prior_fytd = totals(prior_date)
+    if prior_month == 0 or prior_fytd == 0:
+        raise ValueError("Treasury interest expense 同期基数不能为零")
+    return _snapshot(
+        source_id=TREASURY_FISCAL_SOURCE_ID,
+        stream_id=TREASURY_INTEREST_EXPENSE_STREAM_ID,
+        domain=CausalDomain.FISCAL_DEBT,
+        fact_type=TREASURY_INTEREST_EXPENSE_FACT_TYPE,
+        effective_date=effective_date,
+        headline="U.S. Treasury interest expense burden",
+        risk_factors=("US_FISCAL_CAPACITY",),
+        metrics=(
+            _metric(
+                OfficialMetricName.TREASURY_INTEREST_EXPENSE_MONTH_USD_M,
+                month / Decimal("1000000"),
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_INTEREST_EXPENSE_MONTH_CHANGE_1Y_PCT,
+                (month / prior_month - 1) * Decimal("100"),
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_INTEREST_EXPENSE_FYTD_USD_M,
+                fytd / Decimal("1000000"),
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_INTEREST_EXPENSE_FYTD_CHANGE_1Y_PCT,
+                (fytd / prior_fytd - 1) * Decimal("100"),
+                OfficialMetricUnit.PERCENT,
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=_effective_at(effective_date, observed_at),
         payload_ref=payload_ref,
     )
 
@@ -678,13 +944,8 @@ def _treasury_curve_entries(
         properties = entry.find(f".//{metadata}properties")
         if properties is None:
             continue
-        values = {
-            item.tag.rsplit("}", 1)[-1]: (item.text or "").strip()
-            for item in properties
-        }
-        entries.append(
-            (_datetime(values.get("NEW_DATE"), name=f"{name} date").date(), values)
-        )
+        values = {item.tag.rsplit("}", 1)[-1]: (item.text or "").strip() for item in properties}
+        entries.append((_datetime(values.get("NEW_DATE"), name=f"{name} date").date(), values))
     entries.sort(key=lambda item: item[0])
     if len(entries) < 2:
         raise ValueError(f"{name} XML 缺少至少两个交易日")
@@ -864,17 +1125,11 @@ def _parse_stablecoin_supply(
     if len(observations) < 61:
         raise ValueError("DefiLlama 稳定币供给缺少至少 61 个已完成日")
     recent = observations[-61:]
-    if any(
-        current[0] - previous[0] != timedelta(days=1)
-        for previous, current in pairwise(recent)
-    ):
+    if any(current[0] - previous[0] != timedelta(days=1) for previous, current in pairwise(recent)):
         raise ValueError("DefiLlama 稳定币供给最近 61 日不连续")
 
     latest_date, latest = observations[-1]
-    changes = {
-        distance: latest - observations[-1 - distance][1]
-        for distance in (1, 7, 30)
-    }
+    changes = {distance: latest - observations[-1 - distance][1] for distance in (1, 7, 30)}
     return _snapshot(
         source_id=DEFILLAMA_SOURCE_ID,
         source_tier=SourceTier.AGGREGATOR,
@@ -1191,9 +1446,7 @@ def _parse_ibit_holdings(
     if header_index is None:
         raise ValueError("IBIT holdings CSV 缺少持仓表头")
     try:
-        effective_date = datetime.strptime(
-            metadata["Fund Holdings as of"], "%b %d, %Y"
-        ).date()
+        effective_date = datetime.strptime(metadata["Fund Holdings as of"], "%b %d, %Y").date()
         shares = _decimal(
             metadata["Shares Outstanding"].replace(",", ""),
             name="IBIT shares outstanding",
@@ -1439,15 +1692,13 @@ def with_official_metric_history(
     by_date = {
         item.effective_date: item
         for item in history
-        if item.stream_id == snapshot.stream_id
-        and item.effective_date < snapshot.effective_date
+        if item.stream_id == snapshot.stream_id and item.effective_date < snapshot.effective_date
     }
     ordered = tuple(by_date[key] for key in sorted(by_date))
     if not ordered:
         return snapshot
     holdings_history = tuple(
-        (item.effective_date, _metric_value(item, holdings_name))
-        for item in (*ordered, snapshot)
+        (item.effective_date, _metric_value(item, holdings_name)) for item in (*ordered, snapshot)
     )
     holdings_change = holdings_history[-1][1] - holdings_history[-2][1]
     additions = [
@@ -1459,8 +1710,7 @@ def with_official_metric_history(
     ]
     if shares_name is not None and shares_change_name is not None:
         shares_history = tuple(
-            (item.effective_date, _metric_value(item, shares_name))
-            for item in (*ordered, snapshot)
+            (item.effective_date, _metric_value(item, shares_name)) for item in (*ordered, snapshot)
         )
         additions.append(
             _metric(
@@ -1573,6 +1823,7 @@ def _metric(
         OfficialMetricUnit.BASIS_POINTS: Decimal("0.01"),
         OfficialMetricUnit.INDEX: Decimal("0.0001"),
         OfficialMetricUnit.USD_PER_BARREL: Decimal("0.01"),
+        OfficialMetricUnit.YEARS: Decimal("0.001"),
     }[unit]
     rounded = value.quantize(precision, rounding=ROUND_HALF_EVEN)
     plain = format(rounded, "f").rstrip("0").rstrip(".")
@@ -1629,9 +1880,9 @@ def _most_unusual_change_context(
         if not changes:
             continue
         latest = changes[-1]
-        percentile = Decimal(
-            sum(abs(value) <= abs(latest) for value in changes)
-        ) / Decimal(len(changes))
+        percentile = Decimal(sum(abs(value) <= abs(latest) for value in changes)) / Decimal(
+            len(changes)
+        )
         rounded_latest = _metric(name, latest, unit).value
         contexts.append(
             OfficialMetricChangeContext(
@@ -1662,8 +1913,22 @@ def _effective_at(value: date, observed_at: datetime) -> datetime:
     return min(datetime.combine(value, time.min, tzinfo=UTC), observed_at)
 
 
+def _prior_year_date(values: list[date], latest: date) -> date:
+    candidates = [
+        value for value in values if value.year == latest.year - 1 and value.month == latest.month
+    ]
+    if not candidates:
+        raise ValueError("官方月度指标缺少上年同期")
+    return max(candidates)
+
+
 def _stream_source_id(stream_id: str) -> str:
-    if stream_id == TGA_STREAM_ID:
+    if stream_id in {
+        TGA_STREAM_ID,
+        TREASURY_REFINANCING_STREAM_ID,
+        TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+        TREASURY_INTEREST_EXPENSE_STREAM_ID,
+    }:
         return TREASURY_FISCAL_SOURCE_ID
     if stream_id == TREASURY_AUCTION_STREAM_ID:
         return TREASURY_DIRECT_SOURCE_ID

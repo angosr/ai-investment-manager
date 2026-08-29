@@ -12,7 +12,10 @@ from investment_manager.information.official.metrics import (
     FRED_SP500_STREAM_ID,
     FRED_WTI_STREAM_ID,
     STABLECOIN_SUPPLY_STREAM_ID,
+    TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+    TREASURY_INTEREST_EXPENSE_STREAM_ID,
     TREASURY_REAL_YIELD_STREAM_ID,
+    TREASURY_REFINANCING_STREAM_ID,
 )
 from investment_manager.information.official.public_calendar import (
     build_fed_chair_calendar_revision,
@@ -232,6 +235,52 @@ def test_treasury_real_yields_use_the_first_party_year_feed() -> None:
     assert requests[0].url.params["field_tdr_date_value"] == "2026"
 
 
+@pytest.mark.parametrize(
+    ("stream_id", "endpoint", "required_fields"),
+    (
+        (
+            TREASURY_REFINANCING_STREAM_ID,
+            "mspd_table_3_market",
+            {"record_date", "security_class1_desc", "maturity_date", "outstanding_amt"},
+        ),
+        (
+            TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+            "avg_interest_rates",
+            {"record_date", "security_desc", "avg_interest_rate_amt"},
+        ),
+        (
+            TREASURY_INTEREST_EXPENSE_STREAM_ID,
+            "interest_expense",
+            {"record_date", "month_expense_amt", "fytd_expense_amt"},
+        ),
+    ),
+)
+def test_treasury_capacity_sources_use_bounded_first_party_fields(
+    stream_id: str,
+    endpoint: str,
+    required_fields: set[str],
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=b'{"data": []}')
+
+    document = HttpOfficialMetricSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    ).fetch(stream_id, observed_at=OBSERVED_AT)
+
+    assert document is not None and document.media_type == "application/json"
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.url.host == "api.fiscaldata.treasury.gov"
+    assert request.url.path.endswith(endpoint)
+    assert set(request.url.params["fields"].split(",")) == required_fields
+    assert request.url.params["filter"].startswith("record_date:gte:")
+    assert int(request.url.params["page[size]"]) <= 10_000
+
+
 def test_stablecoin_supply_uses_one_pinned_aggregate_history_endpoint() -> None:
     requests: list[httpx.Request] = []
 
@@ -250,9 +299,7 @@ def test_stablecoin_supply_uses_one_pinned_aggregate_history_endpoint() -> None:
     second = source.fetch(STABLECOIN_SUPPLY_STREAM_ID, observed_at=OBSERVED_AT)
 
     assert first is not None and first.media_type == "application/json"
-    assert str(requests[0].url) == (
-        "https://stablecoins.llama.fi/stablecoincharts/all"
-    )
+    assert str(requests[0].url) == ("https://stablecoins.llama.fi/stablecoincharts/all")
     assert requests[1].headers["if-none-match"] == '"supply-1"'
     assert second is None
 

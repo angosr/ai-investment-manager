@@ -28,7 +28,10 @@ from investment_manager.information.official.metrics import (
     STABLECOIN_SUPPLY_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_AUCTION_STREAM_ID,
+    TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
+    TREASURY_INTEREST_EXPENSE_STREAM_ID,
     TREASURY_REAL_YIELD_STREAM_ID,
+    TREASURY_REFINANCING_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
 )
 from investment_manager.information.official.public_calendar import FED_PUBLIC_CALENDAR_URL
@@ -51,22 +54,28 @@ _TGA_API_URL = (
     "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
     "v1/accounting/dts/operating_cash_balance"
 )
+_TREASURY_REFINANCING_API_URL = (
+    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+    "v1/debt/mspd/mspd_table_3_market"
+)
+_TREASURY_AVERAGE_INTEREST_COST_API_URL = (
+    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+    "v2/accounting/od/avg_interest_rates"
+)
+_TREASURY_INTEREST_EXPENSE_API_URL = (
+    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+    "v2/accounting/od/interest_expense"
+)
 _TREASURY_YIELD_URL = (
-    "https://home.treasury.gov/resource-center/data-chart-center/"
-    "interest-rates/pages/xml"
+    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 )
 _TREASURY_AUCTION_URL = "https://www.treasurydirect.gov/TA_WS/securities/search"
-_FED_BROAD_DOLLAR_URL = (
-    "https://www.federalreserve.gov/feeds/data/H10_H10_JRXWTFB_N.B.xml"
-)
-_NYFED_RRP_URL = (
-    "https://markets.newyorkfed.org/api/rp/reverserepo/propositions/search.json"
-)
+_FED_BROAD_DOLLAR_URL = "https://www.federalreserve.gov/feeds/data/H10_H10_JRXWTFB_N.B.xml"
+_NYFED_RRP_URL = "https://markets.newyorkfed.org/api/rp/reverserepo/propositions/search.json"
 _NYFED_SOMA_URL = "https://markets.newyorkfed.org/api/soma/summary.json"
 _NYFED_RATES_URL = "https://markets.newyorkfed.org/api/rates/all/latest.json"
 _IBIT_HOLDINGS_URL = (
-    "https://www.ishares.com/us/products/333011/"
-    "ishares-bitcoin-trust-etf/latest-holdings.csv"
+    "https://www.ishares.com/us/products/333011/ishares-bitcoin-trust-etf/latest-holdings.csv"
 )
 _ARKB_HOLDINGS_URL = (
     "https://assets.ark-funds.com/fund-documents/funds-etf-csv/"
@@ -285,8 +294,11 @@ class HttpOfficialMetricSource:
         NYFED_SOMA_STREAM_ID,
         STABLECOIN_SUPPLY_STREAM_ID,
         TGA_STREAM_ID,
+        TREASURY_AVERAGE_INTEREST_COST_STREAM_ID,
         TREASURY_AUCTION_STREAM_ID,
+        TREASURY_INTEREST_EXPENSE_STREAM_ID,
         TREASURY_REAL_YIELD_STREAM_ID,
+        TREASURY_REFINANCING_STREAM_ID,
         TREASURY_YIELD_STREAM_ID,
     )
 
@@ -358,6 +370,42 @@ class HttpOfficialMetricSource:
                 params={
                     "filter": f"record_date:gte:{start}",
                     "sort": "-record_date,-account_type",
+                    "page[size]": "5000",
+                },
+            )
+            return str(url), "application/json"
+        if stream_id == TREASURY_REFINANCING_STREAM_ID:
+            start = (observed_at.date() - timedelta(days=62)).isoformat()
+            url = httpx.URL(
+                _TREASURY_REFINANCING_API_URL,
+                params={
+                    "fields": ("record_date,security_class1_desc,maturity_date,outstanding_amt"),
+                    "filter": f"record_date:gte:{start}",
+                    "sort": "-record_date,maturity_date",
+                    "page[size]": "10000",
+                },
+            )
+            return str(url), "application/json"
+        if stream_id == TREASURY_AVERAGE_INTEREST_COST_STREAM_ID:
+            start = (observed_at.date() - timedelta(days=400)).isoformat()
+            url = httpx.URL(
+                _TREASURY_AVERAGE_INTEREST_COST_API_URL,
+                params={
+                    "fields": ("record_date,security_desc,avg_interest_rate_amt"),
+                    "filter": f"record_date:gte:{start}",
+                    "sort": "-record_date,security_desc",
+                    "page[size]": "5000",
+                },
+            )
+            return str(url), "application/json"
+        if stream_id == TREASURY_INTEREST_EXPENSE_STREAM_ID:
+            start = (observed_at.date() - timedelta(days=400)).isoformat()
+            url = httpx.URL(
+                _TREASURY_INTEREST_EXPENSE_API_URL,
+                params={
+                    "fields": "record_date,month_expense_amt,fytd_expense_amt",
+                    "filter": f"record_date:gte:{start}",
+                    "sort": "-record_date",
                     "page[size]": "5000",
                 },
             )
@@ -456,9 +504,7 @@ class HttpFedOfficialSource:
         if (
             parsed.scheme != "https"
             or parsed.hostname not in {"federalreserve.gov", "www.federalreserve.gov"}
-            or not parsed.path.startswith(
-                ("/monetarypolicy/", "/newsevents/pressreleases/")
-            )
+            or not parsed.path.startswith(("/monetarypolicy/", "/newsevents/pressreleases/"))
         ):
             raise ValueError("Fed 政策原文 URL 不在固定官方路径")
         content = self._fetch(url, accept="text/html, application/xhtml+xml;q=0.9")

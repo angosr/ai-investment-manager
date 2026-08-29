@@ -4,10 +4,10 @@ feature:
   volatility_window: 8
 
 decision_state:
-  version: portfolio-state-v53
+  version: portfolio-state-v54
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v20
+    version: official-fact-v21
     affected_assets: [BTC, ETH, PAXG]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
@@ -96,12 +96,21 @@ decision_state:
       - fact_type: US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_AUCTION_ABSORPTION_REVISION
+      - fact_type: US_TREASURY_AVERAGE_INTEREST_COST_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_TREASURY_AVERAGE_INTEREST_COST_REVISION
       - fact_type: US_TREASURY_CASH_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_CASH_REVISION
+      - fact_type: US_TREASURY_INTEREST_EXPENSE_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_TREASURY_INTEREST_EXPENSE_REVISION
       - fact_type: US_TREASURY_REAL_YIELD_CURVE_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_REAL_YIELD_REVISION
+      - fact_type: US_TREASURY_REFINANCING_PROFILE_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_TREASURY_REFINANCING_PROFILE_REVISION
       - fact_type: US_TREASURY_YIELD_CURVE_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
@@ -405,7 +414,7 @@ shadow:
   analysis_deadline_seconds: 900
 
 information:
-  version: information-intake-v46
+  version: information-intake-v47
   normalizer_version: trendradar-collector-v12
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -465,10 +474,13 @@ information:
   # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
   coverage_requirements:
     - domain: FISCAL_DEBT
-      required_capabilities: [AUCTION_ABSORPTION, DEBT_ISSUANCE, DEBT_REPURCHASE, FISCAL_CALENDAR, TREASURY_CASH]
+      required_capabilities: [AUCTION_ABSORPTION, DEBT_ISSUANCE, DEBT_REPURCHASE, DEBT_SERVICE_BURDEN, FISCAL_CALENDAR, REFINANCING_PROFILE, TREASURY_CASH]
       sources:
         - {stream_id: treasury-auction-results, capabilities: [AUCTION_ABSORPTION, DEBT_ISSUANCE], maximum_publication_age_seconds: 172800}
+        - {stream_id: treasury-average-interest-cost, capabilities: [DEBT_SERVICE_BURDEN], maximum_publication_age_seconds: 2592000}
         - {stream_id: treasury-buyback-schedule, capabilities: [DEBT_REPURCHASE, FISCAL_CALENDAR], maximum_publication_age_seconds: 172800}
+        - {stream_id: treasury-interest-expense, capabilities: [DEBT_SERVICE_BURDEN], maximum_publication_age_seconds: 2592000}
+        - {stream_id: treasury-refinancing-profile, capabilities: [REFINANCING_PROFILE], maximum_publication_age_seconds: 2592000}
         - {stream_id: treasury-tga-balance, capabilities: [TREASURY_CASH], maximum_publication_age_seconds: 172800}
     - domain: MONETARY_INFLATION
       required_capabilities: [EMPLOYMENT_SURPRISE, INFLATION_SURPRISE, OFFICIAL_EVENT_CALENDAR, POLICY_DECISIONS, POLICY_IMPLEMENTATION]
@@ -540,11 +552,11 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v56
+  version: context-assessment-v57
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
-    version: primary-portfolio-mandate-v14
+    version: primary-portfolio-mandate-v15
     analysis_scope: primary-portfolio
     question: 以点时证据维护组合级可证伪世界模型，解释外生事件经利率、美元、流动性、资金行为与市场结构传导至可交易资产的主路径和竞争路径；不为没有独立盈利证据的候选制造资本结论。
     mandate_exposures:
@@ -562,7 +574,7 @@ assessment:
         market_symbol: PAXGUSDT
         horizons_minutes: [60, 240]
     # 顺序是 Packet 容量不足时的因果优先级：政策与最新官方宏观结果、流动性/定价中介、资金行为、交叉验证。
-    required_risk_factors: [US_MONETARY_POLICY, US_INFLATION, US_EMPLOYMENT, US_GROWTH, US_FISCAL_LIQUIDITY, US_REAL_INTEREST_RATES, US_DOLLAR, US_EQUITY_RISK_APPETITE, US_HIGH_YIELD_CREDIT_RISK, CRYPTO_LIQUIDITY_CAPACITY, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_ENERGY_INFLATION, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
+    required_risk_factors: [US_MONETARY_POLICY, US_INFLATION, US_EMPLOYMENT, US_GROWTH, US_FISCAL_LIQUIDITY, US_FISCAL_CAPACITY, US_REAL_INTEREST_RATES, US_DOLLAR, US_EQUITY_RISK_APPETITE, US_HIGH_YIELD_CREDIT_RISK, CRYPTO_LIQUIDITY_CAPACITY, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_ENERGY_INFLATION, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
 
 codex_accounts:
   version: local-directory-account-registry-v2
