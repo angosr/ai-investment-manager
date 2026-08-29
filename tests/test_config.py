@@ -638,6 +638,21 @@ def test_enabled_codex_runtime_requires_frozen_binary_digest() -> None:
         )
 
 
+def test_retired_temporal_analysis_queue_only_deserializes_old_release() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = load_config(root / "config" / "investment-manager.shadow.yaml").model_dump(
+        mode="python"
+    )
+    payload["temporal"]["task_queue"] = "retired-analysis-queue"
+
+    config = AppConfig.model_validate(payload)
+
+    assert config.temporal.retired_analysis_task_queue == "retired-analysis-queue"
+    serialized = config.temporal.model_dump(mode="python")
+    assert "task_queue" not in serialized
+    assert "retired_analysis_task_queue" not in serialized
+
+
 def _enabled_assessment_payload() -> tuple[type, dict]:
     root = Path(__file__).resolve().parents[1]
     config = load_config(root / "config" / "investment-manager.shadow.yaml")

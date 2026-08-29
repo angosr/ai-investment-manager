@@ -30,7 +30,14 @@ class TemporalPolicy(StrictConfig):
     version: str
     address: str = "127.0.0.1:7233"
     namespace: str = "default"
-    task_queue: str = "investment-manager-analysis-v1"
+    # 仅用于读取仍可能成为回滚目标的旧 Release；不进入序列化、行为身份或运行路由。
+    # 当 active/rollback 均不再含 ``task_queue`` 后删除此兼容字段。
+    retired_analysis_task_queue: str | None = Field(
+        default=None,
+        min_length=1,
+        validation_alias="task_queue",
+        exclude=True,
+    )
     assessment_task_queue: str = "investment-manager-assessment-v1"
     trigger_task_queue: str = "investment-manager-trigger-v1"
     activity_start_to_close_seconds: int = Field(default=240, ge=10, le=900)
@@ -52,10 +59,9 @@ class TemporalPolicy(StrictConfig):
             for item in (
                 self.address,
                 self.namespace,
-                self.task_queue,
                 self.assessment_task_queue,
                 self.trigger_task_queue,
             )
         ):
-            raise ValueError("Temporal address、namespace、task_queue 不得为空")
+            raise ValueError("Temporal address、namespace 和运行队列不得为空")
         return self

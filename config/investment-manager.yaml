@@ -320,7 +320,6 @@ temporal:
   version: temporal-analysis-v5
   address: 127.0.0.1:7233
   namespace: default
-  task_queue: investment-manager-analysis-v1
   assessment_task_queue: investment-manager-assessment-v1
   trigger_task_queue: investment-manager-trigger-v1
   activity_start_to_close_seconds: 890
