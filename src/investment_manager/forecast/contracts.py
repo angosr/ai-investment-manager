@@ -10,6 +10,7 @@ from investment_manager.forecast.models import ForecastTarget
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, PositiveDecimal
+from investment_manager.market.models import InstrumentProduct
 
 
 class ForecastOrientation(StrEnum):
@@ -124,6 +125,14 @@ class ForecastContract(FrozenModel):
             >= self.horizon_minutes * 60
         ):
             raise ValueError("Forecast Outcome 起点必须早于评价时点")
+        if self.settlement_rule == "spot-midpoint-return-v1" and (
+            self.outcome_start_delay_seconds is not None
+            or any(
+                leg.instrument.product != InstrumentProduct.SPOT
+                for leg in self.target.legs
+            )
+        ):
+            raise ValueError("Spot midpoint Outcome 只允许截止点起算的 Spot Target")
         bucket_ids = tuple(item.bucket_id for item in self.outcome_buckets)
         if len(set(bucket_ids)) != len(bucket_ids):
             raise ValueError("Forecast bucket_id 必须唯一")

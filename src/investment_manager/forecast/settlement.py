@@ -52,12 +52,22 @@ class ForecastPayoffResolver:
         outcome_start_at: datetime,
         evaluation_at: datetime,
         settled_at: datetime,
+        settlement_rule: str = "cutoff-executable-v1",
     ) -> ForecastLegOutcome:
-        exit_price = self.executable_exit_price(
-            leg=leg,
-            evaluation_at=evaluation_at,
-            visible_at=settled_at,
-        )
+        if settlement_rule == "spot-midpoint-return-v1":
+            if leg.instrument.product != InstrumentProduct.SPOT:
+                raise ValueError("Spot midpoint Outcome 不接受衍生品 Leg")
+            exit_price = self.spot_midpoint(
+                leg=leg,
+                evaluation_at=evaluation_at,
+                visible_at=settled_at,
+            )
+        else:
+            exit_price = self.executable_exit_price(
+                leg=leg,
+                evaluation_at=evaluation_at,
+                visible_at=settled_at,
+            )
         sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
         price_return = (
             sign
@@ -101,6 +111,26 @@ class ForecastPayoffResolver:
             funding_return_bps=funding_return,
             funding_settlement_ids=funding_ids,
         )
+
+    def spot_midpoint(
+        self,
+        *,
+        leg: ForecastLeg,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> Decimal:
+        quote = self.market.latest_spot_quote(
+            instrument=leg.instrument,
+            evaluation_at=evaluation_at,
+            visible_at=visible_at,
+        )
+        if quote is None or not self.fresh(
+            observed_at=quote.observed_at,
+            expected_at=evaluation_at,
+            maximum_age_seconds=self.maximum_spot_age_seconds,
+        ):
+            raise MarketFactsIncomplete
+        return (quote.bid + quote.ask) / 2
 
     def executable_reference_price(
         self,
@@ -258,6 +288,7 @@ class ForecastOutcomeSettler:
                 outcome_start_at=economic_start,
                 evaluation_at=slot.evaluation_at,
                 settled_at=settled_at,
+                settlement_rule=contract.settlement_rule,
             )
             for leg in contract.target.legs
         )
@@ -288,6 +319,7 @@ class ForecastOutcomeSettler:
         outcome_start_at: datetime,
         evaluation_at: datetime,
         settled_at: datetime,
+        settlement_rule: str,
     ) -> ForecastLegOutcome:
         return self._resolver().leg_outcome(
             leg=leg,
@@ -295,6 +327,7 @@ class ForecastOutcomeSettler:
             outcome_start_at=outcome_start_at,
             evaluation_at=evaluation_at,
             settled_at=settled_at,
+            settlement_rule=settlement_rule,
         )
 
     def _executable_reference_price(

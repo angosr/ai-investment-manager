@@ -170,6 +170,14 @@ def test_contract_rejects_probability_gap_and_untradeable_deadline() -> None:
     with pytest.raises(ValueError, match="最小可交易时长"):
         ForecastContract.create(**values)
 
+    values = contract.model_dump(mode="python", exclude={"contract_id"})
+    values.update(
+        settlement_rule="spot-midpoint-return-v1",
+        outcome_start_delay_seconds=0,
+    )
+    with pytest.raises(ValueError, match="截止点起算"):
+        ForecastContract.create(**values)
+
 
 def test_no_estimate_has_one_identity_per_slot_and_behavior() -> None:
     contract = _contract()

@@ -332,3 +332,67 @@ def test_permission_outcome_starts_after_common_completion_deadline() -> None:
     assert outcome.outcome_start_at == slot.completion_deadline_at
     assert outcome.legs[0].reference_price == Decimal("101")
     assert outcome.legs[1].reference_price == Decimal("102")
+
+
+def test_spot_midpoint_outcome_does_not_mix_execution_spread_into_direction() -> None:
+    _unused_store, contract, _unused_slot = _stores()
+    midpoint_contract = ForecastContract.create(
+        **{
+            **contract.model_dump(mode="python", exclude={"contract_id"}),
+            "settlement_rule": "spot-midpoint-return-v1",
+            "target": ForecastTarget.single_long(_instruments()[0]),
+        }
+    )
+    midpoint_slot = ForecastDecisionSlot.create(
+        midpoint_contract,
+        slot_as_of=NOW,
+        cutoff_prices=(
+            ForecastPriceAnchor(
+                instrument_id=_instruments()[0].key,
+                price=Decimal("100"),
+                observed_at=NOW,
+                available_at=NOW,
+                quote_ref="spot-midpoint-cutoff",
+            ),
+        ),
+    )
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlForecastStore(engine)
+    contracts = SqlForecastContractStore(engine)
+    contracts.record_contract(midpoint_contract)
+    binding = ForecastProducerBinding.create(
+        contract_id=midpoint_contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id="midpoint-test",
+        producer_behavior_id="midpoint-test-v1",
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(binding, activated_at=NOW)
+    contracts.record_slot(midpoint_slot, binding=binding)
+    market = InMemoryMarketDataStore()
+    market.put_quote(
+        _spot_quote(
+            quote_id="wide-spot-exit",
+            at=midpoint_slot.evaluation_at,
+            bid="101",
+            ask="103",
+        )
+    )
+
+    ForecastOutcomeSettler(
+        market=market,
+        store=store,
+        evaluation_version="midpoint-outcome-v1",
+        maximum_spot_age_seconds=60,
+        maximum_perpetual_age_seconds=900,
+        maximum_funding_gap_hours=12,
+        settlement_grace_minutes=5,
+    ).settle(as_of=midpoint_slot.evaluation_at + timedelta(seconds=1))
+    outcome = store.outcomes(
+        contract_id=midpoint_contract.contract_id,
+        evaluation_version="midpoint-outcome-v1",
+    )[0]
+
+    assert outcome.legs[0].exit_price == Decimal("102")
+    assert outcome.gross_target_return_bps == Decimal("200")
