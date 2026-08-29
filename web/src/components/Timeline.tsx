@@ -87,6 +87,7 @@ function CapitalTimeline({
             <WorldModelIncrementLine
               evidence={forecastEvaluation.world_model_increment_evidence}
               capitalEvidence={forecastEvaluation.world_model_capital_increment_evidence}
+              eventResponse={forecastEvaluation.event_response_capital_evidence}
             />
           ) : null}
           {forecastEvaluation?.capital_choice_evidence ? (
@@ -120,41 +121,55 @@ function CapitalTimeline({
 function WorldModelIncrementLine({
   evidence,
   capitalEvidence,
+  eventResponse,
 }: {
   evidence: ForecastEvaluationEvidence["world_model_increment_evidence"];
   capitalEvidence: ForecastEvaluationEvidence["world_model_capital_increment_evidence"];
+  eventResponse: ForecastEvaluationEvidence["event_response_capital_evidence"];
 }) {
-  if (evidence.status === "NOT_STARTED") {
+  const cadence = evidence.sources.find((item) => item.stratum === "CADENCE_ONLY");
+  const material = evidence.sources.find((item) => item.stratum === "MATERIAL_STATE_ONLY");
+  const cadenceEvidence = cadence ?? evidence;
+  if (cadenceEvidence.status === "NOT_STARTED") {
     return (
       <div className={styles.forecastEvidence}>
-        <b>世界认知的前瞻效果尚未开始结算</b>
-        <span>尚无固定时点的同窗预测，因此目前不能判断它是否改善决策或盈利。</span>
-      </div>
-    );
-  }
-  if (evidence.status === "AWAITING_FORECAST") {
-    return (
-      <div className={styles.forecastEvidence}>
-        <b>世界认知预测尚未完整产出</b>
+        <b>固定时点的前瞻实验尚未开始</b>
         <span>
-          已到 {evidence.due_panel_count} 个固定预测窗口，完整输出 {evidence.forecast_panel_count} 个，
-          未能估计 {evidence.unavailable_panel_count} 个，仍待完成 {evidence.pending_panel_count} 个。
+          尚无固定时点的同窗预测，因此目前不能判断世界认知是否改善决策或盈利。
+          <MaterialForecastText evidence={material} />
+          <EventResponseText evidence={eventResponse} />
         </span>
       </div>
     );
   }
-  if (evidence.status === "AWAITING_SETTLEMENT") {
+  if (cadenceEvidence.status === "AWAITING_FORECAST") {
     return (
       <div className={styles.forecastEvidence}>
-        <b>世界认知预测已冻结，等待行情结算</b>
+        <b>固定时点预测尚未完整产出</b>
         <span>
-          已有 {evidence.forecast_panel_count} 个固定窗口完成预测；行情终点形成前，
+          已到 {cadenceEvidence.due_panel_count} 个固定预测窗口，完整输出
+          {cadenceEvidence.forecast_panel_count} 个，未能估计
+          {cadenceEvidence.unavailable_panel_count} 个，仍待完成
+          {cadenceEvidence.pending_panel_count} 个。
+          <MaterialForecastText evidence={material} />
+        </span>
+      </div>
+    );
+  }
+  if (cadenceEvidence.status === "AWAITING_SETTLEMENT") {
+    return (
+      <div className={styles.forecastEvidence}>
+        <b>固定时点预测已冻结，等待行情结算</b>
+        <span>
+          已有 {cadenceEvidence.forecast_panel_count} 个固定窗口完成预测；行情终点形成前，
           不判断方向是否更准，也不判断扣除手续费后是否有价值。
+          <MaterialForecastText evidence={material} />
+          <EventResponseText evidence={eventResponse} />
         </span>
       </div>
     );
   }
-  const improvement = Number(evidence.mean_ranked_probability_improvement ?? 0);
+  const improvement = Number(cadenceEvidence.mean_ranked_probability_improvement ?? 0);
   const outcome = improvement > 0
     ? "世界认知降低了概率误差"
     : improvement < 0
@@ -164,13 +179,52 @@ function WorldModelIncrementLine({
     <div className={styles.forecastEvidence}>
       <b>{outcome}</b>
       <span>
-        基于 {evidence.non_overlapping_panel_count} 个互不重叠的 72 小时窗口，
-        相对同一时点的统计先验：改善 {evidence.candidate_better_panel_count} 次，
-        持平 {evidence.equal_panel_count} 次，变差 {evidence.candidate_worse_panel_count} 次。
+        基于 {cadenceEvidence.non_overlapping_panel_count} 个互不重叠的 72 小时固定窗口，
+        相对同一时点的统计先验：改善 {cadenceEvidence.candidate_better_panel_count} 次，
+        持平 {cadenceEvidence.equal_panel_count} 次，变差
+        {cadenceEvidence.candidate_worse_panel_count} 次。
         <CapitalIncrementText evidence={capitalEvidence} />
+        <MaterialForecastText evidence={material} />
+        <EventResponseText evidence={eventResponse} />
       </span>
     </div>
   );
+}
+
+function MaterialForecastText({
+  evidence,
+}: {
+  evidence: ForecastEvaluationEvidence["world_model_increment_evidence"]["sources"][number] | undefined;
+}) {
+  if (!evidence || evidence.status === "NOT_STARTED") return null;
+  if (evidence.status === "AWAITING_FORECAST") {
+    return <> 重大事件窗口有 {evidence.due_panel_count} 个，其中 {evidence.pending_panel_count} 个尚未完整产出。</>;
+  }
+  if (evidence.status === "AWAITING_SETTLEMENT") {
+    return <> 另有 {evidence.forecast_panel_count} 个重大事件窗口已经冻结预测，正在等待各自终点。</>;
+  }
+  const improvement = Number(evidence.mean_ranked_probability_improvement ?? 0);
+  const relation = improvement > 0 ? "更准确" : improvement < 0 ? "更差" : "持平";
+  return <> 重大事件窗口相对同窗统计先验{relation}，已结算 {evidence.settled_panel_count} 个。</>;
+}
+
+function EventResponseText({
+  evidence,
+}: {
+  evidence: ForecastEvaluationEvidence["event_response_capital_evidence"];
+}) {
+  if (evidence.status === "EVIDENCE_AVAILABLE") {
+    const increment = Number(evidence.net_equity_increment ?? 0);
+    const relation = increment > 0 ? "多赚" : increment < 0 ? "少赚或多亏" : "结果相同";
+    return <>{` 纳入重大事件调仓后，相对只按固定时点调仓${relation}${increment === 0 ? "" : ` ${Math.abs(increment).toFixed(2)} USDT`}。`}</>;
+  }
+  if (evidence.status === "AWAITING_SETTLEMENT") {
+    return <> 重大事件调仓的费用后影响仍在等待首个72小时终点。</>;
+  }
+  if (evidence.status === "INPUT_UNAVAILABLE") {
+    return <> 重大事件调仓对照缺少当时的可成交报价或产品规则，未伪造结果。</>;
+  }
+  return null;
 }
 
 function CapitalIncrementText({

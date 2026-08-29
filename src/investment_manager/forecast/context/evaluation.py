@@ -16,7 +16,7 @@ from investment_manager.forecast.scoring import (
 from investment_manager.kernel.time import require_utc
 
 FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v8"
-FORECAST_PAIR_EVALUATION_VERSION = "context-forecast-pair-evidence-v2"
+FORECAST_PAIR_EVALUATION_VERSION = "context-forecast-pair-evidence-v3"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
 PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")

@@ -1766,6 +1766,124 @@ def test_world_model_capital_increment_replays_prior_and_posterior_with_same_cos
     assert evidence.net_equity_increment > 0
 
 
+def test_event_response_capital_compares_material_forecast_with_cadence_only_cash(
+    app_config,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    contract = _contract("100")
+    contracts = SqlForecastContractStore(engine)
+    forecasts = SqlForecastStore(engine)
+    contracts.record_contract(contract)
+    cause = ForecastSlotCause.material_state(
+        policy_version="test-material-policy-v1",
+        trigger_refs=("material-event-1",),
+    )
+    slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=NOW,
+        cutoff_prices=(_anchor(SPOT, "100", "event-response-cutoff"),),
+        cause=cause,
+    )
+    behavior_id = "event-response-posterior-behavior"
+    binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id=POSTERIOR_PRODUCER_ID,
+        producer_behavior_id=behavior_id,
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(binding, activated_at=NOW - timedelta(minutes=1))
+    contracts.record_slot(slot, binding=binding)
+    available_at = NOW + timedelta(minutes=1)
+    analysis_input = {"fixture": "event-response-capital"}
+    forecast = BaseForecast(
+        forecast_id=stable_id("base_forecast", slot.slot_id, behavior_id),
+        contract_id=contract.contract_id,
+        decision_slot_id=slot.slot_id,
+        producer_id=POSTERIOR_PRODUCER_ID,
+        producer_behavior_id=behavior_id,
+        outcome_family_id=contract.outcome_family_id,
+        target=contract.target,
+        horizon_minutes=contract.horizon_minutes,
+        cutoff_prices=slot.cutoff_prices,
+        entry_prices=(
+            _anchor(SPOT, "100", "event-response-entry").model_copy(
+                update={"available_at": available_at}
+            ),
+        ),
+        information_cutoff_at=slot.information_cutoff_at,
+        input_observed_at=slot.information_cutoff_at,
+        available_at=available_at,
+        valid_until=available_at + timedelta(minutes=30),
+        outcome_probabilities=(
+            ForecastBucketProbability(bucket_id="LOSS", probability=Decimal("0.05")),
+            ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0.05")),
+            ForecastBucketProbability(bucket_id="GAIN", probability=Decimal("0.90")),
+        ),
+        expected_gross_bps=Decimal("85"),
+        input_refs=("material-event-1",),
+        world_model_id="world-model-event-response",
+        analysis_input_json=canonical_json(analysis_input),
+        analysis_input_hash=content_hash(analysis_input),
+    )
+    forecasts.record(forecast)
+    market = SqlMarketDataStore(engine)
+    _put_context_market(market, at=available_at, update_id=61)
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", PERPETUAL.key, 63),
+            instrument=PERPETUAL,
+            exchange_time=available_at,
+            observed_at=available_at,
+            bid=Decimal("99.95"),
+            bid_quantity=Decimal("100"),
+            ask=Decimal("100.05"),
+            ask_quantity=Decimal("100"),
+            update_id=63,
+            source="test",
+        )
+    )
+    market.put_perpetual_product_rules(_product_rules(available_at))
+    final_exchange_at = slot.evaluation_at - timedelta(seconds=1)
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", PERPETUAL.key, 62),
+            instrument=PERPETUAL,
+            exchange_time=final_exchange_at,
+            observed_at=slot.evaluation_at,
+            bid=Decimal("104.9"),
+            bid_quantity=Decimal("100"),
+            ask=Decimal("105.1"),
+            ask_quantity=Decimal("100"),
+            update_id=62,
+            source="test",
+        )
+    )
+    reader = SqlWorldModelCapitalIncrementReader(
+        engine=engine,
+        capital_policy=app_config.capital,
+        initial_cash=Decimal("10000"),
+        funding_lookback_hours=720,
+        candidate_producer_id=POSTERIOR_PRODUCER_ID,
+        comparator_producer_id=PRIOR_PRODUCER_ID,
+    )
+    pending = reader.read_event_response(as_of=slot.evaluation_at - timedelta(seconds=1))
+    evidence = reader.read_event_response(as_of=slot.evaluation_at + timedelta(minutes=1))
+
+    assert pending.status == CapitalIncrementStatus.AWAITING_SETTLEMENT
+    assert evidence.status == CapitalIncrementStatus.EVIDENCE_AVAILABLE
+    assert evidence.settled_material_panel_count == 1
+    assert evidence.cadence_only_panel_count == 0
+    assert evidence.cadence_plus_material_panel_count == 1
+    assert evidence.cadence_only is not None
+    assert evidence.cadence_only.equity == Decimal("10000")
+    assert evidence.cadence_plus_material is not None
+    assert evidence.cadence_plus_material.fee_cost > 0
+    assert evidence.net_equity_increment is not None
+    assert evidence.net_equity_increment > 0
+
+
 def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config) -> None:
     contract = _contract()
     slot = ForecastDecisionSlot.create(

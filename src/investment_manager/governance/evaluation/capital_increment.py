@@ -35,6 +35,9 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.policy import CapitalPolicy
 
+WORLD_MODEL_CAPITAL_INCREMENT_VERSION = "world-model-capital-increment-v2"
+EVENT_RESPONSE_CAPITAL_VERSION = "event-response-capital-v1"
+
 
 class CapitalIncrementStatus(StrEnum):
     NOT_STARTED = "NOT_STARTED"
@@ -58,12 +61,31 @@ class CapitalPathSummary(FrozenModel):
 class WorldModelCapitalIncrementEvidence(FrozenModel):
     """Same-policy capital difference attributable to the complete producer behavior."""
 
+    evaluation_version: str = WORLD_MODEL_CAPITAL_INCREMENT_VERSION
     status: CapitalIncrementStatus
     candidate_behavior_id: str | None = None
     comparator_behavior_id: str | None = None
     settled_panel_count: int = 0
     candidate: CapitalPathSummary | None = None
     comparator: CapitalPathSummary | None = None
+    net_equity_increment: Decimal | None = None
+    fee_cost_increment: Decimal | None = None
+    gross_turnover_increment: Decimal | None = None
+    drawdown_improvement_fraction: Decimal | None = None
+    reason_code: str | None = None
+
+
+class EventResponseCapitalEvidence(FrozenModel):
+    """Capital value of consuming material slots in addition to fixed cadence slots."""
+
+    evaluation_version: str = EVENT_RESPONSE_CAPITAL_VERSION
+    status: CapitalIncrementStatus
+    candidate_behavior_id: str | None = None
+    settled_material_panel_count: int = 0
+    cadence_only_panel_count: int = 0
+    cadence_plus_material_panel_count: int = 0
+    cadence_only: CapitalPathSummary | None = None
+    cadence_plus_material: CapitalPathSummary | None = None
     net_equity_increment: Decimal | None = None
     fee_cost_increment: Decimal | None = None
     gross_turnover_increment: Decimal | None = None
@@ -84,6 +106,8 @@ class SqlWorldModelCapitalIncrementReader:
     _cache_key: tuple[str, ...] | None = field(default=None, init=False)
     _cache: WorldModelCapitalIncrementEvidence | None = field(default=None, init=False)
     _cache_lock: Lock = field(default_factory=Lock, init=False)
+    _event_cache_key: tuple[str, ...] | None = field(default=None, init=False)
+    _event_cache: EventResponseCapitalEvidence | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if (
@@ -214,6 +238,131 @@ class SqlWorldModelCapitalIncrementReader:
             self._cache = evidence
         return evidence
 
+    def read_event_response(
+        self,
+        *,
+        as_of: datetime | None = None,
+    ) -> EventResponseCapitalEvidence:
+        """Compare the same behavior with and without its material-event panels."""
+
+        now = require_utc(as_of or datetime.now(UTC))
+        behavior = self._latest_behavior_id(self.candidate_producer_id)
+        if behavior is None:
+            return self._empty_event(CapitalIncrementStatus.NOT_STARTED)
+        ledger = SqlProducerPanelReader(self.engine).read(
+            producer_behavior_id=behavior,
+            as_of=now,
+        )
+        material_panels = self._panels_for_stratum(
+            ledger.complete_panels,
+            ForecastSlotStratum.MATERIAL_STATE_ONLY,
+        )
+        if not material_panels:
+            return self._empty_event(
+                CapitalIncrementStatus.NOT_STARTED,
+                candidate_behavior=behavior,
+            )
+        settled_material = tuple(
+            panel
+            for panel in material_panels
+            if all(slot.evaluation_at <= now for slot in panel.slots)
+        )
+        if not settled_material:
+            return self._empty_event(
+                CapitalIncrementStatus.AWAITING_SETTLEMENT,
+                candidate_behavior=behavior,
+            )
+        evaluation_at = max(
+            slot.evaluation_at for panel in settled_material for slot in panel.slots
+        )
+        all_panels = tuple(
+            panel
+            for panel in ledger.complete_panels
+            if panel.available_at <= evaluation_at
+        )
+        cadence_panels = self._panels_for_stratum(
+            all_panels,
+            ForecastSlotStratum.CADENCE_ONLY,
+        )
+        contract_ids = tuple(
+            sorted(
+                {
+                    obligation.contract_id
+                    for panel in all_panels
+                    for obligation in panel.obligations
+                }
+            )
+        )
+        cache_key = (
+            content_hash(self.capital_policy),
+            str(self.initial_cash),
+            behavior,
+            evaluation_at.isoformat(),
+            *(panel.panel_id for panel in all_panels),
+        )
+        with self._cache_lock:
+            if self._event_cache_key == cache_key and self._event_cache is not None:
+                return self._event_cache
+        try:
+            projectors = self._projectors(contract_ids)
+            complete_path = self._path(
+                behavior_id=behavior,
+                panels=all_panels,
+                projectors=projectors,
+                mark_at=evaluation_at,
+                allowed_strata=tuple(ForecastSlotStratum),
+            )
+            cadence_path = (
+                None
+                if not cadence_panels
+                else self._path(
+                    behavior_id=behavior,
+                    panels=cadence_panels,
+                    projectors=projectors,
+                    mark_at=evaluation_at,
+                    allowed_strata=(ForecastSlotStratum.CADENCE_ONLY,),
+                )
+            )
+        except PointInTimeInputUnavailable:
+            return self._empty_event(
+                CapitalIncrementStatus.INPUT_UNAVAILABLE,
+                candidate_behavior=behavior,
+                settled_material_panel_count=len(settled_material),
+                reason_code="POINT_IN_TIME_PRODUCT_INPUT_UNAVAILABLE",
+            )
+        if complete_path is None or (cadence_panels and cadence_path is None):
+            return self._empty_event(
+                CapitalIncrementStatus.INPUT_UNAVAILABLE,
+                candidate_behavior=behavior,
+                settled_material_panel_count=len(settled_material),
+                reason_code="COMPLETE_CAPITAL_PATH_UNAVAILABLE",
+            )
+        complete = self._summary(complete_path)
+        cadence = (
+            self._cash_summary(behavior_id=behavior, as_of=evaluation_at)
+            if cadence_path is None
+            else self._summary(cadence_path)
+        )
+        evidence = EventResponseCapitalEvidence(
+            status=CapitalIncrementStatus.EVIDENCE_AVAILABLE,
+            candidate_behavior_id=behavior,
+            settled_material_panel_count=len(settled_material),
+            cadence_only_panel_count=len(cadence_panels),
+            cadence_plus_material_panel_count=len(all_panels),
+            cadence_only=cadence,
+            cadence_plus_material=complete,
+            net_equity_increment=complete.equity - cadence.equity,
+            fee_cost_increment=complete.fee_cost - cadence.fee_cost,
+            gross_turnover_increment=complete.gross_turnover - cadence.gross_turnover,
+            drawdown_improvement_fraction=(
+                cadence.drawdown_fraction - complete.drawdown_fraction
+            ),
+        )
+        with self._cache_lock:
+            self._event_cache_key = cache_key
+            self._event_cache = evidence
+        return evidence
+
     def _latest_behavior_id(self, producer_id: str) -> str | None:
         with self.engine.connect() as connection:
             return connection.execute(
@@ -266,12 +415,22 @@ class SqlWorldModelCapitalIncrementReader:
     def _cadence_panels(
         panels: tuple[ProducerDecisionPanel, ...],
     ) -> tuple[ProducerDecisionPanel, ...]:
+        return SqlWorldModelCapitalIncrementReader._panels_for_stratum(
+            panels,
+            ForecastSlotStratum.CADENCE_ONLY,
+        )
+
+    @staticmethod
+    def _panels_for_stratum(
+        panels: tuple[ProducerDecisionPanel, ...],
+        stratum: ForecastSlotStratum,
+    ) -> tuple[ProducerDecisionPanel, ...]:
         selected = []
         for panel in panels:
             strata = {slot.stratum for slot in panel.slots}
             if len(strata) != 1:
                 raise ValueError("WorldModel 资本 panel 混合了不同样本分层")
-            if strata == {ForecastSlotStratum.CADENCE_ONLY}:
+            if strata == {stratum}:
                 selected.append(panel)
         return tuple(selected)
 
@@ -343,6 +502,9 @@ class SqlWorldModelCapitalIncrementReader:
         panels: tuple[ProducerDecisionPanel, ...],
         projectors: dict[str, PointInTimeProductPayoffProjector],
         mark_at: datetime,
+        allowed_strata: tuple[ForecastSlotStratum, ...] = (
+            ForecastSlotStratum.CADENCE_ONLY,
+        ),
     ) -> LogicalAccountPath | None:
         ledger = ProducerPanelLedger(
             producer_behavior_id=behavior_id,
@@ -365,7 +527,7 @@ class SqlWorldModelCapitalIncrementReader:
             initial_cash=self.initial_cash,
             ledger=ledger,
             replay=replay,
-            allowed_strata=(ForecastSlotStratum.CADENCE_ONLY,),
+            allowed_strata=allowed_strata,
             mark_at=mark_at,
         )
         return None if evidence is None else evidence.path
@@ -386,6 +548,18 @@ class SqlWorldModelCapitalIncrementReader:
             gross_turnover=path.gross_turnover,
         )
 
+    def _cash_summary(self, *, behavior_id: str, as_of: datetime) -> CapitalPathSummary:
+        return CapitalPathSummary(
+            producer_behavior_id=behavior_id,
+            panel_count=0,
+            as_of=as_of,
+            equity=self.initial_cash,
+            net_pnl=Decimal("0"),
+            fee_cost=Decimal("0"),
+            drawdown_fraction=Decimal("0"),
+            gross_turnover=Decimal("0"),
+        )
+
     @staticmethod
     def _empty(
         status: CapitalIncrementStatus,
@@ -403,10 +577,26 @@ class SqlWorldModelCapitalIncrementReader:
             reason_code=reason_code,
         )
 
+    @staticmethod
+    def _empty_event(
+        status: CapitalIncrementStatus,
+        *,
+        candidate_behavior: str | None = None,
+        settled_material_panel_count: int = 0,
+        reason_code: str | None = None,
+    ) -> EventResponseCapitalEvidence:
+        return EventResponseCapitalEvidence(
+            status=status,
+            candidate_behavior_id=candidate_behavior,
+            settled_material_panel_count=settled_material_panel_count,
+            reason_code=reason_code,
+        )
+
 
 __all__ = [
     "CapitalIncrementStatus",
     "CapitalPathSummary",
+    "EventResponseCapitalEvidence",
     "SqlWorldModelCapitalIncrementReader",
     "WorldModelCapitalIncrementEvidence",
 ]

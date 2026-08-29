@@ -20,6 +20,7 @@ from investment_manager.forecast.contracts import (
     ForecastDecisionSlot,
     ForecastNoEstimate,
     ForecastSlotObligation,
+    ForecastSlotStratum,
 )
 from investment_manager.forecast.results import (
     BaseForecast,
@@ -39,7 +40,7 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
     forecasts,
 )
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 
 
 class ForecastIncrementStatus(StrEnum):
@@ -55,6 +56,20 @@ class ForecastIncrementEvidence:
     candidate_producer_id: str
     comparator_producer_id: str
     candidate_behavior_id: str | None
+    due_panel_count: int
+    forecast_panel_count: int
+    unavailable_panel_count: int
+    pending_panel_count: int
+    pair: ForecastPairEvidence
+    source_evidence: tuple[ForecastIncrementSourceEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastIncrementSourceEvidence:
+    """Coverage and paired skill for one independently sampled slot origin."""
+
+    stratum: ForecastSlotStratum
+    status: ForecastIncrementStatus
     due_panel_count: int
     forecast_panel_count: int
     unavailable_panel_count: int
@@ -145,16 +160,35 @@ class SqlForecastIncrementEvidenceReader:
 
         if not expected_contracts:
             raise ValueError("Forecast 增量评价行为缺少已注册 Contract")
-        panels: dict[datetime, list[ForecastSlotObligation]] = defaultdict(list)
+        panels: dict[
+            tuple[datetime, ForecastSlotStratum, str],
+            list[ForecastSlotObligation],
+        ] = defaultdict(list)
         for obligation in obligations:
             slot = slots.get(obligation.slot_id)
             if slot is None:
                 raise ValueError("Forecast 增量评价缺少权威 slot")
-            panels[slot.information_cutoff_at].append(obligation)
+            panels[
+                (
+                    slot.information_cutoff_at,
+                    slot.stratum,
+                    content_hash(slot.cause),
+                )
+            ].append(obligation)
 
         forecast_panels = unavailable_panels = pending_panels = 0
         pair_cases: list[ForecastPairPanelCase] = []
-        for cutoff, panel_obligations in sorted(panels.items()):
+        source_counts = {
+            stratum: {"due": 0, "forecast": 0, "unavailable": 0, "pending": 0}
+            for stratum in ForecastSlotStratum
+        }
+        source_cases: dict[ForecastSlotStratum, list[ForecastPairPanelCase]] = {
+            stratum: [] for stratum in ForecastSlotStratum
+        }
+        for (cutoff, stratum, cause_hash), panel_obligations in sorted(
+            panels.items(), key=lambda item: (item[0][0], item[0][1].value, item[0][2])
+        ):
+            source_counts[stratum]["due"] += 1
             panel_contracts = {item.contract_id for item in panel_obligations}
             panel_slot_ids = {item.slot_id for item in panel_obligations}
             complete_obligation = panel_contracts == expected_contracts
@@ -166,13 +200,17 @@ class SqlForecastIncrementEvidenceReader:
             )
             if all_forecasts:
                 forecast_panels += 1
+                source_counts[stratum]["forecast"] += 1
             elif all_terminal:
                 unavailable_panels += 1
+                source_counts[stratum]["unavailable"] += 1
             else:
                 pending_panels += 1
+                source_counts[stratum]["pending"] += 1
             case = self._pair_case(
                 behavior_id=behavior_id,
                 cutoff=cutoff,
+                cause_hash=cause_hash,
                 obligations=tuple(panel_obligations),
                 slots=slots,
                 candidate=candidate,
@@ -181,15 +219,33 @@ class SqlForecastIncrementEvidenceReader:
             )
             if complete_obligation and case is not None:
                 pair_cases.append(case)
+                source_cases[stratum].append(case)
 
         pair = evaluate_forecast_pair_evidence(tuple(pair_cases))
-        status = (
-            ForecastIncrementStatus.EVIDENCE_AVAILABLE
-            if pair.settled_panel_count > 0
-            else ForecastIncrementStatus.AWAITING_SETTLEMENT
-            if forecast_panels > 0
-            else ForecastIncrementStatus.AWAITING_FORECAST
+        status = self._status(
+            due_panel_count=len(panels),
+            forecast_panel_count=forecast_panels,
+            pair=pair,
         )
+        source_evidence_values = []
+        for stratum in ForecastSlotStratum:
+            source_pair = evaluate_forecast_pair_evidence(tuple(source_cases[stratum]))
+            source_evidence_values.append(
+                ForecastIncrementSourceEvidence(
+                    stratum=stratum,
+                    status=self._status(
+                        due_panel_count=source_counts[stratum]["due"],
+                        forecast_panel_count=source_counts[stratum]["forecast"],
+                        pair=source_pair,
+                    ),
+                    due_panel_count=source_counts[stratum]["due"],
+                    forecast_panel_count=source_counts[stratum]["forecast"],
+                    unavailable_panel_count=source_counts[stratum]["unavailable"],
+                    pending_panel_count=source_counts[stratum]["pending"],
+                    pair=source_pair,
+                )
+            )
+        source_evidence = tuple(source_evidence_values)
         return ForecastIncrementEvidence(
             status=status,
             candidate_producer_id=self.candidate_producer_id,
@@ -200,6 +256,7 @@ class SqlForecastIncrementEvidenceReader:
             unavailable_panel_count=unavailable_panels,
             pending_panel_count=pending_panels,
             pair=pair,
+            source_evidence=source_evidence,
         )
 
     def _empty(
@@ -218,7 +275,34 @@ class SqlForecastIncrementEvidenceReader:
             unavailable_panel_count=0,
             pending_panel_count=0,
             pair=evaluate_forecast_pair_evidence(()),
+            source_evidence=tuple(
+                ForecastIncrementSourceEvidence(
+                    stratum=stratum,
+                    status=ForecastIncrementStatus.NOT_STARTED,
+                    due_panel_count=0,
+                    forecast_panel_count=0,
+                    unavailable_panel_count=0,
+                    pending_panel_count=0,
+                    pair=evaluate_forecast_pair_evidence(()),
+                )
+                for stratum in ForecastSlotStratum
+            ),
         )
+
+    @staticmethod
+    def _status(
+        *,
+        due_panel_count: int,
+        forecast_panel_count: int,
+        pair: ForecastPairEvidence,
+    ) -> ForecastIncrementStatus:
+        if pair.settled_panel_count > 0:
+            return ForecastIncrementStatus.EVIDENCE_AVAILABLE
+        if forecast_panel_count > 0:
+            return ForecastIncrementStatus.AWAITING_SETTLEMENT
+        if due_panel_count > 0:
+            return ForecastIncrementStatus.AWAITING_FORECAST
+        return ForecastIncrementStatus.NOT_STARTED
 
     def _latest_behavior_id(self) -> str | None:
         with self.engine.connect() as connection:
@@ -275,6 +359,7 @@ class SqlForecastIncrementEvidenceReader:
         *,
         behavior_id: str,
         cutoff: datetime,
+        cause_hash: str,
         obligations: tuple[ForecastSlotObligation, ...],
         slots: dict[str, ForecastDecisionSlot],
         candidate: dict[str, BaseForecast],
@@ -344,7 +429,12 @@ class SqlForecastIncrementEvidenceReader:
             return sum((item[index] for item in rows), Decimal("0")) / count
 
         return ForecastPairPanelCase(
-            panel_id=stable_id("forecast_increment_panel", behavior_id, cutoff.isoformat()),
+            panel_id=stable_id(
+                "forecast_increment_panel",
+                behavior_id,
+                cutoff.isoformat(),
+                cause_hash,
+            ),
             information_cutoff_at=cutoff,
             evaluation_at=next(iter(evaluation_times)),
             source_stratum=next(iter(strata)),

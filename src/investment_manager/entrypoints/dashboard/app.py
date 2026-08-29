@@ -30,6 +30,7 @@ from investment_manager.entrypoints.dashboard.capital import (
 from investment_manager.entrypoints.dashboard.evaluation import (
     EvaluationDashboardReader,
     serialize_capital_choice_evidence,
+    serialize_event_response_capital_evidence,
     serialize_trading_cost_evidence,
     serialize_world_model_capital_increment_evidence,
     serialize_world_model_increment_evidence,
@@ -161,11 +162,13 @@ def create_app(
             trading_cost,
             world_model_increment,
             world_model_capital_increment,
+            event_response_capital,
         ) = await asyncio.gather(
             run_in_threadpool(evaluation_reader.capital_choice_evidence),
             run_in_threadpool(evaluation_reader.trading_cost_evidence),
             run_in_threadpool(evaluation_reader.world_model_increment_evidence),
             run_in_threadpool(evaluation_reader.world_model_capital_increment_evidence),
+            run_in_threadpool(evaluation_reader.event_response_capital_evidence),
         )
         return _json(
             {
@@ -173,6 +176,7 @@ def create_app(
                 **serialize_trading_cost_evidence(trading_cost),
                 **serialize_world_model_increment_evidence(world_model_increment),
                 **serialize_world_model_capital_increment_evidence(world_model_capital_increment),
+                **serialize_event_response_capital_evidence(event_response_capital),
             }
         )
 

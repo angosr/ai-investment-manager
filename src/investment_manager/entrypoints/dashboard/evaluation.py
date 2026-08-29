@@ -22,6 +22,8 @@ from investment_manager.forecast.product.repository import (
 from investment_manager.forecast.program.prior import PRIOR_PRODUCER_ID
 from investment_manager.forecast.results import ForecastOutcomeStatus
 from investment_manager.governance.evaluation.capital_increment import (
+    CapitalPathSummary,
+    EventResponseCapitalEvidence,
     SqlWorldModelCapitalIncrementReader,
     WorldModelCapitalIncrementEvidence,
 )
@@ -85,6 +87,9 @@ class EvaluationDashboardReader:
         self,
     ) -> WorldModelCapitalIncrementEvidence:
         return self._world_model_capital_increment.read()
+
+    def event_response_capital_evidence(self) -> EventResponseCapitalEvidence:
+        return self._world_model_capital_increment.read_event_response()
 
     def capital_choice_evidence(self) -> CapitalChoiceEvidence | None:
         """Evaluate the newest decision whose complete candidate set has settled."""
@@ -339,9 +344,6 @@ def serialize_world_model_increment_evidence(
 ) -> dict:
     pair = evidence.pair
 
-    def optional_decimal(value: Decimal | None) -> str | None:
-        return None if value is None else str(value)
-
     return {
         "world_model_increment_evidence": {
             "status": evidence.status.value,
@@ -358,19 +360,55 @@ def serialize_world_model_increment_evidence(
             "candidate_better_panel_count": pair.candidate_better_panel_count,
             "equal_panel_count": pair.equal_panel_count,
             "candidate_worse_panel_count": pair.candidate_worse_panel_count,
-            "mean_ranked_probability_improvement": optional_decimal(
+            "mean_ranked_probability_improvement": _optional_decimal(
                 pair.mean_ranked_probability_improvement
             ),
-            "ranked_probability_improvement_lower_bound": optional_decimal(
+            "ranked_probability_improvement_lower_bound": _optional_decimal(
                 pair.ranked_probability_improvement_lower_bound
             ),
-            "ranked_probability_improvement_upper_bound": optional_decimal(
+            "ranked_probability_improvement_upper_bound": _optional_decimal(
                 pair.ranked_probability_improvement_upper_bound
             ),
-            "mean_max_bucket_probability_delta": optional_decimal(
+            "mean_max_bucket_probability_delta": _optional_decimal(
                 pair.mean_max_bucket_probability_delta
             ),
-            "mean_expected_gross_bps_delta": optional_decimal(pair.mean_expected_gross_bps_delta),
+            "mean_expected_gross_bps_delta": _optional_decimal(
+                pair.mean_expected_gross_bps_delta
+            ),
+            "sources": [
+                {
+                    "stratum": item.stratum.value,
+                    "status": item.status.value,
+                    "due_panel_count": item.due_panel_count,
+                    "forecast_panel_count": item.forecast_panel_count,
+                    "unavailable_panel_count": item.unavailable_panel_count,
+                    "pending_panel_count": item.pending_panel_count,
+                    "settled_panel_count": item.pair.settled_panel_count,
+                    "paired_target_count": item.pair.paired_target_count,
+                    "non_overlapping_panel_count": item.pair.non_overlapping_panel_count,
+                    "candidate_better_panel_count": (
+                        item.pair.candidate_better_panel_count
+                    ),
+                    "equal_panel_count": item.pair.equal_panel_count,
+                    "candidate_worse_panel_count": item.pair.candidate_worse_panel_count,
+                    "mean_ranked_probability_improvement": _optional_decimal(
+                        item.pair.mean_ranked_probability_improvement
+                    ),
+                    "ranked_probability_improvement_lower_bound": _optional_decimal(
+                        item.pair.ranked_probability_improvement_lower_bound
+                    ),
+                    "ranked_probability_improvement_upper_bound": _optional_decimal(
+                        item.pair.ranked_probability_improvement_upper_bound
+                    ),
+                    "mean_max_bucket_probability_delta": _optional_decimal(
+                        item.pair.mean_max_bucket_probability_delta
+                    ),
+                    "mean_expected_gross_bps_delta": _optional_decimal(
+                        item.pair.mean_expected_gross_bps_delta
+                    ),
+                }
+                for item in evidence.source_evidence
+            ],
         }
     }
 
@@ -378,39 +416,70 @@ def serialize_world_model_increment_evidence(
 def serialize_world_model_capital_increment_evidence(
     evidence: WorldModelCapitalIncrementEvidence,
 ) -> dict:
-    def optional_decimal(value: Decimal | None) -> str | None:
-        return None if value is None else str(value)
-
-    def path(value):
-        if value is None:
-            return None
-        return {
-            "producer_behavior_id": value.producer_behavior_id,
-            "panel_count": value.panel_count,
-            "as_of": _iso(value.as_of),
-            "equity": str(value.equity),
-            "net_pnl": str(value.net_pnl),
-            "fee_cost": str(value.fee_cost),
-            "drawdown_fraction": str(value.drawdown_fraction),
-            "gross_turnover": str(value.gross_turnover),
-        }
-
     return {
         "world_model_capital_increment_evidence": {
+            "evaluation_version": evidence.evaluation_version,
             "status": evidence.status.value,
             "candidate_behavior_id": evidence.candidate_behavior_id,
             "comparator_behavior_id": evidence.comparator_behavior_id,
             "settled_panel_count": evidence.settled_panel_count,
-            "candidate": path(evidence.candidate),
-            "comparator": path(evidence.comparator),
-            "net_equity_increment": optional_decimal(evidence.net_equity_increment),
-            "fee_cost_increment": optional_decimal(evidence.fee_cost_increment),
-            "gross_turnover_increment": optional_decimal(evidence.gross_turnover_increment),
-            "drawdown_improvement_fraction": optional_decimal(
+            "candidate": _serialize_capital_path(evidence.candidate),
+            "comparator": _serialize_capital_path(evidence.comparator),
+            "net_equity_increment": _optional_decimal(evidence.net_equity_increment),
+            "fee_cost_increment": _optional_decimal(evidence.fee_cost_increment),
+            "gross_turnover_increment": _optional_decimal(evidence.gross_turnover_increment),
+            "drawdown_improvement_fraction": _optional_decimal(
                 evidence.drawdown_improvement_fraction
             ),
             "reason_code": evidence.reason_code,
         }
+    }
+
+
+def serialize_event_response_capital_evidence(
+    evidence: EventResponseCapitalEvidence,
+) -> dict:
+    return {
+        "event_response_capital_evidence": {
+            "evaluation_version": evidence.evaluation_version,
+            "status": evidence.status.value,
+            "candidate_behavior_id": evidence.candidate_behavior_id,
+            "settled_material_panel_count": evidence.settled_material_panel_count,
+            "cadence_only_panel_count": evidence.cadence_only_panel_count,
+            "cadence_plus_material_panel_count": (
+                evidence.cadence_plus_material_panel_count
+            ),
+            "cadence_only": _serialize_capital_path(evidence.cadence_only),
+            "cadence_plus_material": _serialize_capital_path(
+                evidence.cadence_plus_material
+            ),
+            "net_equity_increment": _optional_decimal(evidence.net_equity_increment),
+            "fee_cost_increment": _optional_decimal(evidence.fee_cost_increment),
+            "gross_turnover_increment": _optional_decimal(evidence.gross_turnover_increment),
+            "drawdown_improvement_fraction": _optional_decimal(
+                evidence.drawdown_improvement_fraction
+            ),
+            "reason_code": evidence.reason_code,
+        }
+    }
+
+
+def _optional_decimal(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
+
+
+def _serialize_capital_path(value: CapitalPathSummary | None) -> dict | None:
+    if value is None:
+        return None
+    return {
+        "producer_behavior_id": value.producer_behavior_id,
+        "panel_count": value.panel_count,
+        "as_of": _iso(value.as_of),
+        "equity": str(value.equity),
+        "net_pnl": str(value.net_pnl),
+        "fee_cost": str(value.fee_cost),
+        "drawdown_fraction": str(value.drawdown_fraction),
+        "gross_turnover": str(value.gross_turnover),
     }
 
 

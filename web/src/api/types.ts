@@ -205,9 +205,42 @@ export interface AssessmentFeed {
   next_cursor: string | null;
 }
 
+type ForecastIncrementStatus =
+  | "NOT_STARTED"
+  | "AWAITING_FORECAST"
+  | "AWAITING_SETTLEMENT"
+  | "EVIDENCE_AVAILABLE";
+
+interface ForecastIncrementSourceEvidence {
+  stratum: "CADENCE_ONLY" | "MATERIAL_STATE_ONLY";
+  status: ForecastIncrementStatus;
+  due_panel_count: number;
+  forecast_panel_count: number;
+  unavailable_panel_count: number;
+  pending_panel_count: number;
+  settled_panel_count: number;
+  paired_target_count: number;
+  non_overlapping_panel_count: number;
+  candidate_better_panel_count: number;
+  equal_panel_count: number;
+  candidate_worse_panel_count: number;
+  mean_ranked_probability_improvement: string | null;
+  ranked_probability_improvement_lower_bound: string | null;
+  ranked_probability_improvement_upper_bound: string | null;
+  mean_max_bucket_probability_delta: string | null;
+  mean_expected_gross_bps_delta: string | null;
+}
+
+type CapitalIncrementStatus =
+  | "NOT_STARTED"
+  | "AWAITING_FORECAST"
+  | "AWAITING_SETTLEMENT"
+  | "INPUT_UNAVAILABLE"
+  | "EVIDENCE_AVAILABLE";
+
 export interface ForecastEvaluationEvidence {
   world_model_increment_evidence: {
-    status: "NOT_STARTED" | "AWAITING_FORECAST" | "AWAITING_SETTLEMENT" | "EVIDENCE_AVAILABLE";
+    status: ForecastIncrementStatus;
     candidate_producer_id: string;
     comparator_producer_id: string;
     candidate_behavior_id: string | null;
@@ -226,19 +259,31 @@ export interface ForecastEvaluationEvidence {
     ranked_probability_improvement_upper_bound: string | null;
     mean_max_bucket_probability_delta: string | null;
     mean_expected_gross_bps_delta: string | null;
+    sources: ForecastIncrementSourceEvidence[];
   };
   world_model_capital_increment_evidence: {
-    status:
-      | "NOT_STARTED"
-      | "AWAITING_FORECAST"
-      | "AWAITING_SETTLEMENT"
-      | "INPUT_UNAVAILABLE"
-      | "EVIDENCE_AVAILABLE";
+    evaluation_version: string;
+    status: CapitalIncrementStatus;
     candidate_behavior_id: string | null;
     comparator_behavior_id: string | null;
     settled_panel_count: number;
     candidate: CapitalPathEvidence | null;
     comparator: CapitalPathEvidence | null;
+    net_equity_increment: string | null;
+    fee_cost_increment: string | null;
+    gross_turnover_increment: string | null;
+    drawdown_improvement_fraction: string | null;
+    reason_code: string | null;
+  };
+  event_response_capital_evidence: {
+    evaluation_version: string;
+    status: CapitalIncrementStatus;
+    candidate_behavior_id: string | null;
+    settled_material_panel_count: number;
+    cadence_only_panel_count: number;
+    cadence_plus_material_panel_count: number;
+    cadence_only: CapitalPathEvidence | null;
+    cadence_plus_material: CapitalPathEvidence | null;
     net_equity_increment: string | null;
     fee_cost_increment: string | null;
     gross_turnover_increment: string | null;

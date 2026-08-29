@@ -147,7 +147,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v58"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v58"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v59"
     assert config.outcome_evaluation.forecast_prior.enabled
     assert config.outcome_evaluation.forecast_prior.artifact_id == (
         "forecast_baseline_7edf2cf090b47cdad2e5"

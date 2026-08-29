@@ -53,11 +53,13 @@ from investment_manager.forecast.context.posterior_workflow import (
 from investment_manager.forecast.context.service import AssessmentTemporalWorker
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
+    MATERIAL_SLOT_POLICY_VERSION,
     ForecastNoEstimateReason,
     ForecastPermission,
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotCause,
 )
 from investment_manager.forecast.models import (
     ContextAssessment,
@@ -779,6 +781,13 @@ def test_posterior_increment_is_scored_only_after_shared_outcomes_settle(
     assert pending.due_panel_count == 1
     assert pending.forecast_panel_count == 1
     assert pending.pair.settled_panel_count == 0
+    assert tuple(item.stratum.value for item in pending.source_evidence) == (
+        "CADENCE_ONLY",
+        "MATERIAL_STATE_ONLY",
+    )
+    assert pending.source_evidence[0].status == ForecastIncrementStatus.AWAITING_SETTLEMENT
+    assert pending.source_evidence[0].forecast_panel_count == 1
+    assert pending.source_evidence[1].status == ForecastIncrementStatus.NOT_STARTED
 
     for target in frozen.targets:
         gross_return = Decimal("100")
@@ -826,6 +835,93 @@ def test_posterior_increment_is_scored_only_after_shared_outcomes_settle(
     assert settled.pair.non_overlapping_panel_count == 1
     assert settled.pair.paired_target_count == 2
     assert settled.pair.mean_max_bucket_probability_delta == Decimal("0.01")
+    assert settled.source_evidence[0].status == ForecastIncrementStatus.EVIDENCE_AVAILABLE
+    assert settled.source_evidence[0].pair.settled_panel_count == 1
+
+
+def test_increment_keeps_cadence_and_material_panels_separate_at_the_same_cutoff(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, engine, cadence, completed_at = (
+        _execution_fixture(base_app_config)
+    )
+    analyst = _ExecutionAnalyst(
+        preparation.producer_behavior_id,
+        AnalystResult(
+            True,
+            _output(cadence, change=False, contribute=False),
+            "CODEX_ANALYSIS_SUCCEEDED",
+            attempts=1,
+            completed_at=completed_at,
+            run_id="posterior-source-strata-run",
+        ),
+    )
+    application = ContextPosteriorApplication(
+        analyst=analyst,
+        contracts=contracts,
+        forecasts=forecasts,
+        market=market,
+        maximum_quote_age_seconds=300,
+        clock=lambda: completed_at,
+    )
+    application.execute(
+        cadence,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+    root = Path(__file__).resolve().parents[1]
+    artifact = load_forecast_baseline(
+        root / "evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json"
+    )
+    material_prior = RollingPriorForecastProducer(
+        artifact=artifact,
+        market=market,
+        contracts=contracts,
+        forecasts=forecasts,
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        activated_at=SLOT_AT - timedelta(hours=1),
+        maximum_quote_age_seconds=300,
+        clock=lambda: SLOT_AT + timedelta(minutes=2),
+    ).produce(
+        as_of=SLOT_AT,
+        cause=ForecastSlotCause.material_state(
+            policy_version=MATERIAL_SLOT_POLICY_VERSION,
+            trigger_refs=("same-cutoff-material-event",),
+        ),
+    )
+    material_seed = preparation.reserve(
+        material_prior,
+        as_of=SLOT_AT + timedelta(minutes=3),
+    )
+    assert material_seed is not None
+    packet = _packet()
+    material = preparation.build_input(
+        material_seed,
+        world_model=_world_model(decision_packet_hash=packet.content_hash),
+        packet=packet,
+    )
+    analyst.result = AnalystResult(
+        True,
+        _output(material, change=False, contribute=False),
+        "CODEX_ANALYSIS_SUCCEEDED",
+        attempts=1,
+        completed_at=completed_at,
+        run_id="posterior-source-strata-material-run",
+    )
+    application.execute(
+        material,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+
+    evidence = SqlForecastIncrementEvidenceReader(
+        engine=engine,
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        candidate_producer_id="world-model-posterior",
+        comparator_producer_id=PRIOR_PRODUCER_ID,
+    ).read()
+
+    assert evidence.due_panel_count == 2
+    assert tuple(item.due_panel_count for item in evidence.source_evidence) == (1, 1)
+    assert tuple(item.forecast_panel_count for item in evidence.source_evidence) == (1, 1)
 
 
 def test_posterior_execution_recovers_partial_joint_write_without_second_ai_call(
