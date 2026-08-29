@@ -2,6 +2,7 @@
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    true,
 )
 
 from investment_manager.platform.database import metadata
@@ -96,6 +98,12 @@ normalized_events = Table(
     Column("observed_at", DateTime(timezone=True), nullable=False),
     Column("source", String(128), nullable=False),
     Column("content_hash", String(64), nullable=False),
+    Column(
+        "expands_document_information",
+        Boolean,
+        nullable=False,
+        server_default=true(),
+    ),
     Column("payload", JSON, nullable=False),
     UniqueConstraint("source", "content_hash", name="uq_normalized_event_source_hash"),
 )

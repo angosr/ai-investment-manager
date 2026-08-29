@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -41,6 +42,87 @@ def test_alembic_initial_migration_matches_managed_metadata(
         connection.execute(text("UPDATE alembic_version SET version_num = 'stale-version'"))
     with pytest.raises(RuntimeError, match="数据库 Schema 版本不匹配"):
         require_current_schema(engine)
+
+
+def test_document_information_migration_backfills_regressive_observations(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'document-information.db'}"
+    config = Config("alembic.ini")
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "d8f4a1c9e620")
+    engine = create_engine(database_url)
+    title = "UK considers windfall tax on banks and oil firms"
+    url = "https://mktnews.net/flashDetail.html?id=one"
+    payloads = (
+        (
+            "event-full",
+            "2026-08-29 19:29:00",
+            {
+                "title": title,
+                "body": "The full report includes fiscal context and affected industries.",
+                "decision_excerpt": "",
+                "url": url,
+                "symbols": ["BTCUSDT"],
+            },
+        ),
+        (
+            "event-title-only",
+            "2026-08-29 19:41:00",
+            {
+                "title": title,
+                "body": title,
+                "decision_excerpt": "",
+                "url": url,
+                "symbols": ["BTCUSDT"],
+            },
+        ),
+        (
+            "event-expanded",
+            "2026-08-29 19:45:00",
+            {
+                "title": title,
+                "body": "The full report now identifies an immediate effective date.",
+                "decision_excerpt": "",
+                "url": url,
+                "symbols": ["BTCUSDT"],
+            },
+        ),
+    )
+    with engine.begin() as connection:
+        for evidence_id, observed_at, payload in payloads:
+            connection.execute(
+                text(
+                    "INSERT INTO normalized_events "
+                    "(evidence_id, event_time, observed_at, source, content_hash, payload) "
+                    "VALUES (:evidence_id, :observed_at, :observed_at, :source, "
+                    ":content_hash, :payload)"
+                ),
+                {
+                    "evidence_id": evidence_id,
+                    "observed_at": observed_at,
+                    "source": "trendradar:mktnews-flash",
+                    "content_hash": evidence_id.ljust(64, "0"),
+                    "payload": json.dumps(payload),
+                },
+            )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        decisions = tuple(
+            connection.execute(
+                text(
+                    "SELECT evidence_id, expands_document_information "
+                    "FROM normalized_events ORDER BY observed_at"
+                )
+            )
+        )
+    assert decisions == (
+        ("event-full", 1),
+        ("event-title-only", 0),
+        ("event-expanded", 1),
+    )
 
 
 def test_unified_store_migration_archives_retired_role_facts(tmp_path) -> None:

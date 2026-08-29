@@ -681,6 +681,57 @@ def test_event_api_projects_latest_normalized_revision_once(
     assert [item["event_id"] for item in response.json()["events"]] == ["NEWS:event-normalizer-v2"]
 
 
+def test_event_api_does_not_replace_richer_event_with_title_only_observation(
+    app_config,
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'regressive-events.db'}"
+    engine = create_engine(database_url)
+    create_schema(engine)
+    at = datetime(2026, 8, 29, 19, 29, tzinfo=UTC)
+    full = IntelligenceEvent(
+        evidence_id="event-full",
+        normalizer_version="normalizer-v1",
+        acquisition_route="newsnow-fast-v1",
+        event_time=at,
+        observed_at=at,
+        source="trendradar:mktnews-flash",
+        title="UK considers windfall tax on banks and oil firms",
+        body="The full report includes the fiscal context and affected industries.",
+        url="https://mktnews.net/flashDetail.html?id=one",
+        symbols=("BTCUSDT",),
+        relevance=Decimal("0.85"),
+        impact=Decimal("0.84"),
+        source_reliability=Decimal("0.6"),
+        novelty=Decimal("1"),
+        immediate_review_eligible=True,
+    )
+    stripped = full.model_copy(
+        update={
+            "evidence_id": "event-title-only",
+            "event_time": at + timedelta(minutes=10),
+            "observed_at": at + timedelta(minutes=12),
+            "body": full.title,
+        }
+    )
+    store = SqlEventStore(engine, pipeline_id=app_config.pipeline.version)
+    assert store.put(full)
+    assert store.put(stripped)
+    application = create_app(app_config, database_url)
+
+    async def read_events():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://dashboard.test",
+        ) as client:
+            return await client.get("/api/events")
+
+    response = asyncio.run(read_events())
+
+    assert response.status_code == 200
+    assert [item["event_id"] for item in response.json()["events"]] == ["NEWS:event-full"]
+
+
 def test_dashboard_accounts_use_the_runtime_release_identity(app_config, tmp_path) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'accounts.db'}"
     create_schema(create_engine(database_url))

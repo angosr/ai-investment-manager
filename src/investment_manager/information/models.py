@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -204,3 +205,73 @@ class IntelligenceEvent(FrozenModel):
             return 0
         rank_component = min(Decimal("1"), self.attention_priority / self.relevance)
         return int(rank_component * 100)
+
+
+def source_document_revision_adds_information(
+    event: IntelligenceEvent,
+    *,
+    previous: tuple[IntelligenceEvent, ...],
+) -> bool:
+    """Distinguish a new observation from new source-document information.
+
+    Every normalized observation remains immutable.  A later observation of the
+    same source URL only deserves another downstream review when it contains a
+    text fragment or symbol route that was not already available in an earlier
+    observation.  This keeps transport regressions (for example a full article
+    followed by a title-only payload) from replacing richer evidence or waking
+    AI again, without guessing semantic similarity between unrelated stories.
+    """
+
+    if event.url is None:
+        return True
+    history = tuple(
+        item
+        for item in previous
+        if item.source == event.source and item.url == event.url
+    )
+    if not history:
+        return True
+    known_symbols = {symbol for item in history for symbol in item.symbols}
+    if not set(event.symbols).issubset(known_symbols):
+        return True
+    historical_fragments = tuple(
+        fragment
+        for item in history
+        for fragment in _event_information_fragments(item)
+    )
+    return any(
+        not any(
+            _fragment_is_covered(fragment, historical)
+            for historical in historical_fragments
+        )
+        for fragment in _event_information_fragments(event)
+    )
+
+
+def _event_information_fragments(event: IntelligenceEvent) -> tuple[str, ...]:
+    fragments: list[str] = []
+    for value in (event.title, event.body, event.decision_excerpt):
+        normalized = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+        if normalized and normalized not in fragments:
+            fragments.append(normalized)
+    return tuple(fragments)
+
+
+def _fragment_is_covered(fragment: str, historical: str) -> bool:
+    """Return true when a complete normalized fragment already exists at boundaries."""
+
+    start = historical.find(fragment)
+    while start >= 0:
+        end = start + len(fragment)
+        left_boundary = (
+            start == 0 or not fragment[0].isalnum() or not historical[start - 1].isalnum()
+        )
+        right_boundary = (
+            end == len(historical)
+            or not fragment[-1].isalnum()
+            or not historical[end].isalnum()
+        )
+        if left_boundary and right_boundary:
+            return True
+        start = historical.find(fragment, start + 1)
+    return False

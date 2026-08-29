@@ -83,7 +83,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
     )
     assert config.capital.decision.version == "portfolio-net-edge-v17"
-    assert config.information.version == "information-intake-v49"
+    assert config.information.version == "information-intake-v50"
     assert tuple(
         (item.stream_id, item.immediate_review_eligible)
         for item in config.information.newsnow_event_feeds
@@ -103,10 +103,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         if item.immediate_review_eligible
     } == {"fed-speeches", "fed-testimony"}
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v56"
+    assert config.decision_state.version == "portfolio-state-v57"
     assert config.decision_state.official_fact_policy.version == "official-fact-v21"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v60"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v61"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v21"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000

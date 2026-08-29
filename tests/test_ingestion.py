@@ -1020,6 +1020,101 @@ def test_sql_event_store_shows_only_latest_point_in_time_version_per_url() -> No
     assert exact == (first, latest)
 
 
+def test_sql_event_store_preserves_but_does_not_route_regressive_document_revision() -> None:
+    observed_at = datetime(2026, 8, 29, 19, 29, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlEventStore(engine, pipeline_id="pipeline-v1")
+    full = IntelligenceEvent(
+        evidence_id="wire-full",
+        normalizer_version="normalizer-v1",
+        acquisition_route="newsnow-fast-v1",
+        event_time=observed_at - timedelta(minutes=1),
+        observed_at=observed_at,
+        source="trendradar:mktnews-flash",
+        title="UK considers windfall tax on banks and oil firms",
+        body=(
+            "The chancellor is considering a windfall tax on banks and oil firms "
+            "as part of the next fiscal statement."
+        ),
+        url="https://mktnews.net/flashDetail.html?id=one",
+        symbols=("BTCUSDT",),
+        relevance=Decimal("0.85"),
+        impact=Decimal("0.84"),
+        source_reliability=Decimal("0.6"),
+        novelty=Decimal("1"),
+        immediate_review_eligible=True,
+    )
+    stripped = full.model_copy(
+        update={
+            "evidence_id": "wire-title-only",
+            "event_time": observed_at + timedelta(minutes=10),
+            "observed_at": observed_at + timedelta(minutes=12),
+            "body": full.title,
+        }
+    )
+
+    assert store.put(full)
+    assert store.put(stripped)
+
+    with engine.connect() as connection:
+        stored_count = connection.scalar(select(func.count()).select_from(normalized_events))
+        trigger_ids = tuple(
+            connection.scalars(
+                select(analysis_trigger_events.c.dedup_key).order_by(
+                    analysis_trigger_events.c.dedup_key
+                )
+            )
+        )
+    assert stored_count == 2
+    assert trigger_ids == ("wire-full",)
+    assert store.visible(symbol="BTCUSDT", as_of=stripped.observed_at) == (full,)
+    assert store.exact(
+        evidence_ids=("wire-full", "wire-title-only"),
+        as_of=stripped.observed_at,
+    ) == (full, stripped)
+
+
+def test_sql_event_store_routes_a_document_revision_that_adds_information() -> None:
+    observed_at = datetime(2026, 8, 29, 19, 29, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlEventStore(engine, pipeline_id="pipeline-v1")
+    first = IntelligenceEvent(
+        evidence_id="official-summary",
+        normalizer_version="normalizer-v1",
+        acquisition_route="official-rss-v1",
+        event_time=observed_at,
+        observed_at=observed_at,
+        source="official:agency",
+        title="Official policy action",
+        body="The agency announced a policy action.",
+        url="https://agency.gov/releases/one",
+        symbols=("BTCUSDT",),
+        relevance=Decimal("1"),
+        impact=Decimal("1"),
+        source_reliability=Decimal("1"),
+        novelty=Decimal("1"),
+    )
+    expanded = first.model_copy(
+        update={
+            "evidence_id": "official-details",
+            "observed_at": observed_at + timedelta(minutes=1),
+            "body": "The agency announced a policy action effective immediately.",
+        }
+    )
+
+    assert store.put(first)
+    assert store.put(expanded)
+
+    with engine.connect() as connection:
+        trigger_count = connection.scalar(
+            select(func.count()).select_from(analysis_trigger_events)
+        )
+    assert trigger_count == 2
+    assert store.visible(symbol="BTCUSDT", as_of=expanded.observed_at) == (expanded,)
+
+
 def test_sql_event_store_preserves_first_acquisition_route_across_connectors() -> None:
     observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:")

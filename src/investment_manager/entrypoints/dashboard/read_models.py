@@ -33,8 +33,7 @@ from investment_manager.governance.models import (
 )
 from investment_manager.governance.tables import release_manifests
 from investment_manager.information.models import IntelligenceEvent
-from investment_manager.information.repository import canonical_event_locator
-from investment_manager.information.tables import normalized_events
+from investment_manager.information.repository import canonical_event_projection
 from investment_manager.information.text import sanitize_external_text
 from investment_manager.market.tables import (
     market_quotes,
@@ -366,26 +365,7 @@ class DashboardReader:
         return merged[:limit]
 
     def _recent_news(self, *, cursor: PageCursor | None, limit: int) -> list[WorldEvent]:
-        canonical_news = (
-            select(
-                normalized_events.c.payload.label("payload"),
-                normalized_events.c.event_time.label("event_time"),
-                normalized_events.c.evidence_id.label("evidence_id"),
-                func.row_number()
-                .over(
-                    partition_by=(
-                        normalized_events.c.source,
-                        canonical_event_locator(),
-                    ),
-                    order_by=(
-                        normalized_events.c.observed_at.desc(),
-                        normalized_events.c.evidence_id.desc(),
-                    ),
-                )
-                .label("version_rank"),
-            )
-            .subquery()
-        )
+        canonical_news = canonical_event_projection()
         cursor_identity = literal("NEWS:") + canonical_news.c.evidence_id
         query = (
             select(canonical_news.c.payload)
