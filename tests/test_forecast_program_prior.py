@@ -7,6 +7,7 @@ from investment_manager.forecast.contract_repository import SqlForecastContractS
 from investment_manager.forecast.contracts import (
     MATERIAL_SLOT_POLICY_VERSION,
     ForecastDecisionSlot,
+    ForecastNoEstimate,
     ForecastPermission,
     ForecastProducerBinding,
     ForecastProducerKind,
@@ -17,6 +18,7 @@ from investment_manager.forecast.program.prior import (
     RollingPriorForecastProducer,
     build_prior_targets,
     prior_slot_at_or_before,
+    prior_slots_due,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast
@@ -28,8 +30,7 @@ from investment_manager.schema import create_schema
 def _artifact():
     root = Path(__file__).resolve().parents[1]
     return load_forecast_baseline(
-        root
-        / "evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json"
+        root / "evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json"
     )
 
 
@@ -68,9 +69,7 @@ def test_prior_producer_records_one_research_forecast_per_target_idempotently() 
 
     assert len(first) == len(repeated) == 2
     assert all(isinstance(item, BaseForecast) for item in first)
-    assert tuple(item.forecast_id for item in first) == tuple(
-        item.forecast_id for item in repeated
-    )
+    assert tuple(item.forecast_id for item in first) == tuple(item.forecast_id for item in repeated)
     assert all(item.program_input_json is not None for item in first)
     assert all(item.analysis_input_json is None for item in first)
 
@@ -178,10 +177,13 @@ def test_new_behavior_cannot_backfill_an_existing_material_event() -> None:
         clock=lambda: activation_at + timedelta(hours=1),
     )
 
-    assert producer.produce(
-        as_of=activation_at + timedelta(hours=1),
-        cause=cause,
-    ) == ()
+    assert (
+        producer.produce(
+            as_of=activation_at + timedelta(hours=1),
+            cause=cause,
+        )
+        == ()
+    )
 
 
 def test_prior_cadence_never_backfills_before_activation() -> None:
@@ -200,3 +202,105 @@ def test_prior_cadence_never_backfills_before_activation() -> None:
     )
 
     assert producer.produce(as_of=as_of) == ()
+
+
+def test_prior_cadence_records_every_missed_post_activation_slot() -> None:
+    activation_at = datetime(2026, 8, 29, tzinfo=UTC)
+    current_slot = datetime(2026, 9, 5, tzinfo=UTC)
+    observed_at = current_slot + timedelta(minutes=1)
+    assert prior_slots_due(
+        activated_at=activation_at,
+        latest_slot_at=None,
+        as_of=observed_at,
+    ) == (
+        datetime(2026, 8, 30, tzinfo=UTC),
+        datetime(2026, 9, 2, tzinfo=UTC),
+        current_slot,
+    )
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    market = InMemoryMarketDataStore()
+    for slot_at in prior_slots_due(
+        activated_at=activation_at,
+        latest_slot_at=None,
+        as_of=observed_at,
+    ):
+        for symbol, price in (("BTCUSDT", "110000"), ("PAXGUSDT", "3500")):
+            market.put_quote(
+                MarketQuote(
+                    quote_id=f"{symbol}-{slot_at.date().isoformat()}",
+                    symbol=symbol,
+                    observed_at=slot_at,
+                    bid=price,
+                    bid_quantity="1",
+                    ask=str(float(price) + 1),
+                    ask_quantity="1",
+                    source="test",
+                )
+            )
+    producer = RollingPriorForecastProducer(
+        artifact=_artifact(),
+        market=market,
+        contracts=SqlForecastContractStore(engine),
+        forecasts=SqlForecastStore(engine),
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        activated_at=activation_at,
+        maximum_quote_age_seconds=300,
+        clock=lambda: observed_at,
+    )
+
+    results = producer.produce(as_of=observed_at)
+
+    assert len(results) == 6
+    assert sum(isinstance(item, ForecastNoEstimate) for item in results) == 4
+    assert sum(isinstance(item, BaseForecast) for item in results) == 2
+    assert {item.information_cutoff_at for item in results} == {
+        datetime(2026, 8, 30, tzinfo=UTC),
+        datetime(2026, 9, 2, tzinfo=UTC),
+        current_slot,
+    }
+
+
+def test_equivalent_release_reuses_original_prior_activation() -> None:
+    slot_at = datetime(2026, 8, 30, tzinfo=UTC)
+    observed_at = slot_at + timedelta(minutes=1)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    market = InMemoryMarketDataStore()
+    for symbol, price in (("BTCUSDT", "110000"), ("PAXGUSDT", "3500")):
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"{symbol}-release-reuse",
+                symbol=symbol,
+                observed_at=slot_at,
+                bid=price,
+                bid_quantity="1",
+                ask=str(float(price) + 1),
+                ask_quantity="1",
+                source="test",
+            )
+        )
+    contracts = SqlForecastContractStore(engine)
+    forecasts = SqlForecastStore(engine)
+    first = RollingPriorForecastProducer(
+        artifact=_artifact(),
+        market=market,
+        contracts=contracts,
+        forecasts=forecasts,
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        activated_at=slot_at - timedelta(hours=1),
+        maximum_quote_age_seconds=300,
+        clock=lambda: observed_at,
+    ).produce(as_of=observed_at)
+    rebound = RollingPriorForecastProducer(
+        artifact=_artifact(),
+        market=market,
+        contracts=contracts,
+        forecasts=forecasts,
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        activated_at=slot_at + timedelta(minutes=30),
+        maximum_quote_age_seconds=300,
+        clock=lambda: slot_at + timedelta(minutes=31),
+    ).produce(as_of=slot_at + timedelta(minutes=31))
+
+    assert tuple(item.forecast_id for item in rebound) == tuple(item.forecast_id for item in first)

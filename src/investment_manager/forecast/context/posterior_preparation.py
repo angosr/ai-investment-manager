@@ -87,9 +87,7 @@ class ContextPosteriorPreparation:
         if not prior_results:
             return None
         by_contract = {item.contract_id: item for item in prior_results}
-        expected_prior_bindings = {
-            item.contract_id: item for item in self.prior_bindings
-        }
+        expected_prior_bindings = {item.contract_id: item for item in self.prior_bindings}
         expected_ids = tuple(item.contract_id for item in self.contracts)
         if tuple(sorted(by_contract)) != expected_ids or len(by_contract) != len(prior_results):
             raise ValueError("Posterior 必须接收冻结联合行为的全部 prior 结果")
@@ -97,7 +95,18 @@ class ContextPosteriorPreparation:
         if len(cutoffs) != 1:
             raise ValueError("Posterior prior 结果必须共享信息截止")
         cutoff = next(iter(cutoffs))
-        if cutoff < self.activated_at:
+        posterior_bindings = {
+            contract.contract_id: self.contract_store.resolve_binding(
+                self.binding(contract),
+                activated_at=self.activated_at,
+            )
+            for contract in self.contracts
+        }
+        joint_activation = max(
+            self.contract_store.binding_activation_at(binding.binding_id)
+            for binding in posterior_bindings.values()
+        )
+        if cutoff < joint_activation:
             return None
 
         targets: list[PosteriorPriorTarget] = []
@@ -118,10 +127,7 @@ class ContextPosteriorPreparation:
             )
             if slot is None:
                 raise ValueError("Posterior prior 缺少权威决策槽")
-            binding = self.contract_store.resolve_binding(
-                self.binding(contract),
-                activated_at=self.activated_at,
-            )
+            binding = posterior_bindings[contract.contract_id]
             self.contract_store.record_obligation(slot=slot, binding=binding)
             if self._terminal(slot.slot_id):
                 continue
@@ -221,10 +227,13 @@ class ContextPosteriorPreparation:
             if existing is not None:
                 results.append(existing)
                 continue
-            if self.forecast_store.result_for_behavior(
-                decision_slot_id=target.slot.slot_id,
-                producer_behavior_id=self.producer_behavior_id,
-            ) is not None:
+            if (
+                self.forecast_store.result_for_behavior(
+                    decision_slot_id=target.slot.slot_id,
+                    producer_behavior_id=self.producer_behavior_id,
+                )
+                is not None
+            ):
                 raise ValueError("已有 Posterior Forecast 时不能再关闭 seed")
             self._record_no_estimate(
                 contract=target.contract,

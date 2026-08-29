@@ -76,6 +76,20 @@ class RecordingForecastProducer:
         return self.results
 
 
+class ForecastResultStub:
+    def __init__(self, information_cutoff_at: datetime) -> None:
+        self.information_cutoff_at = information_cutoff_at
+
+
+class RecordingPosteriorPreparation:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def reserve(self, prior_results, *, as_of):
+        self.calls.append((prior_results, as_of))
+        return None
+
+
 class EmptyAssessmentHistory:
     def latest_before(self, *, analysis_scope, as_of):
         return None
@@ -207,6 +221,89 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
     assert dispatches == ()
     assert producer.as_of == NOW
     assert consumer.batch == batch
+
+
+def test_trigger_builder_groups_recovered_cadence_results_by_cutoff(app_config) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=1,
+        dedup_key="recovered-forecast-slots",
+    )
+    earlier = NOW - timedelta(days=3)
+    producer = RecordingForecastProducer(
+        (
+            ForecastResultStub(earlier),
+            ForecastResultStub(earlier),
+            ForecastResultStub(NOW),
+            ForecastResultStub(NOW),
+        )
+    )
+    posterior = RecordingPosteriorPreparation()
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
+
+    TriggerDispatchBuilder(
+        config=config,
+        packet_preparation=RecordingPacketPreparation(),
+        assessment_history=EmptyAssessmentHistory(),
+        program_forecast_producers=(producer,),
+        posterior_preparation=posterior,
+    ).build(batch)
+
+    assert tuple(
+        tuple(item.information_cutoff_at for item in results) for results, _as_of in posterior.calls
+    ) == ((earlier, earlier), (NOW, NOW))
+
+
+def test_non_owner_trigger_does_not_race_joint_cadence_producer(app_config) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol="ETHUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.HEARTBEAT,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=1,
+        dedup_key="non-owner-heartbeat",
+    )
+    producer = RecordingForecastProducer()
+
+    TriggerDispatchBuilder(
+        config=config,
+        program_forecast_producers=(producer,),
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert producer.calls == []
 
 
 def test_qualified_information_event_creates_separate_material_forecast_panel(

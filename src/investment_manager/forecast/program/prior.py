@@ -42,7 +42,7 @@ from investment_manager.market.repository import MarketDataStore
 
 PRIOR_PRODUCER_ID = "rolling-unconditional-prior"
 PRIOR_CONTRACT_VERSION = "spot-midpoint-72h-v1"
-PRIOR_BEHAVIOR_VERSION = "rolling-visible-outcomes-v2"
+PRIOR_BEHAVIOR_VERSION = "rolling-visible-outcomes-v3"
 _HORIZON_MINUTES = 4_320
 _CADENCE_DAYS = 3
 _PHASE_EPOCH = date(1970, 1, 1)
@@ -159,45 +159,75 @@ class RollingPriorForecastProducer:
         cause: ForecastSlotCause | None = None,
     ) -> tuple[BaseForecast | ForecastNoEstimate, ...]:
         observed_at = require_utc(as_of)
-        slot_at = (
-            prior_slot_at_or_before(observed_at)
-            if cause is None or cause.origin == ForecastSlotOrigin.CADENCE
-            else observed_at
+        targets = build_prior_targets(self.artifact)
+        bindings: list[tuple[PriorRuntimeTarget, ForecastProducerBinding]] = []
+        for target in targets:
+            self.contracts.record_contract(target.contract)
+            binding = self.contracts.resolve_binding(
+                target.binding,
+                activated_at=self.activated_at,
+            )
+            bindings.append((target, binding))
+        joint_activation = max(
+            self.contracts.binding_activation_at(binding.binding_id)
+            for _target, binding in bindings
         )
-        if slot_at < self.activated_at:
-            return ()
+        if cause is None or cause.origin == ForecastSlotOrigin.CADENCE:
+            latest_slots = tuple(
+                self.contracts.latest_obligated_slot_at(
+                    binding_id=binding.binding_id,
+                    origin=ForecastSlotOrigin.CADENCE,
+                )
+                for _target, binding in bindings
+            )
+            latest_common = (
+                None if any(item is None for item in latest_slots) else min(latest_slots)
+            )
+            slot_times = prior_slots_due(
+                activated_at=joint_activation,
+                latest_slot_at=latest_common,
+                as_of=observed_at,
+            )
+            return tuple(
+                self._produce(
+                    target,
+                    binding=binding,
+                    slot_at=slot_at,
+                    observed_at=observed_at,
+                    cause=ForecastSlotCause.cadence(target.contract),
+                )
+                for slot_at in slot_times
+                for target, binding in bindings
+            )
+        slot_at = observed_at
         if cause is not None and cause.origin == ForecastSlotOrigin.MATERIAL_STATE:
             existing_slot_at, adds_unseen_evidence = self.contracts.resolve_material_cause(cause)
             if existing_slot_at is not None:
                 slot_at = existing_slot_at
             elif not adds_unseen_evidence:
                 return ()
-        results = (
+        if slot_at < joint_activation:
+            return ()
+        return tuple(
             self._produce(
                 target,
+                binding=binding,
                 slot_at=slot_at,
                 observed_at=observed_at,
-                cause=cause or ForecastSlotCause.cadence(target.contract),
+                cause=cause,
             )
-            for target in build_prior_targets(self.artifact)
+            for target, binding in bindings
         )
-        return tuple(item for item in results if item is not None)
 
     def _produce(
         self,
         target: PriorRuntimeTarget,
         *,
+        binding: ForecastProducerBinding,
         slot_at: datetime,
         observed_at: datetime,
         cause: ForecastSlotCause,
-    ) -> BaseForecast | ForecastNoEstimate | None:
-        self.contracts.record_contract(target.contract)
-        binding = self.contracts.resolve_binding(
-            target.binding,
-            activated_at=self.activated_at,
-        )
-        if slot_at < self.contracts.binding_activation_at(binding.binding_id):
-            return None
+    ) -> BaseForecast | ForecastNoEstimate:
         slot_id = ForecastDecisionSlot.identity_for(
             target.contract.contract_id, slot_at, cause=cause
         )
@@ -362,3 +392,26 @@ def prior_slot_at_or_before(as_of: datetime) -> datetime:
     slot_days = days - ((days - 1) % _CADENCE_DAYS)
     slot_date = _PHASE_EPOCH + timedelta(days=slot_days)
     return datetime.combine(slot_date, time.min, tzinfo=UTC)
+
+
+def prior_slots_due(
+    *,
+    activated_at: datetime,
+    latest_slot_at: datetime | None,
+    as_of: datetime,
+) -> tuple[datetime, ...]:
+    """Enumerate every post-activation cadence slot without inventing backfill."""
+
+    activation = require_utc(activated_at)
+    current = prior_slot_at_or_before(require_utc(as_of))
+    first = prior_slot_at_or_before(activation)
+    if first < activation:
+        first += timedelta(days=_CADENCE_DAYS)
+    if current < first:
+        return ()
+    start = first if latest_slot_at is None else max(require_utc(latest_slot_at), first)
+    slots: list[datetime] = []
+    while start <= current:
+        slots.append(start)
+        start += timedelta(days=_CADENCE_DAYS)
+    return tuple(slots)

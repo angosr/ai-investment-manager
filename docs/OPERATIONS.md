@@ -71,6 +71,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
 - 服务停机错过截止后恢复为 `DEADLINE_MISSED`，不得事后调用 AI；
 - ProducerBinding 首次激活前已经开始的槽不归属于该行为，也不能追记为漏报；行为等价的新 Release 不重置该激活点；
+- 恢复时从该行为首次激活点和最近 cadence obligation 枚举全部已到期槽；超过完成期限的槽逐一写入 `NO_ESTIMATE`，不能只处理最近槽而静默丢失停机区间；
 - information cutoff 之后发生的事件不得修改既有定时槽 Forecast；
 - 失败槽只进入 Forecast 覆盖与健康，不制造虚假资本行动。
 

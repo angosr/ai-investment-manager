@@ -111,20 +111,12 @@ def _material_forecast_cause(batch: TriggerBatch) -> ForecastSlotCause | None:
         AnalysisTriggerType.AGENT_WAKEUP,
     }
     eligible = tuple(
-        item
-        for item in batch.triggers
-        if item.trigger_type in eligible_types and item.evidence_ids
+        item for item in batch.triggers if item.trigger_type in eligible_types and item.evidence_ids
     )
     if not eligible:
         return None
     trigger_refs = tuple(
-        sorted(
-            {
-                reference
-                for trigger in eligible
-                for reference in trigger.evidence_ids
-            }
-        )
+        sorted({reference for trigger in eligible for reference in trigger.evidence_ids})
     )
     return ForecastSlotCause.material_state(
         policy_version=MATERIAL_SLOT_POLICY_VERSION,
@@ -195,19 +187,22 @@ class TriggerDispatchBuilder:
         owns_portfolio_assessment = batch.symbol == self._config.assessment.review_trigger_symbol
         prior_panels: list[tuple[ForecastSlotCause | None, tuple[PriorResult, ...]]] = []
         cadence_results: list[PriorResult] = []
-        for producer in self._program_forecast_producers:
-            cadence_results.extend(producer.produce(as_of=as_of))
-        if cadence_results:
-            prior_panels.append((None, tuple(cadence_results)))
-        material_cause = (
-            _material_forecast_cause(batch) if owns_portfolio_assessment else None
+        if owns_portfolio_assessment:
+            for producer in self._program_forecast_producers:
+                cadence_results.extend(producer.produce(as_of=as_of))
+        cadence_cutoffs = tuple(sorted({item.information_cutoff_at for item in cadence_results}))
+        prior_panels.extend(
+            (
+                None,
+                tuple(item for item in cadence_results if item.information_cutoff_at == cutoff),
+            )
+            for cutoff in cadence_cutoffs
         )
+        material_cause = _material_forecast_cause(batch) if owns_portfolio_assessment else None
         if material_cause is not None:
             material_results: list[PriorResult] = []
             for producer in self._program_forecast_producers:
-                material_results.extend(
-                    producer.produce(as_of=as_of, cause=material_cause)
-                )
+                material_results.extend(producer.produce(as_of=as_of, cause=material_cause))
             if material_results:
                 prior_panels.append((material_cause, tuple(material_results)))
         for consumer in self._program_batch_consumers:
@@ -249,9 +244,7 @@ class TriggerDispatchBuilder:
                     posterior_request = PosteriorWorkflowRequest.create(
                         seed=posterior_seed,
                         assessment_command=command,
-                        producer_behavior_id=(
-                            self._posterior_preparation.producer_behavior_id
-                        ),
+                        producer_behavior_id=(self._posterior_preparation.producer_behavior_id),
                         orchestration=OrchestrationPolicySnapshot.from_config(
                             self._config.temporal
                         ),

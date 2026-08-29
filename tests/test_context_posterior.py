@@ -125,9 +125,7 @@ def _packet() -> DecisionPacket:
         state_id="state-1",
         question="更新同一截止的组合世界认知。",
         trigger_ids=(review.review_id,),
-        mandate_exposures=(
-            MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),
-        ),
+        mandate_exposures=(MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),),
         required_views=(RequiredView(asset="BTC", horizon_minutes=4320),),
         portfolio=PacketPortfolioState(
             quote_balance=Decimal("10000"),
@@ -593,6 +591,27 @@ def test_posterior_behavior_identity_includes_world_model_behavior(base_app_conf
     assert changed.producer_behavior_id != preparation.producer_behavior_id
 
 
+def test_equivalent_release_reuses_original_posterior_activation(base_app_config) -> None:
+    preparation, contracts, forecasts, targets, _market, _engine = _preparation(base_app_config)
+    prior_results = tuple(item.prior for item in targets)
+    first = preparation.reserve(
+        prior_results,
+        as_of=SLOT_AT + timedelta(minutes=2),
+    )
+    rebound = replace(
+        preparation,
+        activated_at=SLOT_AT + timedelta(minutes=30),
+        contract_store=contracts,
+        forecast_store=forecasts,
+    ).reserve(
+        prior_results,
+        as_of=SLOT_AT + timedelta(minutes=31),
+    )
+
+    assert first is not None
+    assert rebound == first
+
+
 def test_posterior_behavior_identity_includes_prior_behavior(base_app_config) -> None:
     preparation, *_rest = _preparation(base_app_config)
     original = preparation.prior_bindings[0]
@@ -612,12 +631,8 @@ def test_posterior_behavior_identity_includes_prior_behavior(base_app_config) ->
 
 
 def test_preparation_rejects_prior_from_an_unbound_behavior(base_app_config) -> None:
-    preparation, _contracts, _forecasts, targets, _market, _engine = _preparation(
-        base_app_config
-    )
-    wrong = targets[0].prior.model_copy(
-        update={"producer_behavior_id": "unbound-prior-behavior"}
-    )
+    preparation, _contracts, _forecasts, targets, _market, _engine = _preparation(base_app_config)
+    wrong = targets[0].prior.model_copy(update={"producer_behavior_id": "unbound-prior-behavior"})
 
     with pytest.raises(ValueError, match="冻结 ProducerBinding"):
         preparation.reserve(
@@ -701,8 +716,8 @@ def _execution_fixture(base_app_config):
 def test_posterior_execution_records_joint_forecasts_and_reuses_them(
     base_app_config,
 ) -> None:
-    preparation, contracts, forecasts, market, _engine, frozen, completed_at = (
-        _execution_fixture(base_app_config)
+    preparation, contracts, forecasts, market, _engine, frozen, completed_at = _execution_fixture(
+        base_app_config
     )
     analyst = _ExecutionAnalyst(
         preparation.producer_behavior_id,
@@ -842,8 +857,8 @@ def test_posterior_increment_is_scored_only_after_shared_outcomes_settle(
 def test_increment_keeps_cadence_and_material_panels_separate_at_the_same_cutoff(
     base_app_config,
 ) -> None:
-    preparation, contracts, forecasts, market, engine, cadence, completed_at = (
-        _execution_fixture(base_app_config)
+    preparation, contracts, forecasts, market, engine, cadence, completed_at = _execution_fixture(
+        base_app_config
     )
     analyst = _ExecutionAnalyst(
         preparation.producer_behavior_id,
@@ -1094,8 +1109,8 @@ def test_same_cutoff_world_model_failure_closes_posterior_obligations(
 def test_orchestration_failure_closes_pre_registered_posterior_obligations(
     base_app_config,
 ) -> None:
-    preparation, contracts, forecasts, market, _engine, frozen, _completed_at = (
-        _execution_fixture(base_app_config)
+    preparation, contracts, forecasts, market, _engine, frozen, _completed_at = _execution_fixture(
+        base_app_config
     )
     analyst = _ExecutionAnalyst(
         preparation.producer_behavior_id,
@@ -1251,11 +1266,11 @@ def test_existing_assessment_worker_executes_posterior_workflow(
         )
         async with (
             await WorkflowEnvironment.start_time_skipping() as environment,
-                AssessmentTemporalWorker(
-                    environment.client,
-                    policy,
-                    assessment_application,
-                    posterior_application=combined,
+            AssessmentTemporalWorker(
+                environment.client,
+                policy,
+                assessment_application,
+                posterior_application=combined,
                 worker_threads=1,
             ),
         ):
