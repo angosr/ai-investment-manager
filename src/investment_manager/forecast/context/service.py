@@ -51,6 +51,9 @@ from investment_manager.forecast.context.workflow import (
 )
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.models import ContextAssessment
+from investment_manager.forecast.program.admission import (
+    resolve_active_forecast_admissions,
+)
 from investment_manager.forecast.program.baseline import load_forecast_baseline
 from investment_manager.forecast.program.prior import build_prior_targets
 from investment_manager.forecast.repository import SqlForecastStore
@@ -456,8 +459,29 @@ def assemble_assessment_service(
                 repository_root=repository_root,
             )
         )
+        admissions = resolve_active_forecast_admissions(
+            artifact=artifact,
+            runtime=config.codex_runtime,
+            world_model_behavior_id=configured_assess_behavior_hash(config),
+            authorization_identities=tuple(
+                sorted(
+                    (
+                        item.producer_id,
+                        item.producer_behavior_id,
+                        item.outcome_family_id,
+                    )
+                    for item in config.capital.candidate_capital_authorizations
+                )
+            ),
+        )
         posterior_targets = tuple(
-            sorted(build_prior_targets(artifact), key=lambda item: item.contract.contract_id)
+            sorted(
+                build_prior_targets(
+                    artifact,
+                    capital_outcome_families=admissions.prior_outcome_families,
+                ),
+                key=lambda item: item.contract.contract_id,
+            )
         )
         posterior_contracts = tuple(item.contract for item in posterior_targets)
         posterior_prior_bindings = tuple(item.binding for item in posterior_targets)
@@ -471,26 +495,31 @@ def assemble_assessment_service(
             activated_at=manifest.created_at,
             contract_store=contract_store,
             forecast_store=forecast_store,
+            capital_outcome_families=admissions.posterior_outcome_families,
         )
         posterior_application = ContextAssessmentPosteriorApplication(
-            assessment=assessment_application,
+            # The composite publishes WORLD_MODEL_UPDATED only after the posterior
+            # has reached an immutable terminal state, so downstream capital can
+            # never race the forecast it is meant to consume.
+            assessment=AssessmentApplication(ContextAssessmentExecutor(assessments, analyst)),
             preparation=preparation,
             posterior=ContextPosteriorApplication(
-            analyst=assemble_codex_context_posterior_analyst(
-                config,
-                bundle_root=config.codex_runtime.bundle_root,
-                contracts=posterior_contracts,
-                prior_bindings=posterior_prior_bindings,
-                world_model_behavior_id=configured_assess_behavior_hash(config),
-                code_version=manifest.code_version,
-                leases=leases,
-                audit=audit,
+                analyst=assemble_codex_context_posterior_analyst(
+                    config,
+                    bundle_root=config.codex_runtime.bundle_root,
+                    contracts=posterior_contracts,
+                    prior_bindings=posterior_prior_bindings,
+                    world_model_behavior_id=configured_assess_behavior_hash(config),
+                    code_version=manifest.code_version,
+                    leases=leases,
+                    audit=audit,
+                ),
+                contracts=contract_store,
+                forecasts=forecast_store,
+                market=SqlMarketDataStore(engine),
+                maximum_quote_age_seconds=config.capital.risk.maximum_quote_age_seconds,
             ),
-            contracts=contract_store,
-            forecasts=forecast_store,
-            market=SqlMarketDataStore(engine),
-            maximum_quote_age_seconds=config.capital.risk.maximum_quote_age_seconds,
-            ),
+            on_world_model_complete=complete_world_model,
         )
     return AssessmentServiceAssembly(
         application=assessment_application,

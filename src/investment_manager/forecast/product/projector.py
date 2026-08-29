@@ -16,6 +16,9 @@ from investment_manager.forecast.product.models import (
     ProductProjectionState,
     project_product_payoff,
 )
+from investment_manager.forecast.product.repository import (
+    SqlProductPayoffProjectionStore,
+)
 from investment_manager.forecast.results import BaseForecast
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash
@@ -23,7 +26,11 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.perpetual.models import FundingRateType
 from investment_manager.market.repository import MarketDataStore
-from investment_manager.portfolio.policy import ProductPayoffPolicy, SleeveRiskTemplate
+from investment_manager.portfolio.policy import (
+    CapitalPolicy,
+    ProductPayoffPolicy,
+    SleeveRiskTemplate,
+)
 
 _BPS = Decimal("10000")
 
@@ -324,4 +331,74 @@ class PointInTimeProductPayoffProjector:
         return max(0.0, (as_of - observed_at).total_seconds())
 
 
-__all__ = ["PointInTimeProductPayoffProjector"]
+@dataclass(frozen=True, slots=True)
+class RecordedProductPayoffProjector:
+    """Persist deterministic projections used by the official capital account."""
+
+    builder: PointInTimeProductPayoffProjector
+    store: SqlProductPayoffProjectionStore
+
+    @property
+    def candidate_instruments(self) -> tuple[InstrumentId, ...]:
+        return self.builder.candidate_instruments
+
+    def project(
+        self,
+        forecast: BaseForecast,
+        *,
+        as_of: datetime,
+    ) -> tuple[ProductPayoffProjection, ...]:
+        projections = self.builder.build(forecast, as_of=as_of)
+        for projection in projections:
+            self.store.record(projection)
+        return projections
+
+    def for_source(self, source_forecast_id: str) -> tuple[ProductPayoffProjection, ...]:
+        return self.store.for_source(source_forecast_id)
+
+
+def build_point_in_time_product_payoff_projector(
+    *,
+    capital_policy: CapitalPolicy,
+    contract: ForecastContract,
+    market: MarketDataStore,
+    funding_lookback_hours: int,
+) -> PointInTimeProductPayoffProjector:
+    """Build the one legal product mapping for an economic forecast contract."""
+
+    if len(contract.target.legs) != 1:
+        raise PointInTimeInputUnavailable("资本映射缺少单腿 ForecastContract")
+    reference = contract.target.legs[0].instrument
+    specs_by_key = {item.instrument.key: item for item in capital_policy.execution_specs}
+    policies = tuple(
+        policy
+        for policy in capital_policy.product_payoff_policies
+        if all(
+            key in specs_by_key
+            and specs_by_key[key].instrument.base_asset == reference.base_asset
+            and specs_by_key[key].instrument.quote_asset == reference.quote_asset
+            and specs_by_key[key].instrument.settlement_asset == reference.settlement_asset
+            for key in policy.instrument_keys
+        )
+    )
+    if len(policies) != 1:
+        raise PointInTimeInputUnavailable("资本映射缺少唯一产品政策")
+    policy = policies[0]
+    specs = tuple(specs_by_key[key] for key in policy.instrument_keys)
+    return PointInTimeProductPayoffProjector(
+        policy=policy,
+        contract=contract,
+        market=market,
+        instruments=tuple(item.instrument for item in specs),
+        execution_specs=specs,
+        risk=capital_policy.sleeve_risk,
+        maximum_quote_age_seconds=capital_policy.risk.maximum_quote_age_seconds,
+        funding_lookback_hours=funding_lookback_hours,
+    )
+
+
+__all__ = [
+    "PointInTimeProductPayoffProjector",
+    "RecordedProductPayoffProjector",
+    "build_point_in_time_product_payoff_projector",
+]

@@ -28,10 +28,8 @@ from investment_manager.execution.venue.observation import SqlProductOrderObserv
 from investment_manager.execution.venue.product import ProductOrderVenue
 from investment_manager.forecast.contracts import (
     ForecastContract,
-    ForecastNoEstimate,
     ForecastPermission,
     ForecastProducerBinding,
-    ForecastSlotCause,
 )
 from investment_manager.forecast.product.models import ProductPayoffProjection
 from investment_manager.forecast.repository import SqlForecastStore
@@ -75,39 +73,7 @@ from investment_manager.risk.repository import SqlPortfolioRiskStore
 from investment_manager.scheduling.models import TriggerBatch
 from investment_manager.settings import AppConfig
 
-ForecastProductionResult = BaseForecast | ForecastNoEstimate
 logger = logging.getLogger(__name__)
-
-
-class CapitalForecastProducer(Protocol):
-    def existing_result(
-        self,
-        *,
-        as_of: datetime,
-        cause: ForecastSlotCause | None = None,
-    ) -> ForecastProductionResult | None: ...
-
-    def produce(
-        self,
-        *,
-        as_of: datetime,
-        cause: ForecastSlotCause | None = None,
-    ) -> ForecastProductionResult: ...
-
-    def record_deadline_missed(
-        self,
-        *,
-        as_of: datetime,
-        completed_at: datetime,
-        cause: ForecastSlotCause | None = None,
-    ) -> ForecastProductionResult: ...
-
-    def recover_deadline_missed(
-        self,
-        *,
-        before_as_of: datetime,
-        completed_at: datetime,
-    ) -> tuple[ForecastNoEstimate, ...]: ...
 
 
 class CapitalProductPayoffProjector(Protocol):
@@ -128,11 +94,10 @@ class CapitalProductPayoffProjector(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CapitalForecastSource:
-    """One contract/product source, optionally authorized to add capital."""
+    """One immutable contract admission and its executable product mapping."""
 
     contract: ForecastContract
     binding: ForecastProducerBinding
-    producer: CapitalForecastProducer
     risk_template: SleeveRiskTemplate
     capital_authorization: CandidateCapitalAuthorization | None
     product_payoffs: CapitalProductPayoffProjector | None = None
@@ -169,6 +134,8 @@ class CapitalTriggerConsumer:
         # facts; the assessment path remains free to observe every asset.
         if self.owner_symbol is not None and batch.symbol != self.owner_symbol:
             return None
+        if self.capital.has_pending_forecast_decision(as_of=batch.created_at):
+            return self.capital.consume(batch)
         return self.capital.review(batch)
 
 
@@ -203,6 +170,12 @@ class CapitalCycleService:
         self._forecast_sources = tuple(
             item for item in forecast_sources if item.capital_authorization is not None
         )
+        authorized_behaviors = {
+            (item.binding.producer_id, item.binding.producer_behavior_id)
+            for item in self._forecast_sources
+        }
+        if len(authorized_behaviors) > 1:
+            raise ValueError("正式 Capital 账户一次只能消费一个 Forecast producer 行为")
         self._source_by_family = {
             item.contract.outcome_family_id: item for item in forecast_sources
         }
@@ -231,18 +204,26 @@ class CapitalCycleService:
             is not None
         )
 
-    def forecast_outputs_complete(
-        self,
-        *,
-        as_of: datetime,
-        cause: ForecastSlotCause | None = None,
-    ) -> bool:
-        """Whether every configured producer already wrote a terminal slot output."""
+    def has_pending_forecast_decision(self, *, as_of: datetime) -> bool:
+        """Whether a complete authorized panel still needs a capital terminal state."""
 
-        return bool(self._forecast_sources) and all(
-            source.producer.existing_result(as_of=as_of, cause=cause) is not None
-            for source in self._forecast_sources
-        )
+        panel = self._authorized_forecast_panel(as_of=require_utc(as_of))
+        if not panel:
+            return False
+        cycle_id = self._forecast_cycle_id(panel)
+        target = self._portfolio.target_for_cycle(cycle_id)
+        if target is None:
+            return True
+        risk = self._risks.for_target(target.target_id)
+        if risk is None:
+            return True
+        if risk.outcome != RiskOutcome.APPROVED:
+            return False
+        plan = self._plans.for_cycle(cycle_id)
+        if plan is None:
+            return True
+        groups = self._groups.for_plan(plan.plan_id)
+        return len(groups) != len(plan.groups) or any(not item.terminal for item in groups)
 
     def consume(self, batch: TriggerBatch) -> PortfolioPipelineResult | TradePlanExecutionResult:
         """Run capital once for an immutable trigger cause."""
@@ -298,7 +279,6 @@ class CapitalCycleService:
             symbol=batch.symbol,
             trigger_types=tuple(item.trigger_type.value for item in batch.triggers),
             forecast_already_decided=False,
-            no_estimates=(),
             observation_reason_codes=("PROGRAMMATIC_RISK_REVIEW",),
         )
 
@@ -311,7 +291,6 @@ class CapitalCycleService:
         trigger_batch_id: str | None = None,
         symbol: str = "SYSTEM",
         trigger_types: tuple[str, ...] = (),
-        cause: ForecastSlotCause | None = None,
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         requested_at = require_utc(as_of)
         resume_at = require_utc(decision_at) if decision_at is not None else requested_at
@@ -335,20 +314,16 @@ class CapitalCycleService:
             ):
                 raise ValueError("Capital evaluation cause 已绑定不同触发事实")
             return self._recorded_result(prior_record)
-        production_results = tuple(
-            source.producer.produce(as_of=requested_at)
-            if cause is None
-            else source.producer.produce(as_of=requested_at, cause=cause)
-            for source in self._forecast_sources
-        )
-        generated_forecasts = tuple(
-            item for item in production_results if not isinstance(item, ForecastNoEstimate)
-        )
-        no_estimates = tuple(
-            item for item in production_results if isinstance(item, ForecastNoEstimate)
-        )
+        generated_forecasts = self._authorized_forecast_panel(as_of=resume_at)
+        if not generated_forecasts and resume_at > requested_at:
+            recovered = self._authorized_forecast_panel(
+                as_of=resume_at,
+                include_expired=True,
+            )
+            if recovered and all(item.information_cutoff_at == requested_at for item in recovered):
+                generated_forecasts = recovered
         if not generated_forecasts:
-            completed_at = max((requested_at, *(item.completed_at for item in no_estimates)))
+            completed_at = requested_at
             account_head = self._portfolio.head_account(
                 portfolio_id=self._policy.decision.portfolio_id
             )
@@ -367,7 +342,7 @@ class CapitalCycleService:
                 symbol=symbol,
                 trigger_types=trigger_types,
                 forecast_already_decided=False,
-                no_estimates=no_estimates,
+                observation_reason_codes=("AUTHORIZED_FORECAST_PANEL_UNAVAILABLE",),
             )
         decision_at = max(
             requested_at,
@@ -390,7 +365,6 @@ class CapitalCycleService:
                 symbol=symbol,
                 trigger_types=trigger_types,
                 forecast_already_decided=True,
-                no_estimates=no_estimates,
             )
 
         recovered_groups = self._recover(as_of=decision_at, cycle_id=cycle_id)
@@ -452,7 +426,6 @@ class CapitalCycleService:
                 symbol=symbol,
                 trigger_types=trigger_types,
                 forecast_already_decided=False,
-                no_estimates=no_estimates,
             )
         result = self._execution.run(
             plan_id=plan.plan_id,
@@ -479,55 +452,7 @@ class CapitalCycleService:
             symbol=symbol,
             trigger_types=trigger_types,
             forecast_already_decided=False,
-            no_estimates=no_estimates,
         )
-
-    def record_missed_forecast(
-        self,
-        *,
-        slot_at: datetime,
-        completed_at: datetime,
-        cause: ForecastSlotCause | None = None,
-    ) -> tuple[ForecastProductionResult, ...]:
-        """Ensure a late slot has a terminal result without rewriting an existing one."""
-
-        slot = require_utc(slot_at)
-        completed = require_utc(completed_at)
-        results = tuple(
-            (
-                source.producer.record_deadline_missed(
-                    as_of=slot,
-                    completed_at=completed,
-                )
-                if cause is None
-                else source.producer.record_deadline_missed(
-                    as_of=slot,
-                    completed_at=completed,
-                    cause=cause,
-                )
-            )
-            for source in self._forecast_sources
-        )
-        # ``record_deadline_missed`` is idempotent at the producer boundary.  A
-        # Forecast returned here is necessarily the immutable result already
-        # recorded for this behavior/slot, not hindsight production.
-        return results
-
-    def recover_missed_forecasts(
-        self,
-        *,
-        before_slot_at: datetime,
-        completed_at: datetime,
-    ) -> tuple[ForecastNoEstimate, ...]:
-        recovered = tuple(
-            result
-            for source in self._forecast_sources
-            for result in source.producer.recover_deadline_missed(
-                before_as_of=before_slot_at,
-                completed_at=completed_at,
-            )
-        )
-        return recovered
 
     def _finish(
         self,
@@ -541,7 +466,6 @@ class CapitalCycleService:
         symbol: str,
         trigger_types: tuple[str, ...],
         forecast_already_decided: bool,
-        no_estimates: tuple[ForecastNoEstimate, ...],
         observation_reason_codes: tuple[str, ...] = (),
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         target = result.target if isinstance(result, PortfolioPipelineResult) else None
@@ -599,7 +523,6 @@ class CapitalCycleService:
                 sorted(
                     {
                         *(("NO_REGISTERED_FORECAST_SOURCE",) if not self._forecast_sources else ()),
-                        *(f"FORECAST_NO_ESTIMATE:{item.reason.value}" for item in no_estimates),
                         *observation_reason_codes,
                         *(("HOLDING_RISK_REVIEWED",) if account.sleeves else ()),
                     }
@@ -666,6 +589,42 @@ class CapitalCycleService:
             self._policy.decision.portfolio_id,
             tuple(sorted(item.forecast_id for item in forecasts)),
         )
+
+    def _authorized_forecast_panel(
+        self,
+        *,
+        as_of: datetime,
+        include_expired: bool = False,
+    ) -> tuple[BaseForecast, ...]:
+        """Select the newest complete same-cutoff panel under exact capital bindings."""
+
+        if not self._forecast_sources:
+            return ()
+        visible_by_family: dict[str, dict[datetime, BaseForecast]] = {}
+        for source in self._forecast_sources:
+            by_cutoff: dict[datetime, BaseForecast] = {}
+            for forecast in self._forecasts.active_base_for_binding(
+                binding_id=source.binding.binding_id,
+                as_of=as_of,
+                include_expired=include_expired,
+            ):
+                if (
+                    forecast.contract_id != source.contract.contract_id
+                    or forecast.outcome_family_id != source.contract.outcome_family_id
+                    or forecast.producer_id != source.binding.producer_id
+                    or forecast.producer_behavior_id != source.binding.producer_behavior_id
+                ):
+                    raise ValueError("资本 Binding 读取到不一致的 Forecast")
+                existing = by_cutoff.get(forecast.information_cutoff_at)
+                if existing is not None and existing != forecast:
+                    raise ValueError("同一资本来源在同截止时点存在多个 Forecast")
+                by_cutoff[forecast.information_cutoff_at] = forecast
+            visible_by_family[source.contract.outcome_family_id] = by_cutoff
+        common_cutoffs = set.intersection(*(set(items) for items in visible_by_family.values()))
+        if not common_cutoffs:
+            return ()
+        cutoff = max(common_cutoffs)
+        return tuple(visible_by_family[family][cutoff] for family in sorted(visible_by_family))
 
     def _completed_decision(
         self,
@@ -951,8 +910,7 @@ class CapitalCycleService:
         )
         plan = protected.trade_plan
         support_invalid = any(
-            not item.payoff_projection_current
-            or as_of >= item.forecast.economic_horizon_end
+            not item.payoff_projection_current or as_of >= item.forecast.economic_horizon_end
             for item in sleeves
         )
         if (

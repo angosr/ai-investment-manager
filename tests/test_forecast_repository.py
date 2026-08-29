@@ -414,6 +414,51 @@ def test_material_slot_preserves_legacy_identity() -> None:
     )
 
 
+def test_same_behavior_can_receive_future_capital_admission() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    contract = _contract()
+    contracts.record_contract(contract)
+    fields = {
+        "contract_id": contract.contract_id,
+        "producer_kind": ForecastProducerKind.CONTEXT,
+        "producer_id": "codex",
+        "producer_behavior_id": "codex-v1",
+    }
+    research = ForecastProducerBinding.create(
+        **fields,
+        permission=ForecastPermission.RESEARCH,
+    )
+    capital = ForecastProducerBinding.create(
+        **fields,
+        permission=ForecastPermission.CAPITAL_CANDIDATE,
+    )
+
+    assert contracts.resolve_binding(research, activated_at=NOW) == research
+    assert (
+        contracts.resolve_binding(
+            capital,
+            activated_at=NOW + timedelta(hours=1),
+        )
+        == capital
+    )
+
+    assert research.binding_id != capital.binding_id
+    assert research.producer_behavior_id == capital.producer_behavior_id
+    assert contracts.binding(research.binding_id) == research
+    assert contracts.binding(capital.binding_id) == capital
+    assert contracts.binding_activation_at(research.binding_id) == NOW
+    assert contracts.binding_activation_at(capital.binding_id) == NOW + timedelta(hours=1)
+    assert (
+        contracts.resolve_binding(
+            capital,
+            activated_at=NOW + timedelta(hours=2),
+        )
+        == capital
+    )
+
+
 def test_binding_resolution_preserves_legacy_identity_for_same_neutral_behavior() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)

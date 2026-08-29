@@ -225,7 +225,8 @@ forecast_producer_bindings = Table(
     UniqueConstraint(
         "contract_id",
         "producer_behavior_id",
-        name="uq_forecast_binding_contract_behavior",
+        "permission",
+        name="uq_forecast_binding_contract_behavior_permission",
     ),
 )
 

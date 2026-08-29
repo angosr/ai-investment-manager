@@ -615,9 +615,7 @@ def test_equivalent_release_reuses_original_posterior_activation(base_app_config
 def test_equivalent_release_reuses_activation_without_creating_an_obligation(
     base_app_config,
 ) -> None:
-    preparation, contracts, _forecasts, _targets, _market, _engine = _preparation(
-        base_app_config
-    )
+    preparation, contracts, _forecasts, _targets, _market, _engine = _preparation(base_app_config)
 
     bindings = preparation.activate()
     rebound = replace(
@@ -653,6 +651,27 @@ def test_posterior_behavior_identity_includes_prior_behavior(base_app_config) ->
     )
 
     assert changed.producer_behavior_id != preparation.producer_behavior_id
+
+
+def test_posterior_behavior_identity_excludes_prior_capital_admission(
+    base_app_config,
+) -> None:
+    preparation, *_rest = _preparation(base_app_config)
+    capital_bindings = tuple(
+        ForecastProducerBinding.create(
+            contract_id=item.contract_id,
+            producer_kind=item.producer_kind,
+            producer_id=item.producer_id,
+            producer_behavior_id=item.producer_behavior_id,
+            permission=ForecastPermission.CAPITAL_CANDIDATE,
+            required_feature_keys=item.required_feature_keys,
+        )
+        for item in preparation.prior_bindings
+    )
+
+    promoted = replace(preparation, prior_bindings=capital_bindings)
+
+    assert promoted.producer_behavior_id == preparation.producer_behavior_id
 
 
 def test_preparation_rejects_prior_from_an_unbound_behavior(base_app_config) -> None:
@@ -1089,6 +1108,64 @@ class _FailedAssessmentApplication:
 class _ConflictingAssessmentApplication:
     def execute(self, _command):
         raise ValueError("authoritative conflict")
+
+
+def test_world_model_update_is_published_after_posterior_terminal_state(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, _engine, frozen, completed_at = _execution_fixture(
+        base_app_config
+    )
+    packet = _packet()
+    published = []
+
+    def publish(assessment):
+        assert all(
+            forecasts.result_for_behavior(
+                decision_slot_id=target.slot.slot_id,
+                producer_behavior_id=preparation.producer_behavior_id,
+            )
+            is not None
+            for target in frozen.targets
+        )
+        published.append(assessment.assessment_id)
+
+    application = ContextAssessmentPosteriorApplication(
+        assessment=_SuccessfulAssessmentApplication(packet, completed_at),
+        preparation=preparation,
+        posterior=ContextPosteriorApplication(
+            analyst=_ExecutionAnalyst(
+                preparation.producer_behavior_id,
+                AnalystResult(
+                    True,
+                    _output(frozen, change=False, contribute=False),
+                    "CODEX_ANALYSIS_SUCCEEDED",
+                    completed_at=completed_at,
+                ),
+            ),
+            contracts=contracts,
+            forecasts=forecasts,
+            market=market,
+            maximum_quote_age_seconds=300,
+            clock=lambda: SLOT_AT + timedelta(minutes=3),
+        ),
+        on_world_model_complete=publish,
+    )
+
+    result = application.execute(
+        command=AssessmentCommand.create(
+            packet=packet,
+            analysis_behavior_hash="a" * 64,
+        ),
+        seed=ContextPosteriorSeed.create(
+            information_cutoff_at=SLOT_AT,
+            targets=frozen.targets,
+        ),
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+
+    assert result.status == PosteriorExecutionStatus.SUCCEEDED
+    assert published == [frozen.world_model.assessment_id]
 
 
 def test_same_cutoff_world_model_failure_closes_posterior_obligations(

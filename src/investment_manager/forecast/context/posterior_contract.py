@@ -13,6 +13,7 @@ from investment_manager.forecast.codex.protocol import codex_execution_contract
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
+    ForecastPermission,
     ForecastPriceAnchor,
     ForecastProducerBinding,
 )
@@ -93,13 +94,10 @@ class ContextPosteriorSeed(FrozenModel):
         if tuple(sorted(set(contract_ids))) != contract_ids:
             raise ValueError("Posterior seed targets 必须按唯一 Contract 排序")
         if any(
-            item.slot.information_cutoff_at != self.information_cutoff_at
-            for item in self.targets
+            item.slot.information_cutoff_at != self.information_cutoff_at for item in self.targets
         ):
             raise ValueError("Posterior seed targets 必须共享信息截止")
-        expected_hash = content_hash(
-            self.model_dump(mode="json", exclude={"seed_id", "seed_hash"})
-        )
+        expected_hash = content_hash(self.model_dump(mode="json", exclude={"seed_id", "seed_hash"}))
         if self.seed_hash != expected_hash:
             raise ValueError("Posterior seed_hash 与内容不一致")
         if self.seed_id != stable_id("context_posterior_seed", expected_hash):
@@ -289,9 +287,7 @@ def posterior_analysis_projection(value: ContextPosteriorInput) -> dict[str, obj
             "horizon_hours": mechanism.horizon_hours,
             "transmission_stage": mechanism.transmission_stage,
             "causal_chain": tuple(node.statement for node in mechanism.causal_chain),
-            "observations": tuple(
-                observations_by_mechanism.get(mechanism.mechanism_id, ())
-            ),
+            "observations": tuple(observations_by_mechanism.get(mechanism.mechanism_id, ())),
         }
         for mechanism in value.world_model.mechanisms
         if mechanism.mechanism_id in eligible
@@ -372,8 +368,18 @@ def posterior_behavior_hash(
                 (item.contract_id, tuple(bucket.bucket_id for bucket in item.outcome_buckets))
                 for item in sorted(contracts, key=lambda item: item.contract_id)
             ),
+            # Slot admission is governance state, not predictive behavior.  Normalize
+            # it to the historical RESEARCH identity so later capital promotion does
+            # not erase or split the posterior's accumulated forecast evidence.
             "prior_bindings": tuple(
-                item.model_dump(mode="json")
+                ForecastProducerBinding.create(
+                    contract_id=item.contract_id,
+                    producer_kind=item.producer_kind,
+                    producer_id=item.producer_id,
+                    producer_behavior_id=item.producer_behavior_id,
+                    permission=ForecastPermission.RESEARCH,
+                    required_feature_keys=item.required_feature_keys,
+                ).model_dump(mode="json")
                 for item in sorted(prior_bindings, key=lambda item: item.contract_id)
             ),
             "world_model_behavior_id": world_model_behavior_id,

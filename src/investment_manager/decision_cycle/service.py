@@ -9,6 +9,7 @@ from temporalio.client import Client
 
 from investment_manager.decision_cycle.capital import (
     CapitalCycleService,
+    CapitalForecastSource,
     CapitalTriggerConsumer,
     assemble_capital_cycle,
 )
@@ -23,8 +24,20 @@ from investment_manager.forecast.context.posterior_preparation import (
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.product.projector import (
+    RecordedProductPayoffProjector,
+    build_point_in_time_product_payoff_projector,
+)
+from investment_manager.forecast.product.repository import (
+    SqlProductPayoffProjectionStore,
+)
+from investment_manager.forecast.program.admission import (
+    ActiveForecastAdmissions,
+    resolve_active_forecast_admissions,
+)
 from investment_manager.forecast.program.baseline import load_forecast_baseline
 from investment_manager.forecast.program.prior import (
+    PriorRuntimeTarget,
     RollingPriorForecastProducer,
     build_prior_targets,
 )
@@ -60,6 +73,13 @@ class TriggerServiceAssembly:
     activities: TriggerCoordinatorActivities
 
 
+@dataclass(frozen=True, slots=True)
+class ForecastRuntimeAssembly:
+    prior: RollingPriorForecastProducer
+    posterior: ContextPosteriorPreparation | None
+    capital_sources: tuple[CapitalForecastSource, ...]
+
+
 def assemble_trigger_service(
     *,
     config: AppConfig,
@@ -70,8 +90,21 @@ def assemble_trigger_service(
     """Assemble the production graph without acquiring leadership or creating plans."""
 
     repository = repository or SqlTriggerRepository(engine, config.trigger)
+    forecast_runtime = (
+        _assemble_forecast_runtime(config=config, manifest=manifest, engine=engine)
+        if config.outcome_evaluation.forecast_prior.enabled
+        else None
+    )
+    if forecast_runtime is None and config.capital.candidate_capital_authorizations:
+        raise ValueError("Capital authorization 缺少现役 Forecast runtime")
     capital_consumer = (
-        _assemble_capital_consumer(config=config, engine=engine) if config.capital.enabled else None
+        _assemble_capital_consumer(
+            config=config,
+            engine=engine,
+            forecast_sources=(() if forecast_runtime is None else forecast_runtime.capital_sources),
+        )
+        if config.capital.enabled
+        else None
     )
     activities = TriggerCoordinatorActivities(
         TriggerDispatchBuilder(
@@ -86,22 +119,10 @@ def assemble_trigger_service(
             ),
             batch_recorder=repository,
             program_forecast_producers=(
-                _assemble_forecast_prior(
-                    config=config,
-                    manifest=manifest,
-                    engine=engine,
-                ),
-            )
-            if config.outcome_evaluation.forecast_prior.enabled
-            else (),
+                () if forecast_runtime is None else (forecast_runtime.prior,)
+            ),
             posterior_preparation=(
-                _assemble_context_posterior(
-                    config=config,
-                    manifest=manifest,
-                    engine=engine,
-                )
-                if config.assessment.enabled and config.outcome_evaluation.forecast_prior.enabled
-                else None
+                None if forecast_runtime is None else forecast_runtime.posterior
             ),
             program_batch_consumers=(
                 CapitalTriggerConsumer(
@@ -188,6 +209,7 @@ def _assemble_capital_consumer(
     *,
     config: AppConfig,
     engine,
+    forecast_sources: tuple[CapitalForecastSource, ...],
 ) -> CapitalCycleService:
     execution = assemble_product_execution_runtime(config, engine)
     return assemble_capital_cycle(
@@ -195,20 +217,47 @@ def _assemble_capital_consumer(
         engine,
         venue=execution.venue,
         initial_cash=execution.initial_cash,
+        forecast_sources=forecast_sources,
     )
 
 
-def _assemble_forecast_prior(
+def _assemble_forecast_runtime(
     *,
     config: AppConfig,
     manifest: ReleaseManifest,
     engine,
-) -> RollingPriorForecastProducer:
+) -> ForecastRuntimeAssembly:
     policy = config.outcome_evaluation.forecast_prior
     if policy.artifact_id is None:
         raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
     artifact = load_forecast_baseline(resolve_manifest_artifact(manifest, policy.artifact_id))
-    return RollingPriorForecastProducer(
+    world_model_behavior_id = configured_assess_behavior_hash(config)
+    authorization_identities = tuple(
+        sorted(
+            (
+                item.producer_id,
+                item.producer_behavior_id,
+                item.outcome_family_id,
+            )
+            for item in config.capital.candidate_capital_authorizations
+        )
+    )
+    admissions = resolve_active_forecast_admissions(
+        artifact=artifact,
+        runtime=config.codex_runtime,
+        world_model_behavior_id=world_model_behavior_id,
+        authorization_identities=authorization_identities,
+    )
+    targets = tuple(
+        sorted(
+            build_prior_targets(
+                artifact,
+                capital_outcome_families=admissions.prior_outcome_families,
+            ),
+            key=lambda item: item.contract.contract_id,
+        )
+    )
+    prior = RollingPriorForecastProducer(
         artifact=artifact,
         market=SqlMarketDataStore(engine),
         contracts=SqlForecastContractStore(engine),
@@ -216,30 +265,90 @@ def _assemble_forecast_prior(
         outcome_evaluation_version=config.outcome_evaluation.target_forecast_version,
         activated_at=manifest.created_at,
         maximum_quote_age_seconds=config.capital.risk.maximum_quote_age_seconds,
-    )
-
-
-def _assemble_context_posterior(
-    *,
-    config: AppConfig,
-    manifest: ReleaseManifest,
-    engine,
-) -> ContextPosteriorPreparation:
-    policy = config.outcome_evaluation.forecast_prior
-    if policy.artifact_id is None:
-        raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
-    artifact = load_forecast_baseline(resolve_manifest_artifact(manifest, policy.artifact_id))
-    targets = tuple(
-        sorted(build_prior_targets(artifact), key=lambda item: item.contract.contract_id)
+        capital_outcome_families=admissions.prior_outcome_families,
     )
     contracts = tuple(item.contract for item in targets)
     prior_bindings = tuple(item.binding for item in targets)
-    return ContextPosteriorPreparation(
-        contracts=contracts,
-        prior_bindings=prior_bindings,
-        runtime=config.codex_runtime,
-        world_model_behavior_id=configured_assess_behavior_hash(config),
-        activated_at=manifest.created_at,
-        contract_store=SqlForecastContractStore(engine),
-        forecast_store=SqlForecastStore(engine),
+    posterior = (
+        ContextPosteriorPreparation(
+            contracts=contracts,
+            prior_bindings=prior_bindings,
+            runtime=config.codex_runtime,
+            world_model_behavior_id=world_model_behavior_id,
+            activated_at=manifest.created_at,
+            contract_store=SqlForecastContractStore(engine),
+            forecast_store=SqlForecastStore(engine),
+            capital_outcome_families=admissions.posterior_outcome_families,
+        )
+        if config.assessment.enabled
+        else None
     )
+    if admissions.posterior_outcome_families and posterior is None:
+        raise ValueError("Posterior capital authorization 缺少启用的 Assessment runtime")
+    sources = (
+        _assemble_capital_sources(
+            config=config,
+            engine=engine,
+            targets=targets,
+            posterior=posterior,
+            admissions=admissions,
+        )
+        if config.capital.enabled
+        else ()
+    )
+    return ForecastRuntimeAssembly(prior=prior, posterior=posterior, capital_sources=sources)
+
+
+def _assemble_capital_sources(
+    *,
+    config: AppConfig,
+    engine,
+    targets: tuple[PriorRuntimeTarget, ...],
+    posterior: ContextPosteriorPreparation | None,
+    admissions: ActiveForecastAdmissions,
+) -> tuple[CapitalForecastSource, ...]:
+    authorizations = {
+        (item.producer_id, item.producer_behavior_id, item.outcome_family_id): item
+        for item in config.capital.candidate_capital_authorizations
+    }
+    market = SqlMarketDataStore(engine)
+    projection_store = SqlProductPayoffProjectionStore(engine)
+    sources = []
+    for target in targets:
+        contract = target.contract
+        if admissions.prior_outcome_families:
+            binding = target.binding
+        elif posterior is not None:
+            binding = posterior.binding(contract)
+        else:
+            binding = target.binding
+        authorization = authorizations.get(
+            (
+                binding.producer_id,
+                binding.producer_behavior_id,
+                contract.outcome_family_id,
+            )
+        )
+        builder = build_point_in_time_product_payoff_projector(
+            capital_policy=config.capital,
+            contract=contract,
+            market=market,
+            funding_lookback_hours=config.market_data.funding_history_lookback_hours,
+        )
+        sources.append(
+            CapitalForecastSource(
+                contract=contract,
+                binding=binding,
+                risk_template=config.capital.sleeve_risk,
+                capital_authorization=authorization,
+                product_payoffs=RecordedProductPayoffProjector(
+                    builder=builder,
+                    store=projection_store,
+                ),
+            )
+        )
+    if authorizations and sum(item.capital_authorization is not None for item in sources) != len(
+        authorizations
+    ):
+        raise ValueError("Capital authorization 未精确装配到现役 Forecast source")
+    return tuple(sorted(sources, key=lambda item: item.contract.outcome_family_id))

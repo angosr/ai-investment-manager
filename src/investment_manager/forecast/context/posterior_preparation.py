@@ -41,6 +41,7 @@ class ContextPosteriorPreparation:
     activated_at: datetime
     contract_store: SqlForecastContractStore
     forecast_store: SqlForecastStore
+    capital_outcome_families: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         require_utc(self.activated_at)
@@ -54,6 +55,10 @@ class ContextPosteriorPreparation:
             prior_contract_ids
         ):
             raise ValueError("Posterior prior bindings 必须与 contracts 唯一且逐项对应")
+        if tuple(sorted(set(self.capital_outcome_families))) != self.capital_outcome_families:
+            raise ValueError("Posterior 资本准入 family 必须唯一且排序")
+        if set(self.capital_outcome_families) - {item.outcome_family_id for item in self.contracts}:
+            raise ValueError("Posterior 资本准入引用未知 outcome family")
 
     @property
     def producer_behavior_id(self) -> str:
@@ -72,7 +77,11 @@ class ContextPosteriorPreparation:
             producer_kind=ForecastProducerKind.CONTEXT,
             producer_id=POSTERIOR_PRODUCER_ID,
             producer_behavior_id=self.producer_behavior_id,
-            permission=ForecastPermission.RESEARCH,
+            permission=(
+                ForecastPermission.CAPITAL_CANDIDATE
+                if contract.outcome_family_id in self.capital_outcome_families
+                else ForecastPermission.RESEARCH
+            ),
         )
 
     def activate(self) -> tuple[ForecastProducerBinding, ...]:

@@ -133,14 +133,9 @@ class RecordingCapital:
     def __init__(self) -> None:
         self.produce_calls = []
         self.review_calls = []
-        self.recovered_slots = []
-        self.missed_slots = []
 
-    def cause_completed(self, cause_id):
-        return any(item["cause_id"] == cause_id for item in self.produce_calls)
-
-    def forecast_outputs_complete(self, **kwargs):
-        del kwargs
+    def has_pending_forecast_decision(self, *, as_of):
+        del as_of
         return False
 
     def produce(self, **kwargs):
@@ -148,12 +143,6 @@ class RecordingCapital:
 
     def review(self, batch):
         self.review_calls.append(batch)
-
-    def recover_missed_forecasts(self, **kwargs):
-        self.recovered_slots.append(kwargs)
-
-    def record_missed_forecast(self, **kwargs):
-        self.missed_slots.append(kwargs)
 
 
 def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) -> None:
@@ -422,8 +411,12 @@ def test_trigger_service_assembly_passes_enabled_forecast_producer_as_tuple(
     recorder = RecordingBatchRecorder()
     monkeypatch.setattr(
         decision_service,
-        "_assemble_forecast_prior",
-        lambda **_kwargs: producer,
+        "_assemble_forecast_runtime",
+        lambda **_kwargs: decision_service.ForecastRuntimeAssembly(
+            prior=producer,
+            posterior=None,
+            capital_sources=(),
+        ),
     )
     assembly = decision_service.assemble_trigger_service(
         config=config,

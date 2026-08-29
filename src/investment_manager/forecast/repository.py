@@ -162,8 +162,7 @@ class SqlForecastStore:
             ),
         ).join(
             forecast_producer_bindings,
-            forecast_producer_bindings.c.binding_id
-            == forecast_slot_obligations.c.binding_id,
+            forecast_producer_bindings.c.binding_id == forecast_slot_obligations.c.binding_id,
         )
         query = (
             select(forecasts.c.payload)
@@ -257,6 +256,41 @@ class SqlForecastStore:
                 .order_by(forecasts.c.available_at, forecasts.c.forecast_id)
                 .limit(limit)
             ).scalars()
+            return tuple(BaseForecast.model_validate(item) for item in payloads)
+
+    def active_base_for_binding(
+        self,
+        *,
+        binding_id: str,
+        as_of: datetime,
+        include_expired: bool = False,
+    ) -> tuple[BaseForecast, ...]:
+        """Read forecasts produced under one exact historical slot admission."""
+
+        now = require_utc(as_of)
+        joined = forecasts.join(
+            forecast_slot_obligations,
+            and_(
+                forecast_slot_obligations.c.slot_id == forecasts.c.decision_slot_id,
+                forecast_slot_obligations.c.producer_id == forecasts.c.producer_id,
+                forecast_slot_obligations.c.producer_behavior_id
+                == forecasts.c.producer_behavior_id,
+            ),
+        )
+        query = (
+            select(forecasts.c.payload)
+            .select_from(joined)
+            .where(
+                forecasts.c.kind == ForecastResultKind.BASE.value,
+                forecast_slot_obligations.c.binding_id == binding_id,
+                forecasts.c.available_at <= now,
+            )
+            .order_by(forecasts.c.available_at, forecasts.c.forecast_id)
+        )
+        if not include_expired:
+            query = query.where(forecasts.c.valid_until > now)
+        with self._engine.connect() as connection:
+            payloads = connection.execute(query).scalars()
             return tuple(BaseForecast.model_validate(item) for item in payloads)
 
     def pending_slots(
@@ -379,8 +413,7 @@ class SqlForecastStore:
         obligation_payload = connection.execute(
             select(forecast_slot_obligations.c.payload).where(
                 forecast_slot_obligations.c.slot_id == forecast.decision_slot_id,
-                forecast_slot_obligations.c.producer_behavior_id
-                == forecast.producer_behavior_id,
+                forecast_slot_obligations.c.producer_behavior_id == forecast.producer_behavior_id,
             )
         ).scalar_one_or_none()
         if obligation_payload is None:
@@ -394,10 +427,7 @@ class SqlForecastStore:
         if (
             isinstance(forecast, BaseForecast)
             and obligation.producer_kind == ForecastProducerKind.CONTEXT
-            and (
-                forecast.analysis_input_json is None
-                or forecast.program_input_json is not None
-            )
+            and (forecast.analysis_input_json is None or forecast.program_input_json is not None)
         ):
             raise ValueError("CONTEXT Forecast 必须且只能保存 AI 输入快照")
         if isinstance(forecast, CalibratedForecast):

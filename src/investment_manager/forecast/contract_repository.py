@@ -103,20 +103,33 @@ class SqlForecastContractStore:
         *,
         activated_at: datetime,
     ) -> ForecastProducerBinding:
-        """Reuse the immutable binding for one contract/behavior, or record it once."""
+        """Reuse one behavior/admission binding, or freeze its future activation."""
 
+        stored_permissions = (
+            (
+                ForecastPermission.CAPITAL_CANDIDATE.value,
+                "MOCK",
+            )
+            if binding.permission == ForecastPermission.CAPITAL_CANDIDATE
+            else (binding.permission.value,)
+        )
         with self._engine.connect() as connection:
-            payload = connection.execute(
-                select(forecast_producer_bindings.c.payload).where(
-                    forecast_producer_bindings.c.contract_id == binding.contract_id,
-                    forecast_producer_bindings.c.producer_behavior_id
-                    == binding.producer_behavior_id,
-                )
-            ).scalar_one_or_none()
-        if payload is None:
+            payloads = tuple(
+                connection.execute(
+                    select(forecast_producer_bindings.c.payload).where(
+                        forecast_producer_bindings.c.contract_id == binding.contract_id,
+                        forecast_producer_bindings.c.producer_behavior_id
+                        == binding.producer_behavior_id,
+                        forecast_producer_bindings.c.permission.in_(stored_permissions),
+                    )
+                ).scalars()
+            )
+        if not payloads:
             self.record_binding(binding, activated_at=activated_at)
             return binding
-        existing = load_forecast_producer_binding(payload)
+        if len(payloads) != 1:
+            raise ValueError("ForecastProducerBinding 同一准入语义存在多个冻结身份")
+        existing = load_forecast_producer_binding(payloads[0])
         comparable_fields = (
             "contract_id",
             "producer_kind",
@@ -125,10 +138,7 @@ class SqlForecastContractStore:
             "permission",
             "required_feature_keys",
         )
-        if any(
-            getattr(existing, field) != getattr(binding, field)
-            for field in comparable_fields
-        ):
+        if any(getattr(existing, field) != getattr(binding, field) for field in comparable_fields):
             raise ValueError("ForecastProducerBinding 行为身份已绑定到不同语义")
         return existing
 
@@ -254,23 +264,18 @@ class SqlForecastContractStore:
             .select_from(
                 forecast_slot_obligations.join(
                     forecast_decision_slots,
-                    forecast_decision_slots.c.slot_id
-                    == forecast_slot_obligations.c.slot_id,
+                    forecast_decision_slots.c.slot_id == forecast_slot_obligations.c.slot_id,
                 )
             )
             .where(forecast_slot_obligations.c.binding_id == binding_id)
         )
         if origin is not None:
-            stored_origin = forecast_decision_slots.c.payload["cause"][
-                "origin"
-            ].as_string()
+            stored_origin = forecast_decision_slots.c.payload["cause"]["origin"].as_string()
             statement = statement.where(
                 or_(
                     stored_origin == origin.value,
                     # Slots before cause provenance existed were cadence-only.
-                    stored_origin.is_(None)
-                    if origin == ForecastSlotOrigin.CADENCE
-                    else False,
+                    stored_origin.is_(None) if origin == ForecastSlotOrigin.CADENCE else False,
                 )
             )
         with self._engine.connect() as connection:
@@ -332,8 +337,7 @@ class SqlForecastContractStore:
             obligation = connection.execute(
                 select(forecast_slot_obligations.c.payload).where(
                     forecast_slot_obligations.c.slot_id == result.slot_id,
-                    forecast_slot_obligations.c.producer_behavior_id
-                    == result.producer_behavior_id,
+                    forecast_slot_obligations.c.producer_behavior_id == result.producer_behavior_id,
                 )
             ).scalar_one_or_none()
             if obligation is None:

@@ -33,6 +33,7 @@ from investment_manager.forecast.contracts import (
     ForecastPriceAnchor,
     ForecastProducerKind,
 )
+from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast
 from investment_manager.kernel.identity import stable_id
@@ -527,6 +528,7 @@ class ContextAssessmentPosteriorApplication:
     assessment: AssessmentApplication
     preparation: ContextPosteriorPreparation
     posterior: ContextPosteriorApplication
+    on_world_model_complete: Callable[[ContextAssessment], None] | None = None
 
     def execute(
         self,
@@ -556,7 +558,7 @@ class ContextAssessmentPosteriorApplication:
             )
         assert assessment.assessment is not None
         if assessment.completed_at > deadline or assessment.assessment.available_at > deadline:
-            return self._close(
+            result = self._close(
                 seed,
                 expected_behavior_hash=expected_behavior_hash,
                 completed_at=assessment.completed_at,
@@ -568,15 +570,23 @@ class ContextAssessmentPosteriorApplication:
                 usage=assessment.usage,
                 extra_refs=(assessment.assessment.assessment_id,),
             )
+            self._publish(assessment.assessment)
+            return result
         frozen_input = self.preparation.build_input(
             seed,
             world_model=assessment.assessment,
             packet=command.packet,
         )
-        return self.posterior.execute(
+        result = self.posterior.execute(
             frozen_input,
             expected_behavior_hash=expected_behavior_hash,
         )
+        self._publish(assessment.assessment)
+        return result
+
+    def _publish(self, assessment: ContextAssessment) -> None:
+        if self.on_world_model_complete is not None:
+            self.on_world_model_complete(assessment)
 
     def close_orchestration_failure(
         self,

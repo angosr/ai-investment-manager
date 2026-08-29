@@ -56,7 +56,13 @@ class PriorRuntimeTarget:
     binding: ForecastProducerBinding
 
 
-def build_prior_targets(artifact: ForecastBaselineArtifact) -> tuple[PriorRuntimeTarget, ...]:
+def build_prior_targets(
+    artifact: ForecastBaselineArtifact,
+    *,
+    capital_outcome_families: tuple[str, ...] = (),
+) -> tuple[PriorRuntimeTarget, ...]:
+    if tuple(sorted(set(capital_outcome_families))) != capital_outcome_families:
+        raise ValueError("Prior 资本准入 family 必须唯一且排序")
     prepared: list[tuple[ForecastBaselineTargetResult, InstrumentId, ForecastContract]] = []
     for baseline in artifact.results:
         base_asset = baseline.symbol.removesuffix("USDT")
@@ -119,6 +125,10 @@ def build_prior_targets(artifact: ForecastBaselineArtifact) -> tuple[PriorRuntim
             ),
         }
     )
+    known_families = {contract.outcome_family_id for _baseline, _instrument, contract in prepared}
+    unknown = set(capital_outcome_families) - known_families
+    if unknown:
+        raise ValueError("Prior 资本准入引用未知 outcome family")
     return tuple(
         PriorRuntimeTarget(
             baseline=baseline,
@@ -129,7 +139,11 @@ def build_prior_targets(artifact: ForecastBaselineArtifact) -> tuple[PriorRuntim
                 producer_kind=ForecastProducerKind.PROGRAM,
                 producer_id=PRIOR_PRODUCER_ID,
                 producer_behavior_id=behavior_id,
-                permission=ForecastPermission.RESEARCH,
+                permission=(
+                    ForecastPermission.CAPITAL_CANDIDATE
+                    if contract.outcome_family_id in capital_outcome_families
+                    else ForecastPermission.RESEARCH
+                ),
             ),
         )
         for baseline, instrument, contract in prepared
@@ -145,12 +159,17 @@ class RollingPriorForecastProducer:
     outcome_evaluation_version: str
     activated_at: datetime
     maximum_quote_age_seconds: int
+    capital_outcome_families: tuple[str, ...] = ()
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def __post_init__(self) -> None:
         require_utc(self.activated_at)
         if self.maximum_quote_age_seconds < 1:
             raise ValueError("先验 producer 行情年龄必须为正数")
+        build_prior_targets(
+            self.artifact,
+            capital_outcome_families=self.capital_outcome_families,
+        )
 
     def produce(
         self,
@@ -159,7 +178,10 @@ class RollingPriorForecastProducer:
         cause: ForecastSlotCause | None = None,
     ) -> tuple[BaseForecast | ForecastNoEstimate, ...]:
         observed_at = require_utc(as_of)
-        targets = build_prior_targets(self.artifact)
+        targets = build_prior_targets(
+            self.artifact,
+            capital_outcome_families=self.capital_outcome_families,
+        )
         bindings: list[tuple[PriorRuntimeTarget, ForecastProducerBinding]] = []
         for target in targets:
             self.contracts.record_contract(target.contract)

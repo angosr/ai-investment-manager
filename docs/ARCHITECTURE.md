@@ -208,13 +208,13 @@ PortfolioTarget 是产品目标暴露的组合映射，不是订单集合。策�
 
 Sizing 后必须重新比较当前持仓、建议目标与现金的共同终点财富，最终 `CandidateEvaluation`、目标与订单引用同一目标金额和同一成本事实。相邻 Forecast 导致的全部迁移在各自逻辑或正式账户中连续累计，不能把每个重叠 Outcome 当成独立交易；程序不得用冷却期、最短持有期、信心乘数或主观换手惩罚遮盖预测翻转，费用本身就是统一否决边界。逻辑账户和正式账户都不得为凑订单强制交易，未成交的正反产品仍在共同终点结算以识别正确持币、错误入场与错过的成本后机会。
 
-只有前向评价证明某个唯一行为相对冻结基线提供可靠的预测与费用后资本增量，未来 Release 才能把它绑定为 `CAPITAL_CANDIDATE` 并接入正式 Mock 账户；这不是等待固定样本数，而是要求当前不确定性、覆盖、依赖结构和成本后结果足以支持该权限。权限变化不重写旧 Forecast、逻辑账户或正式持仓血缘。若未来候选进入 Mock，仍复用本节的同一算法与账户风险边界，不建立 prior 账户、posterior 账户或资产专属交易链。
+只有前向评价证明某个唯一行为相对冻结基线提供可靠的预测与费用后资本增量，未来 Release 才能把它绑定为 `CAPITAL_CANDIDATE` 并接入正式 Mock 账户；这不是等待固定样本数，而是要求当前不确定性、覆盖、依赖结构和成本后结果足以支持该权限。`CandidateCapitalAuthorization` 是当前 Release 的治理授权，ProducerBinding 的 permission 则冻结某个槽产生时实际适用的准入事实；同一预测行为可以保留既有 `RESEARCH` binding，并从授权生效后的未来槽使用新的 `CAPITAL_CANDIDATE` binding，二者共享 producer behavior 证据但不得同时承担同一槽。权限变化不重写旧 Forecast、逻辑账户或正式持仓血缘，也不能靠更换 producer behavior 清空失败。Capital 不调用 Forecast producer 或 Codex，只读取已经由 Forecast 域终结、仍有效、精确属于该资本 binding 且共享同一信息截止的完整联合面板；研究 binding 下形成的旧结果不能因后来授权被追溯交易，缺腿面板也不能局部配资。若未来候选进入 Mock，仍复用本节的同一算法与账户风险边界，不建立 prior 账户、posterior 账户或资产专属交易链。
 
 正式账户的历史成交由 Execution Evaluation 从终态组重建开平 cycle、持有时间、turnover、方向毛收益、费用与净收益，并与全平账户归因核对；逻辑账户报告同口径指标但不冒充真实订单。停止或替换行为只能作用于未来权限，不能按已经看到的盈亏动态改写同一 cohort。高水位回撤、压力损失、gross/net、保证金、对账和 Kill Switch 已经构成连续生存边界，不再叠加按 UTC 日重置的绝对亏损线或仅供 Mock 绕过的模式分支。
 
 ### 4.4 风险与执行
 
-非 Forecast Trigger 的资本复核只负责账户对账、持仓风险、继续持有、减仓或退出；即使旧 Forecast 尚在有效期内，也不得借 Heartbeat、信息写入、WorldModel 更新或 Agent 唤醒增加名义暴露。新增资本和扩大暴露只能来自本轮新完成的定时或材料事件 Forecast，因为只有它们冻结了覆盖当前信息集的方向概率。该边界不限制模拟盘探索：所有正式 Forecast 仍可自由比较全部合法多空产品并按费用后 Edge 配资；它只阻止陈旧推理被非分析触发器重复放大。
+每个账户所有者触发都先查询是否存在尚未形成资本终态的新完整授权 Forecast 面板：存在时只消费一次该面板，不存在时仅做账户对账、持仓风险、继续持有、减仓或退出。触发名称本身不授予资本；同槽 posterior 对应的 `WORLD_MODEL_UPDATED` 只在 posterior 已成功或以 `NO_ESTIMATE` 终结后发布，普通 WorldModel 更新没有 Forecast 就只能触发复核，因而不会与异步 Forecast 竞态。即使旧 Forecast 尚在有效期内，也不得借 Heartbeat、信息写入、WorldModel 更新或 Agent 唤醒重复增加名义暴露。新增资本和扩大暴露只能来自新完成且精确匹配当前授权的定时或材料事件 Forecast，因为只有它们冻结了覆盖该信息集的方向概率。该边界不限制模拟盘探索：所有正式 Forecast 仍可自由比较全部合法多空产品并按费用后 Edge 配资；它只阻止陈旧推理被非分析触发器重复放大。
 
 Forecast producer behavior 切换不能使既有仓位失去经济血缘，也不能把旧预测伪装成新候选。持仓复核继续读取建立该 Sleeve 的不可变 Forecast 和产品投影，只允许维持或减少其当前名义，不需要、也不得借用当前行为的 candidate capital authorization；只有当前行为新完成且精确匹配授权的 Forecast 才能新建或扩大风险。发布验收必须覆盖“旧行为仍有持仓、新行为尚无 Forecast”的切换窗口，确保风险复核可运行而新增资本保持关闭。
 

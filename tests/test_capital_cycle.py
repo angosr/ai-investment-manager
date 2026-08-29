@@ -26,14 +26,11 @@ from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
     ForecastContract,
     ForecastDecisionSlot,
-    ForecastNoEstimate,
-    ForecastNoEstimateReason,
     ForecastOutcomeBucket,
     ForecastPermission,
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
-    ForecastSlotCause,
 )
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -173,22 +170,10 @@ class _FixedMockForecastProducer:
     raw_score: Decimal
     available_delay_seconds: int = 0
 
-    def existing_result(self, *, as_of: datetime, cause=None):
-        slot_id = ForecastDecisionSlot.identity_for(
-            self.contract.contract_id,
-            as_of,
-            cause=cause or ForecastSlotCause.cadence(self.contract),
-        )
-        return self.store.result_for_behavior(
-            decision_slot_id=slot_id,
-            producer_behavior_id=self.binding.producer_behavior_id,
-        )
-
     def produce(
         self,
         *,
         as_of: datetime,
-        cause: ForecastSlotCause | None = None,
     ) -> BaseForecast:
         available_at = as_of + timedelta(seconds=self.available_delay_seconds)
         target = self.contract.target
@@ -214,7 +199,6 @@ class _FixedMockForecastProducer:
             self.contract,
             slot_as_of=as_of,
             cutoff_prices=anchors,
-            cause=cause,
         )
         self.contracts.record_slot(slot, binding=self.binding)
         forecast_id = stable_id("base_forecast", slot.slot_id, self.binding.producer_behavior_id)
@@ -256,66 +240,29 @@ class _FixedMockForecastProducer:
         self.store.record(forecast)
         return forecast
 
-    def record_deadline_missed(
-        self,
-        *,
-        as_of: datetime,
-        completed_at: datetime,
-        cause: ForecastSlotCause | None = None,
-    ) -> BaseForecast:
-        del completed_at
-        return self.produce(as_of=as_of, cause=cause)
 
-    def recover_deadline_missed(self, **kwargs) -> tuple[()]:
-        del kwargs
-        return ()
+class _CandidateCapitalHarness:
+    """Test-only fixture: write Forecast facts before invoking the capital reader."""
 
+    def __init__(self, service, producer=None):
+        self._service = service
+        self._producer = producer
 
-class _NoForecastProducer:
-    def __init__(self, *, contracts, contract, binding):
-        self.contracts = contracts
-        self.contract = contract
-        self.binding = binding
+    def __getattr__(self, name):
+        return getattr(self._service, name)
 
-    def existing_result(self, *, as_of: datetime, cause=None):
-        slot_id = ForecastDecisionSlot.identity_for(
-            self.contract.contract_id,
-            as_of,
-            cause=cause or ForecastSlotCause.cadence(self.contract),
-        )
-        return self.contracts.no_estimate(
-            stable_id(
-                "forecast_no_estimate",
-                slot_id,
-                self.binding.producer_behavior_id,
+    def produce(self, *, as_of: datetime, decision_at: datetime | None = None, **kwargs):
+        if self._producer is not None:
+            forecast = self._producer.produce(as_of=as_of)
+            decision_at = max(
+                forecast.available_at,
+                decision_at or as_of,
             )
+        return self._service.produce(
+            as_of=as_of,
+            decision_at=decision_at,
+            **kwargs,
         )
-
-    def produce(self, *, as_of: datetime) -> ForecastNoEstimate:
-        self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding, activated_at=as_of)
-        slot = ForecastDecisionSlot.create(
-            self.contract,
-            slot_as_of=as_of,
-            cutoff_prices=(),
-        )
-        self.contracts.record_slot(slot, binding=self.binding)
-        result = ForecastNoEstimate(
-            result_id=stable_id(
-                "forecast_no_estimate", slot.slot_id, self.binding.producer_behavior_id
-            ),
-            slot_id=slot.slot_id,
-            contract_id=self.contract.contract_id,
-            producer_kind=ForecastProducerKind.PROGRAM,
-            producer_id=self.binding.producer_id,
-            producer_behavior_id=self.binding.producer_behavior_id,
-            reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
-            information_cutoff_at=as_of,
-            attempted_at=as_of,
-            completed_at=as_of,
-        )
-        self.contracts.record_no_estimate(result)
-        return result
 
 
 def _test_contract_and_binding(
@@ -400,42 +347,37 @@ def _candidate_service(
                 update={
                     "candidate_capital_authorizations": (authorization,),
                     "decision": config.capital.decision.model_copy(
-                        update={
-                            "maximum_single_sleeve_fraction": (
-                                maximum_allocation_fraction
-                            )
-                        }
+                        update={"maximum_single_sleeve_fraction": (maximum_allocation_fraction)}
                     ),
                 }
             )
         }
     )
+    producer = (
+        _FixedMockForecastProducer(
+            store=SqlForecastStore(engine),
+            contracts=contract_store,
+            contract=contract,
+            binding=binding,
+            raw_score=raw_score,
+            available_delay_seconds=available_delay_seconds,
+        )
+        if emit
+        else None
+    )
     source = CapitalForecastSource(
         contract=contract,
         binding=binding,
-        producer=(
-            _FixedMockForecastProducer(
-                store=SqlForecastStore(engine),
-                contracts=contract_store,
-                contract=contract,
-                binding=binding,
-                raw_score=raw_score,
-                available_delay_seconds=available_delay_seconds,
-            )
-            if emit
-            else _NoForecastProducer(
-                contracts=contract_store,
-                contract=contract,
-                binding=binding,
-            )
-        ),
         risk_template=configured.capital.sleeve_risk,
         capital_authorization=authorization,
     )
-    return configured, _assemble_capital_cycle(
-        configured,
-        engine,
-        forecast_sources=(source,),
+    return configured, _CandidateCapitalHarness(
+        _assemble_capital_cycle(
+            configured,
+            engine,
+            forecast_sources=(source,),
+        ),
+        producer,
     )
 
 
@@ -604,42 +546,15 @@ def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
 
 
 class _TriggerCapitalStub:
-    portfolio_id = "primary"
-
-    def __init__(self, *, completed: bool = False, outputs_complete: bool = False) -> None:
+    def __init__(self) -> None:
         self.calls: list[tuple[str, datetime]] = []
-        self.completed = completed
-        self.outputs_complete = outputs_complete
-        self.completed_causes: set[str] = set()
-        self.causes: list[ForecastSlotCause | None] = []
-        self.produced_trigger_types: list[tuple[str, ...]] = []
 
-    def recover_missed_forecasts(self, *, before_slot_at, completed_at):
-        self.calls.append(("recover", before_slot_at))
-        return ()
-
-    def record_missed_forecast(self, *, slot_at, completed_at, **kwargs):
-        del completed_at, kwargs
-        self.calls.append(("missed", slot_at))
-        return ()
+    def has_pending_forecast_decision(self, *, as_of):
+        del as_of
+        return False
 
     def review(self, batch):
         self.calls.append(("review", batch.created_at))
-        return None
-
-    def cause_completed(self, cause_id):
-        return self.completed or cause_id in self.completed_causes
-
-    def forecast_outputs_complete(self, **kwargs):
-        del kwargs
-        return self.outputs_complete
-
-    def produce(self, *, as_of, **kwargs):
-        cause_id = kwargs["cause_id"]
-        self.completed_causes.add(cause_id)
-        self.causes.append(kwargs.get("cause"))
-        self.produced_trigger_types.append(kwargs["trigger_types"])
-        self.calls.append(("produce", as_of))
         return None
 
 
@@ -672,49 +587,6 @@ def _runtime_batch(trigger_type: AnalysisTriggerType, *, at: datetime) -> Trigge
     )
 
 
-def _runtime_mixed_forecast_batch(
-    *,
-    at: datetime,
-    material_at: datetime | None = None,
-) -> TriggerBatch:
-    material_at = material_at or at
-    triggers = []
-    for trigger_type in (
-        AnalysisTriggerType.FORECAST_EVENT_DUE,
-        AnalysisTriggerType.FORECAST_SLOT_DUE,
-    ):
-        occurred_at = material_at if trigger_type == AnalysisTriggerType.FORECAST_EVENT_DUE else at
-        triggers.append(
-            build_trigger_event(
-                trigger_type=trigger_type,
-                symbol="BTCUSDT",
-                pipeline_id="test-pipeline",
-                occurred_at=occurred_at,
-                observed_at=at,
-                priority=100,
-                dedup_key=f"{trigger_type.value}:{occurred_at.isoformat()}",
-            )
-        )
-    frozen_triggers = tuple(sorted(triggers, key=lambda item: item.trigger_id))
-    deadline = at + timedelta(minutes=5)
-    return TriggerBatch(
-        batch_id=stable_id(
-            "trigger_batch",
-            "BTCUSDT",
-            "test-pipeline",
-            1,
-            *(item.trigger_id for item in frozen_triggers),
-            deadline.isoformat(),
-        ),
-        symbol="BTCUSDT",
-        pipeline_id="test-pipeline",
-        plan_revision=1,
-        created_at=at,
-        deadline=deadline,
-        triggers=frozen_triggers,
-    )
-
-
 def test_world_model_wakeup_reviews_risk_without_creating_forecast_slot() -> None:
     capital = _TriggerCapitalStub()
     consumer = CapitalTriggerConsumer(
@@ -727,6 +599,46 @@ def test_world_model_wakeup_reviews_risk_without_creating_forecast_slot() -> Non
     assert capital.calls == [("review", NOW)]
 
 
+def test_world_model_update_consumes_one_completed_authorized_forecast() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    _put_market(SqlMarketDataStore(engine), config, at=NOW, sequence=901)
+    _configured, service = _candidate_service(config, engine)
+    assert service._producer is not None
+    service._producer.produce(as_of=NOW)
+    batch = _runtime_batch(AnalysisTriggerType.WORLD_MODEL_UPDATED, at=NOW)
+
+    result = CapitalTriggerConsumer(service).consume(batch)
+
+    assert isinstance(result, TradePlanExecutionResult)
+    assert not service.has_pending_forecast_decision(as_of=NOW)
+
+
+def test_research_slot_cannot_be_retroactively_consumed_after_authorization() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    _put_market(SqlMarketDataStore(engine), config, at=NOW, sequence=902)
+    _configured, service = _candidate_service(config, engine, emit=False)
+    capital_source = service._source_by_family[_TEST_FORECAST_FAMILY]
+    research_binding = ForecastProducerBinding.create(
+        contract_id=capital_source.contract.contract_id,
+        producer_kind=capital_source.binding.producer_kind,
+        producer_id=capital_source.binding.producer_id,
+        producer_behavior_id=capital_source.binding.producer_behavior_id,
+        permission=ForecastPermission.RESEARCH,
+    )
+    _FixedMockForecastProducer(
+        store=SqlForecastStore(engine),
+        contracts=SqlForecastContractStore(engine),
+        contract=capital_source.contract,
+        binding=research_binding,
+        raw_score=Decimal("80"),
+    ).produce(as_of=NOW)
+
+    assert not service.has_pending_forecast_decision(as_of=NOW)
+
 
 def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -734,9 +646,7 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     config = config.model_copy(
         update={
-            "capital": config.capital.model_copy(
-                update={"candidate_capital_authorizations": ()}
-            )
+            "capital": config.capital.model_copy(update={"candidate_capital_authorizations": ()})
         }
     )
     market = SqlMarketDataStore(engine)
@@ -834,8 +744,7 @@ def test_held_product_still_requires_valuation_and_execution_quotes() -> None:
     with engine.begin() as connection:
         connection.execute(
             delete(perpetual_quotes).where(
-                perpetual_quotes.c.instrument_id
-                == "BINANCE:USD_M_PERPETUAL:PAXGUSDT"
+                perpetual_quotes.c.instrument_id == "BINANCE:USD_M_PERPETUAL:PAXGUSDT"
             )
         )
     later = NOW + timedelta(minutes=1)
@@ -1135,7 +1044,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-            "universe_version": "binance-shadow-investable-v9",
+        "universe_version": "binance-shadow-investable-v9",
         "covered_exposures": [
             "CASH",
             "CRYPTO_NETWORK",
@@ -1199,9 +1108,9 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     assert opening_change.side.value == "BUY"
     assert opening_change.effect == "OPEN_LONG"
     assert opening_change.filled_quantity == Decimal("0.03")
-    serialized_change = serialize_capital_activity(
-        (activity_by_symbol["BTCUSDT"],)
-    )["actions"][0]["position_changes"][0]
+    serialized_change = serialize_capital_activity((activity_by_symbol["BTCUSDT"],))["actions"][0][
+        "position_changes"
+    ][0]
     assert serialized_change["effect"] == "OPEN_LONG"
     assert serialized_change["filled_quantity"] == "0.03"
     first_page = CapitalDashboardReader(engine, config).activity(limit=1)
@@ -1277,9 +1186,9 @@ def test_recovered_forecast_after_entry_window_records_cash_without_hindsight_tr
     )
     assert record.forecast_ids == (target.candidate_evaluations[0].forecast_id,)
     assert record.target_id == target.target_id
-    order_count = engine.connect().execute(
-        select(func.count()).select_from(mock_product_orders)
-    ).scalar_one()
+    order_count = (
+        engine.connect().execute(select(func.count()).select_from(mock_product_orders)).scalar_one()
+    )
     assert order_count == 0
 
 
@@ -1403,9 +1312,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
         ("BINANCE:USD_M_PERPETUAL:BTCUSDT", "BTCUSDT", "USD_M_PERPETUAL", "LONG"),
     )
     assert economics.estimated_cost_bps == (
-        economics.fee_bps
-        + economics.exit_spread_bps
-        + economics.depth_slippage_bps
+        economics.fee_bps + economics.exit_spread_bps + economics.depth_slippage_bps
     )
     serialized = serialize_capital_activity((activity,))["actions"][0]
     assert serialized["candidate_economics"][0]["net_bps"] == str(economics.net_bps)
@@ -1438,9 +1345,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert with_input["analysis_input"] == {"purpose": "FORECAST_ESTIMATE"}
     assert "analysis_input" not in with_input["candidate_economics"][0]
 
-    summary_activity = CapitalDashboardReader(engine, config).activity(
-        include_details=False
-    )[0]
+    summary_activity = CapitalDashboardReader(engine, config).activity(include_details=False)[0]
     assert len(summary_activity.candidate_economics) == 1
     assert summary_activity.analysis_input is None
     summary_payload = serialize_capital_activity(
@@ -1449,9 +1354,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     )["actions"][0]
     assert "candidate_economics" not in summary_payload
     assert "analysis_input" not in summary_payload
-    detail = CapitalDashboardReader(engine, config).activity_detail(
-        summary_activity.activity_id
-    )
+    detail = CapitalDashboardReader(engine, config).activity_detail(summary_activity.activity_id)
     assert detail is not None
     assert detail.candidate_economics[0].candidate_id == economics.candidate_id
     assert CapitalDashboardReader(engine, config).activity_detail("missing") is None
@@ -1481,7 +1384,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert historical.candidate_economics[0].decision_threshold_bps == frozen.minimum_net_bps
 
 
-def test_late_slot_accepts_an_existing_forecast_after_pipeline_change() -> None:
+def test_completed_forecast_is_not_reopened_after_pipeline_change() -> None:
     at = datetime(2026, 8, 21, 16, 0, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -1497,13 +1400,7 @@ def test_late_slot_accepts_an_existing_forecast_after_pipeline_change() -> None:
     )
     assert isinstance(produced, TradePlanExecutionResult)
 
-    terminal = service.record_missed_forecast(
-        slot_at=at,
-        completed_at=at + timedelta(minutes=30),
-    )
-
-    assert len(terminal) == 1
-    assert isinstance(terminal[0], BaseForecast)
+    assert not service.has_pending_forecast_decision(as_of=at + timedelta(minutes=30))
 
 
 def test_single_product_forecast_receives_only_its_executable_quote() -> None:
@@ -1738,7 +1635,6 @@ def test_research_successor_cannot_reauthorize_or_redirect_an_existing_holding()
     research_source = CapitalForecastSource(
         contract=old_source.contract,
         binding=research_binding,
-        producer=research_producer,
         risk_template=old_source.risk_template,
         capital_authorization=None,
     )
@@ -1748,11 +1644,14 @@ def test_research_successor_cannot_reauthorize_or_redirect_an_existing_holding()
         forecast_sources=(research_source,),
     )
     assert restarted._forecast_sources == ()
-    assert SqlForecastStore(engine).latest_base_for_target(
-        target_id=old_source.contract.target.target_id,
-        outcome_family_id=_TEST_FORECAST_FAMILY,
-        as_of=research_at,
-    ) == research_forecast
+    assert (
+        SqlForecastStore(engine).latest_base_for_target(
+            target_id=old_source.contract.target.target_id,
+            outcome_family_id=_TEST_FORECAST_FAMILY,
+            as_of=research_at,
+        )
+        == research_forecast
+    )
     historical_support = restarted._latest_forecast(
         source=research_source,
         target_id=old_source.contract.target.target_id,
@@ -1762,9 +1661,7 @@ def test_research_successor_cannot_reauthorize_or_redirect_an_existing_holding()
     assert historical_support.producer_behavior_id == _TEST_PRODUCER_VERSION
 
     _put_market(market, research_config, at=research_at, sequence=741)
-    held = restarted.review(
-        _runtime_batch(AnalysisTriggerType.HEARTBEAT, at=research_at)
-    )
+    held = restarted.review(_runtime_batch(AnalysisTriggerType.HEARTBEAT, at=research_at))
     assert not isinstance(held, TradePlanExecutionResult)
     assert held.holding_risk_review is not None
     assert held.holding_risk_review.outcome == HoldingRiskOutcome.HOLD
@@ -1772,9 +1669,7 @@ def test_research_successor_cannot_reauthorize_or_redirect_an_existing_holding()
 
     expired_at = NOW + timedelta(days=8)
     _put_market(market, research_config, at=expired_at, sequence=742)
-    exited = restarted.review(
-        _runtime_batch(AnalysisTriggerType.HEARTBEAT, at=expired_at)
-    )
+    exited = restarted.review(_runtime_batch(AnalysisTriggerType.HEARTBEAT, at=expired_at))
     assert isinstance(exited, TradePlanExecutionResult)
     assert not exited.account.sleeves
     assert len(exited.groups) == 1

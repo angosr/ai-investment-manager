@@ -13,7 +13,10 @@ from sqlalchemy.engine import Engine
 
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import ForecastSlotStratum
-from investment_manager.forecast.product.projector import PointInTimeProductPayoffProjector
+from investment_manager.forecast.product.projector import (
+    PointInTimeProductPayoffProjector,
+    build_point_in_time_product_payoff_projector,
+)
 from investment_manager.forecast.tables import (
     forecast_producer_bindings,
     forecasts,
@@ -276,9 +279,7 @@ class SqlWorldModelCapitalIncrementReader:
             slot.evaluation_at for panel in settled_material for slot in panel.slots
         )
         all_panels = tuple(
-            panel
-            for panel in ledger.complete_panels
-            if panel.available_at <= evaluation_at
+            panel for panel in ledger.complete_panels if panel.available_at <= evaluation_at
         )
         cadence_panels = self._panels_for_stratum(
             all_panels,
@@ -286,11 +287,7 @@ class SqlWorldModelCapitalIncrementReader:
         )
         contract_ids = tuple(
             sorted(
-                {
-                    obligation.contract_id
-                    for panel in all_panels
-                    for obligation in panel.obligations
-                }
+                {obligation.contract_id for panel in all_panels for obligation in panel.obligations}
             )
         )
         cache_key = (
@@ -354,9 +351,7 @@ class SqlWorldModelCapitalIncrementReader:
             net_equity_increment=complete.equity - cadence.equity,
             fee_cost_increment=complete.fee_cost - cadence.fee_cost,
             gross_turnover_increment=complete.gross_turnover - cadence.gross_turnover,
-            drawdown_improvement_fraction=(
-                cadence.drawdown_fraction - complete.drawdown_fraction
-            ),
+            drawdown_improvement_fraction=(cadence.drawdown_fraction - complete.drawdown_fraction),
         )
         with self._cache_lock:
             self._event_cache_key = cache_key
@@ -458,36 +453,15 @@ class SqlWorldModelCapitalIncrementReader:
     ) -> dict[str, PointInTimeProductPayoffProjector]:
         contracts = SqlForecastContractStore(self.engine)
         market = SqlMarketDataStore(self.engine)
-        specs_by_key = {item.instrument.key: item for item in self.capital_policy.execution_specs}
         result: dict[str, PointInTimeProductPayoffProjector] = {}
         for contract_id in contract_ids:
             contract = contracts.contract(contract_id)
-            if contract is None or len(contract.target.legs) != 1:
+            if contract is None:
                 raise PointInTimeInputUnavailable("资本重放缺少有效 ForecastContract")
-            reference = contract.target.legs[0].instrument
-            policies = tuple(
-                policy
-                for policy in self.capital_policy.product_payoff_policies
-                if all(
-                    key in specs_by_key
-                    and specs_by_key[key].instrument.base_asset == reference.base_asset
-                    and specs_by_key[key].instrument.quote_asset == reference.quote_asset
-                    and specs_by_key[key].instrument.settlement_asset == reference.settlement_asset
-                    for key in policy.instrument_keys
-                )
-            )
-            if len(policies) != 1:
-                raise PointInTimeInputUnavailable("资本重放缺少唯一产品映射政策")
-            policy = policies[0]
-            specs = tuple(specs_by_key[key] for key in policy.instrument_keys)
-            projector = PointInTimeProductPayoffProjector(
-                policy=policy,
+            projector = build_point_in_time_product_payoff_projector(
+                capital_policy=self.capital_policy,
                 contract=contract,
                 market=market,
-                instruments=tuple(item.instrument for item in specs),
-                execution_specs=specs,
-                risk=self.capital_policy.sleeve_risk,
-                maximum_quote_age_seconds=(self.capital_policy.risk.maximum_quote_age_seconds),
                 funding_lookback_hours=self.funding_lookback_hours,
             )
             if contract.outcome_family_id in result:
@@ -502,9 +476,7 @@ class SqlWorldModelCapitalIncrementReader:
         panels: tuple[ProducerDecisionPanel, ...],
         projectors: dict[str, PointInTimeProductPayoffProjector],
         mark_at: datetime,
-        allowed_strata: tuple[ForecastSlotStratum, ...] = (
-            ForecastSlotStratum.CADENCE_ONLY,
-        ),
+        allowed_strata: tuple[ForecastSlotStratum, ...] = (ForecastSlotStratum.CADENCE_ONLY,),
     ) -> LogicalAccountPath | None:
         ledger = ProducerPanelLedger(
             producer_behavior_id=behavior_id,
