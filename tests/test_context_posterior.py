@@ -5,6 +5,11 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
+from investment_manager.forecast.codex.router import AnalystResult
+from investment_manager.forecast.context.posterior_analyst import (
+    CodexContextPosteriorAnalyst,
+    PosteriorRunBundleBuilder,
+)
 from investment_manager.forecast.context.posterior_contract import (
     ContextPosteriorInput,
     ContextPosteriorStructuredOutput,
@@ -260,6 +265,63 @@ def test_posterior_schema_is_bounded_to_frozen_contracts_and_mechanisms() -> Non
         ]
         == 0
     )
+
+
+class _PosteriorRouter:
+    def __init__(self, output: ContextPosteriorStructuredOutput) -> None:
+        self.output = output
+        self.calls = 0
+
+    def run(self, _bundle) -> AnalystResult:
+        self.calls += 1
+        return AnalystResult(
+            True,
+            self.output,
+            "CODEX_ANALYSIS_SUCCEEDED",
+            account_id=".codex2",
+            attempts=1,
+            completed_at=SLOT_AT + timedelta(minutes=10),
+            run_id="codex-run-1",
+        )
+
+
+def test_posterior_analyst_freezes_bundle_and_uses_joint_behavior_identity(
+    app_config,
+    tmp_path,
+) -> None:
+    frozen = _input(eligible=False)
+    contracts = tuple(item.contract for item in frozen.targets)
+    runtime = app_config.codex_runtime
+    builder = PosteriorRunBundleBuilder(
+        runtime,
+        contracts=contracts,
+        code_version="test-code",
+        configuration_hash="f" * 64,
+    )
+    router = _PosteriorRouter(_output(frozen, change=False, contribute=False))
+    analyst = CodexContextPosteriorAnalyst(
+        tmp_path,
+        builder,
+        router,
+        maximum_schema_attempts=1,
+    )
+
+    result = analyst.forecast(frozen)
+
+    assert result.success is True
+    assert result.output == router.output
+    assert router.calls == 1
+    manifest = next(tmp_path.glob("*/manifest.json")).read_text(encoding="utf-8")
+    assert '"analysis_mode":"CONTEXT_POSTERIOR"' in manifest
+    assert frozen.input_hash in manifest
+
+    subset = ContextPosteriorInput.create(
+        information_cutoff_at=frozen.information_cutoff_at,
+        world_model=frozen.world_model,
+        eligible_mechanism_ids=(),
+        targets=frozen.targets[:1],
+    )
+    assert analyst.behavior_hash(subset) == analyst.behavior_hash(frozen)
 
 
 class _AssessmentFacts:
