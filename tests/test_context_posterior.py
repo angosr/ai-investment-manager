@@ -50,7 +50,13 @@ from investment_manager.forecast.context.posterior_workflow import (
 )
 from investment_manager.forecast.context.service import AssessmentTemporalWorker
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
-from investment_manager.forecast.contracts import ForecastPriceAnchor
+from investment_manager.forecast.contracts import (
+    ForecastNoEstimateReason,
+    ForecastPermission,
+    ForecastPriceAnchor,
+    ForecastProducerBinding,
+    ForecastProducerKind,
+)
 from investment_manager.forecast.models import (
     ContextAssessment,
     ContextCausalNode,
@@ -261,6 +267,21 @@ def _world_model(*, decision_packet_hash: str | None = None) -> ContextAssessmen
     )
 
 
+def _prior_bindings(
+    targets: tuple[PosteriorPriorTarget, ...],
+) -> tuple[ForecastProducerBinding, ...]:
+    return tuple(
+        ForecastProducerBinding.create(
+            contract_id=item.contract.contract_id,
+            producer_kind=ForecastProducerKind.PROGRAM,
+            producer_id=item.prior.producer_id,
+            producer_behavior_id=item.prior.producer_behavior_id,
+            permission=ForecastPermission.RESEARCH,
+        )
+        for item in sorted(targets, key=lambda value: value.contract.contract_id)
+    )
+
+
 def _input(*, eligible: bool = True) -> ContextPosteriorInput:
     return ContextPosteriorInput.create(
         information_cutoff_at=SLOT_AT,
@@ -426,6 +447,7 @@ def test_posterior_analyst_freezes_bundle_and_uses_joint_behavior_identity(
     builder = PosteriorRunBundleBuilder(
         runtime,
         contracts=contracts,
+        prior_bindings=_prior_bindings(frozen.targets),
         world_model_behavior_id="a" * 64,
         code_version="test-code",
         configuration_hash="f" * 64,
@@ -464,6 +486,7 @@ def _preparation(base_app_config):
     return (
         ContextPosteriorPreparation(
             contracts=contracts,
+            prior_bindings=_prior_bindings(targets),
             runtime=base_app_config.codex_runtime,
             world_model_behavior_id="a" * 64,
             activated_at=SLOT_AT - timedelta(hours=1),
@@ -501,6 +524,39 @@ def test_posterior_behavior_identity_includes_world_model_behavior(base_app_conf
     changed = replace(preparation, world_model_behavior_id="b" * 64)
 
     assert changed.producer_behavior_id != preparation.producer_behavior_id
+
+
+def test_posterior_behavior_identity_includes_prior_behavior(base_app_config) -> None:
+    preparation, *_rest = _preparation(base_app_config)
+    original = preparation.prior_bindings[0]
+    replacement = ForecastProducerBinding.create(
+        contract_id=original.contract_id,
+        producer_kind=original.producer_kind,
+        producer_id=original.producer_id,
+        producer_behavior_id="replacement-prior-behavior",
+        permission=original.permission,
+    )
+    changed = replace(
+        preparation,
+        prior_bindings=(replacement, *preparation.prior_bindings[1:]),
+    )
+
+    assert changed.producer_behavior_id != preparation.producer_behavior_id
+
+
+def test_preparation_rejects_prior_from_an_unbound_behavior(base_app_config) -> None:
+    preparation, _contracts, _forecasts, targets, _market, _engine = _preparation(
+        base_app_config
+    )
+    wrong = targets[0].prior.model_copy(
+        update={"producer_behavior_id": "unbound-prior-behavior"}
+    )
+
+    with pytest.raises(ValueError, match="冻结 ProducerBinding"):
+        preparation.reserve(
+            (wrong, *(item.prior for item in targets[1:])),
+            as_of=SLOT_AT + timedelta(minutes=2),
+        )
 
 
 def test_preparation_closes_reserved_obligations_when_world_model_fails(
@@ -828,6 +884,11 @@ class _FailedAssessmentApplication:
         )
 
 
+class _ConflictingAssessmentApplication:
+    def execute(self, _command):
+        raise ValueError("authoritative conflict")
+
+
 def test_same_cutoff_world_model_failure_closes_posterior_obligations(
     base_app_config,
 ) -> None:
@@ -867,6 +928,114 @@ def test_same_cutoff_world_model_failure_closes_posterior_obligations(
     assert result.status == PosteriorExecutionStatus.NO_ESTIMATE
     assert len(result.no_estimate_ids) == len(seed.targets)
     assert result.reason_code == "WORLD_MODEL_CODEX_ACCOUNTS_UNAVAILABLE"
+
+
+def test_orchestration_failure_closes_pre_registered_posterior_obligations(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, _engine, frozen, _completed_at = (
+        _execution_fixture(base_app_config)
+    )
+    analyst = _ExecutionAnalyst(
+        preparation.producer_behavior_id,
+        AnalystResult(False, None, "SHOULD_NOT_RUN"),
+    )
+    seed = ContextPosteriorSeed.create(
+        information_cutoff_at=SLOT_AT,
+        targets=frozen.targets,
+    )
+    application = ContextAssessmentPosteriorApplication(
+        assessment=_SuccessfulAssessmentApplication(
+            _packet(),
+            SLOT_AT + timedelta(minutes=5),
+        ),
+        preparation=preparation,
+        posterior=ContextPosteriorApplication(
+            analyst=analyst,
+            contracts=contracts,
+            forecasts=forecasts,
+            market=market,
+            maximum_quote_age_seconds=300,
+        ),
+    )
+
+    result = application.close_orchestration_failure(
+        seed=seed,
+        expected_behavior_hash=preparation.producer_behavior_id,
+        completed_at=SLOT_AT + timedelta(hours=1, minutes=1),
+        reason_code="POSTERIOR_ACTIVITY_FAILED",
+    )
+
+    assert result.status == PosteriorExecutionStatus.NO_ESTIMATE
+    assert result.reason_code == "POSTERIOR_ACTIVITY_FAILED"
+    assert len(result.no_estimate_ids) == len(seed.targets)
+    assert analyst.calls == 0
+
+
+def test_posterior_workflow_terminalizes_obligations_after_activity_failure(
+    base_app_config,
+) -> None:
+    async def scenario() -> None:
+        preparation, contracts, forecasts, market, _engine, frozen, _completed_at = (
+            _execution_fixture(base_app_config)
+        )
+        analyst = _ExecutionAnalyst(
+            preparation.producer_behavior_id,
+            AnalystResult(False, None, "SHOULD_NOT_RUN"),
+        )
+        combined = ContextAssessmentPosteriorApplication(
+            assessment=_ConflictingAssessmentApplication(),
+            preparation=preparation,
+            posterior=ContextPosteriorApplication(
+                analyst=analyst,
+                contracts=contracts,
+                forecasts=forecasts,
+                market=market,
+                maximum_quote_age_seconds=300,
+            ),
+        )
+        policy = base_app_config.temporal.model_copy(
+            update={"assessment_task_queue": "posterior-failure-terminal-test"}
+        )
+        packet = _packet()
+        seed = ContextPosteriorSeed.create(
+            information_cutoff_at=SLOT_AT,
+            targets=frozen.targets,
+        )
+        request = PosteriorWorkflowRequest.create(
+            seed=seed,
+            assessment_command=AssessmentCommand.create(
+                packet=packet,
+                analysis_behavior_hash="a" * 64,
+            ),
+            producer_behavior_id=preparation.producer_behavior_id,
+            orchestration=OrchestrationPolicySnapshot.from_config(policy),
+            created_at=SLOT_AT + timedelta(minutes=2),
+        )
+        async with (
+            await WorkflowEnvironment.start_time_skipping() as environment,
+            AssessmentTemporalWorker(
+                environment.client,
+                policy,
+                _ConflictingAssessmentApplication(),
+                posterior_application=combined,
+                worker_threads=1,
+            ),
+        ):
+            raw = await environment.client.execute_workflow(
+                ContextPosteriorWorkflow.run,
+                request.model_dump(mode="json"),
+                id=request.workflow_id,
+                task_queue=policy.assessment_task_queue,
+            )
+        result = PosteriorWorkflowExecution.model_validate(raw)
+        assert result.status == PosteriorWorkflowStatus.NO_ESTIMATE
+        assert result.reason_code == "POSTERIOR_ACTIVITY_FAILED"
+        assert result.execution is not None
+        assert len(result.execution.no_estimate_ids) == len(seed.targets)
+        assert analyst.calls == 0
+
+    asyncio.run(scenario())
 
 
 def test_existing_assessment_worker_executes_posterior_workflow(
@@ -945,6 +1114,42 @@ def test_existing_assessment_worker_executes_posterior_workflow(
     asyncio.run(scenario())
 
 
+def _posterior_trigger_config_and_batch(app_config):
+    config = app_config.model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": False}),
+            "deployment": app_config.deployment.model_copy(
+                update={
+                    "stage": DeploymentStage.SHADOW,
+                    "shadow_market_data_enabled": True,
+                }
+            ),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="posterior-release-v1",
+        updated_at=SLOT_AT,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        occurred_at=SLOT_AT + timedelta(minutes=1),
+        observed_at=SLOT_AT + timedelta(minutes=1),
+        priority=1,
+        dedup_key="posterior-slot-v1",
+    )
+    return config, build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=SLOT_AT + timedelta(minutes=1),
+        deadline=SLOT_AT + timedelta(minutes=15),
+    )
+
+
 def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -> None:
     frozen = _input()
     seed = ContextPosteriorSeed.create(
@@ -975,39 +1180,7 @@ def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -
             assert analysis_identity == seed.seed_id
             return command
 
-    config = app_config.model_copy(
-        update={
-            "assessment": app_config.assessment.model_copy(update={"enabled": False}),
-            "deployment": app_config.deployment.model_copy(
-                update={
-                    "stage": DeploymentStage.SHADOW,
-                    "shadow_market_data_enabled": True,
-                }
-            ),
-        }
-    )
-    plan = build_initial_trigger_plan(
-        symbol=config.assessment.review_trigger_symbol,
-        pipeline_id=config.pipeline.version,
-        manifest_id="posterior-release-v1",
-        updated_at=SLOT_AT,
-        heartbeat_seconds=900,
-    )
-    trigger = build_trigger_event(
-        trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
-        symbol=config.assessment.review_trigger_symbol,
-        pipeline_id=config.pipeline.version,
-        occurred_at=SLOT_AT + timedelta(minutes=1),
-        observed_at=SLOT_AT + timedelta(minutes=1),
-        priority=1,
-        dedup_key="posterior-slot-v1",
-    )
-    batch = build_trigger_batch(
-        plan=plan,
-        triggers=(trigger,),
-        created_at=SLOT_AT + timedelta(minutes=1),
-        deadline=SLOT_AT + timedelta(minutes=15),
-    )
+    config, batch = _posterior_trigger_config_and_batch(app_config)
 
     dispatches = DispatchBuilder(
         config=config,
@@ -1022,3 +1195,54 @@ def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -
     assert request.seed == seed
     assert request.assessment_command == command
     assert request.producer_behavior_id == "posterior-behavior-v1"
+
+
+def test_trigger_closes_reserved_posterior_when_world_packet_is_unavailable(
+    app_config,
+) -> None:
+    frozen = _input()
+    seed = ContextPosteriorSeed.create(
+        information_cutoff_at=SLOT_AT,
+        targets=frozen.targets,
+    )
+    closed = []
+
+    class PriorProducer:
+        def produce(self, *, as_of):
+            assert as_of == SLOT_AT + timedelta(minutes=1)
+            return tuple(item.prior for item in frozen.targets)
+
+    class PosteriorPreparation:
+        producer_behavior_id = "posterior-behavior-v1"
+
+        def reserve(self, prior_results, *, as_of):
+            assert prior_results == tuple(item.prior for item in frozen.targets)
+            assert as_of == SLOT_AT + timedelta(minutes=1)
+            return seed
+
+        def close_seed(self, value, *, attempted_at, reason, detail):
+            closed.append((value, attempted_at, reason, detail))
+
+    class DispatchBuilder(TriggerDispatchBuilder):
+        def _assessment_command(self, batch, *, as_of, analysis_identity):
+            assert as_of == SLOT_AT
+            assert analysis_identity == seed.seed_id
+            return None
+
+    config, batch = _posterior_trigger_config_and_batch(app_config)
+
+    dispatches = DispatchBuilder(
+        config=config,
+        program_forecast_producers=(PriorProducer(),),
+        posterior_preparation=PosteriorPreparation(),
+    ).build(batch)
+
+    assert dispatches == ()
+    assert closed == [
+        (
+            seed,
+            SLOT_AT + timedelta(minutes=1),
+            ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
+            "WORLD_MODEL_DECISION_PACKET_UNAVAILABLE",
+        )
+    ]

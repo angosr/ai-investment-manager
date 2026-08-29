@@ -26,7 +26,7 @@ from investment_manager.forecast.context.posterior_contract import (
     posterior_behavior_hash,
     posterior_output_schema,
 )
-from investment_manager.forecast.contracts import ForecastContract
+from investment_manager.forecast.contracts import ForecastContract, ForecastProducerBinding
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.settings import AppConfig
@@ -42,12 +42,14 @@ class PosteriorRunBundleBuilder:
         runtime: CodexRuntimePolicy,
         *,
         contracts: tuple[ForecastContract, ...],
+        prior_bindings: tuple[ForecastProducerBinding, ...],
         world_model_behavior_id: str,
         code_version: str,
         configuration_hash: str,
     ) -> None:
         self._runtime = runtime
         self._contracts = contracts
+        self._prior_bindings = prior_bindings
         self._world_model_behavior_id = world_model_behavior_id
         self._code_version = code_version
         self._configuration_hash = configuration_hash
@@ -56,6 +58,7 @@ class PosteriorRunBundleBuilder:
         return posterior_behavior_hash(
             self._runtime,
             contracts=self._contracts,
+            prior_bindings=self._prior_bindings,
             world_model_behavior_id=self._world_model_behavior_id,
         )
 
@@ -193,6 +196,7 @@ def assemble_codex_context_posterior_analyst(
     *,
     bundle_root: Path,
     contracts: tuple[ForecastContract, ...],
+    prior_bindings: tuple[ForecastProducerBinding, ...],
     world_model_behavior_id: str,
     code_version: str,
     leases: AccountLeaseStore,
@@ -209,6 +213,7 @@ def assemble_codex_context_posterior_analyst(
         PosteriorRunBundleBuilder(
             config.codex_runtime,
             contracts=contracts,
+            prior_bindings=prior_bindings,
             world_model_behavior_id=world_model_behavior_id,
             code_version=code_version,
             configuration_hash=content_hash(config),

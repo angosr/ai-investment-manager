@@ -227,7 +227,7 @@ WorldModel 更新时钟与 Forecast 槽时钟是两个领域概念，但共用�
 
 规范参考不等于可投资产品。BTC/PAXG 的 Spot 可以继续作为点时可结算的经济 Outcome 和市场状态来源，而当前 Capital cohort 只把对应永续合约作为可持有表达；WorldModel 与 Forecast 不因执行域收缩而改写问题，产品投影也不得因使用 Spot 参考而自动生成 Spot 订单候选。这一分离使信息、预测和执行各自只有一个权威边界，避免在 Portfolio 后段再为被错误纳入的重复产品消歧。
 
-当前从认知到 Forecast 没有现役路径；WorldModel 不直接产生资本 Forecast。未来候选只有先用离线点时数据验证与机制时域匹配的合同、Outcome、透明 prior、缺失语义和成本映射，才可以建立前瞻 producer；主动 Quant 要替换简单 prior，必须证明样本外增量，但 AI Alpha 只能由上线后的真实未来证明。其中 AI+prior 读取当前 WorldModel、目标相关 State、同槽 prior 和合同，输出结构化收益分布及哪些机制改变了 prior。该候选必须预测与 prior 完全相同的 Outcome，并保存负向、不确定和 `NO_ESTIMATE`；机制原生时域与合同不匹配且没有前瞻校准投影时，不得靠 Prompt 强行缩放为当前 bucket。
+现役从认知到 Forecast 的路径只有一条：72 小时滚动无条件 prior 与同截止新生成的 WorldModel 进入唯一 AI posterior，输出结构化收益分布及哪些机制改变了 prior；WorldModel 本身不直接产生订单或资本权限。主动 Quant 要替换简单 prior，必须先证明样本外增量，AI Alpha 则只能由上线后的真实未来证明。Posterior 必须预测与 prior 完全相同的 Outcome，并保存负向、不确定和 `NO_ESTIMATE`；机制原生时域与合同不匹配且没有前瞻校准投影时，不得靠 Prompt 强行缩放为当前 bucket。
 
 长期总组合的推荐默认不是让 AI 直接报产品目标暴露。程序以可复现的长期风险溢价、波动、相关性、趋势、carry 和流动性形成规范经济 Outcome 的中性毛收益分布；AI 把联合 WorldModel 转为少数有证据引用的情景概率和相对/绝对收益观点；Forecast 再按各来源的真实前瞻校准、不确定性和适用时域确定性收缩与融合。具体产品的费用、basis、funding、滑点和延迟不进入这份经济 Forecast，由后续唯一 Product/Portfolio 映射在真实决策时点计算。不同原生时域必须先投影到共同资本决策时域，不能把短期事件冲击直接当作长期收益率。没有已证明的 AI 增量时，AI 观点不得影响 official 资本，但可以在预登记 Mock 包络内获得有界实验暴露并与无 AI 反事实同口径推进；随着证据增加只调整未来权限，不能用一段自信文字直接扩大仓位。
 
@@ -275,7 +275,7 @@ AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定
 
 同槽不等于把 Codex 串在行情采集、风险或结算关键路径上，但 WorldModel 与 posterior 之间必须存在真实的数据依赖，不能在同一触发批次里并行读取上一份认知。正式槽先以槽边界作为唯一 `information_cutoff_at`，冻结 Quant prior 和一份世界更新 Packet；Assessment worker 先基于该 Packet 形成新的 WorldModel，成功后才允许同一耐久 Workflow 把它与 prior 组合为 posterior 输入。WorldModel 可以在截止后完成，因为它只读取截止时已经冻结的 Packet；其生成延迟进入 Forecast 的 `available_at` 和实际入场价格，且全部工作必须在同一完成期限内结束。不得用一份更早但尚未到 AI 自定 `next_review_at` 的 WorldModel 代替本槽更新，也不得让截止后到达的事实进入本槽。
 
-这条顺序链仍只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把同槽 Quant 终态、世界更新 Packet、posterior Prompt/Schema、研究 ProducerBinding 和截止时间冻结为一个内容寻址请求；同一 Assessment worker 依次完成世界更新与 posterior，并把新 WorldModel、成功 Forecast 或明确 `NO_ESTIMATE` 写回既有公共账本。第一步失败、超时或第二步失败都必须闭合已经登记的 posterior obligation，不能留下永久等待；重试复用已经持久化的权威 Assessment 或 Forecast，不能重复调用成功阶段。普通材料事件仍只更新 WorldModel；若它晚于正式槽截止，即使与 cadence heartbeat 被合并进同一触发批次，也必须形成截止后的独立世界更新，不能污染正式槽。Quant 缺少某个目标时，准备器立即为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。
+这条顺序链仍只增加一类耐久任务，不增加另一套结果系统：槽前置步骤先登记同槽 Quant 终态对应的研究 ProducerBinding 和 obligation，再冻结世界更新 Packet、posterior Prompt/Schema 与截止时间；同一 Assessment worker 依次完成世界更新与 posterior，并把新 WorldModel、成功 Forecast 或明确 `NO_ESTIMATE` 写回既有公共账本。Packet 无法构建、第一步失败或超时、第二步失败或超时都必须闭合已经登记的 posterior obligation，不能留下永久等待；重试复用已经持久化的权威 Assessment 或 Forecast，不能重复调用成功阶段。普通材料事件仍只更新 WorldModel；若它晚于正式槽截止，即使与 cadence heartbeat 被合并进同一触发批次，也必须形成截止后的独立世界更新，不能污染正式槽。Quant 缺少某个目标时，准备器立即为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。
 
 ForecastContract 是来源无关的公共问题，但槽义务属于具体 producer behavior。行为覆盖率只用事前分配给该行为的到期槽作分母，并把 Forecast 与 `NO_ESTIMATE` 都计作终态；换模型、Prompt 或输入行为后，旧行为槽不能稀释新行为，也不能因切换而从原行为漏报中消失。
 
@@ -285,7 +285,7 @@ ForecastContract 是来源无关的公共问题，但槽义务属于具体 produ
 
 历史 AI 重放不能证明 Alpha，因为模型可能已经知道历史结果。AI 的预测权限只读取真实前瞻样本。模型、Prompt、输入投影、合同或工具实质变化后产生新行为身份，不无条件继承旧成绩。
 
-AI+Quant 的 producer behavior 必须直接绑定合同、目标状态行为、Quant 制品与投影、WorldModel 的完整行为身份、Prompt、Schema 和 Codex 运行合同；不能借用已退役纯 Context 的配置哈希，也不能忽略 WorldModel 的模型、Prompt、Packet 或 mandate 版本。任一输入行为变化时，未来 posterior 与资本授权同步换代，旧 Forecast 和 Outcome 保持不可变，不能跨代累计样本。
+AI+Quant 的 producer behavior 必须直接绑定合同、逐合同 Quant ProducerBinding、结构证据资格与同截止失败语义、WorldModel 的完整行为身份、Prompt、Schema 和 Codex 运行合同；不能借用已退役纯 Context 的配置哈希，也不能忽略 Quant 制品、WorldModel 的模型、Prompt、Packet 或 mandate 版本。准备器还必须拒绝任何不属于这些冻结 Quant bindings 的 prior 结果。任一输入行为变化时，未来 posterior 与资本授权同步换代，旧 Forecast 和 Outcome 保持不可变，不能跨代累计样本。
 
 通过条件必须在看结果前冻结，并与数据结构相符：报告 proper score 差异的保守下界、概率校准、尾部结果、覆盖率和市场环境一致性；重叠时域和共同事件按时间依赖簇处理；同一 objective/scope 的全部候选进入搜索修正。最低样本数只允许开始评价，不能替代不确定性判断；没有赢家是合法结果。
 

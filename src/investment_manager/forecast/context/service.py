@@ -39,6 +39,7 @@ from investment_manager.forecast.context.posterior_preparation import (
 )
 from investment_manager.forecast.context.posterior_workflow import (
     POSTERIOR_ACTIVITY_NAME,
+    POSTERIOR_CLOSE_ACTIVITY_NAME,
     ContextPosteriorWorkflow,
     PosteriorWorkflowRequest,
 )
@@ -290,6 +291,38 @@ class PosteriorActivities:
             "execution": execution.model_dump(mode="json"),
         }
 
+    @activity.defn(name=POSTERIOR_CLOSE_ACTIVITY_NAME)
+    def close_context_posterior(self, raw_request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            request = PosteriorWorkflowRequest.model_validate(raw_request["request"])
+            completed_at = require_utc(datetime.fromisoformat(raw_request["completed_at"]))
+            reason_code = str(raw_request["reason_code"])
+            if not reason_code:
+                raise ValueError("Posterior closure 缺少 reason_code")
+        except (KeyError, TypeError, ValueError, ValidationError) as exc:
+            raise ApplicationError(
+                "ContextPosterior closure 输入未通过契约校验",
+                type="InvalidWorkflowInput",
+                non_retryable=True,
+            ) from exc
+        try:
+            execution = self.application.close_orchestration_failure(
+                seed=request.seed,
+                expected_behavior_hash=request.producer_behavior_id,
+                completed_at=completed_at,
+                reason_code=reason_code,
+            )
+        except ValueError as exc:
+            raise ApplicationError(
+                "ContextPosterior closure 与权威事实冲突",
+                type="PermanentDomainError",
+                non_retryable=True,
+            ) from exc
+        return {
+            "attempt": activity.info().attempt,
+            "execution": execution.model_dump(mode="json"),
+        }
+
 
 @dataclass(slots=True)
 class AssessmentTemporalCoordinator:
@@ -337,7 +370,13 @@ class AssessmentTemporalWorker(SingleActivityWorker):
         workflows = [ContextAssessmentWorkflow]
         if posterior_application is not None:
             workflows.append(ContextPosteriorWorkflow)
-            activities.append(PosteriorActivities(posterior_application).execute_context_posterior)
+            posterior_activities = PosteriorActivities(posterior_application)
+            activities.extend(
+                (
+                    posterior_activities.execute_context_posterior,
+                    posterior_activities.close_context_posterior,
+                )
+            )
         super().__init__(
             client,
             task_queue=policy.assessment_task_queue,
@@ -417,16 +456,16 @@ def assemble_assessment_service(
                 repository_root=repository_root,
             )
         )
-        posterior_contracts = tuple(
-            sorted(
-                (item.contract for item in build_prior_targets(artifact)),
-                key=lambda item: item.contract_id,
-            )
+        posterior_targets = tuple(
+            sorted(build_prior_targets(artifact), key=lambda item: item.contract.contract_id)
         )
+        posterior_contracts = tuple(item.contract for item in posterior_targets)
+        posterior_prior_bindings = tuple(item.binding for item in posterior_targets)
         contract_store = SqlForecastContractStore(engine)
         forecast_store = SqlForecastStore(engine)
         preparation = ContextPosteriorPreparation(
             contracts=posterior_contracts,
+            prior_bindings=posterior_prior_bindings,
             runtime=config.codex_runtime,
             world_model_behavior_id=configured_assess_behavior_hash(config),
             activated_at=manifest.created_at,
@@ -441,6 +480,7 @@ def assemble_assessment_service(
                 config,
                 bundle_root=config.codex_runtime.bundle_root,
                 contracts=posterior_contracts,
+                prior_bindings=posterior_prior_bindings,
                 world_model_behavior_id=configured_assess_behavior_hash(config),
                 code_version=manifest.code_version,
                 leases=leases,

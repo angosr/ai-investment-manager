@@ -14,6 +14,7 @@ from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
     ForecastPriceAnchor,
+    ForecastProducerBinding,
 )
 from investment_manager.forecast.models import (
     ContextAssessment,
@@ -34,6 +35,7 @@ POSTERIOR_INPUT_VERSION = "world-model-posterior-input-v1"
 POSTERIOR_SEED_VERSION = "world-model-posterior-seed-v1"
 POSTERIOR_OUTPUT_VERSION = "world-model-posterior-output-v1"
 POSTERIOR_PRODUCER_ID = "world-model-posterior"
+POSTERIOR_PRODUCTION_SEMANTICS_VERSION = "same-cutoff-structural-conditioning-v1"
 
 
 class PosteriorPriorTarget(FrozenModel):
@@ -252,6 +254,7 @@ def posterior_behavior_hash(
     runtime: CodexRuntimePolicy,
     *,
     contracts: tuple[ForecastContract, ...],
+    prior_bindings: tuple[ForecastProducerBinding, ...],
     world_model_behavior_id: str,
 ) -> str:
     if len(world_model_behavior_id) != 64:
@@ -269,7 +272,12 @@ def posterior_behavior_hash(
                 (item.contract_id, tuple(bucket.bucket_id for bucket in item.outcome_buckets))
                 for item in sorted(contracts, key=lambda item: item.contract_id)
             ),
+            "prior_bindings": tuple(
+                item.model_dump(mode="json")
+                for item in sorted(prior_bindings, key=lambda item: item.contract_id)
+            ),
             "world_model_behavior_id": world_model_behavior_id,
+            "production_semantics_version": POSTERIOR_PRODUCTION_SEMANTICS_VERSION,
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,
             "expected_cli_version": runtime.expected_cli_version,

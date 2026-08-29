@@ -35,6 +35,7 @@ PriorResult = BaseForecast | ForecastNoEstimate
 @dataclass(frozen=True, slots=True)
 class ContextPosteriorPreparation:
     contracts: tuple[ForecastContract, ...]
+    prior_bindings: tuple[ForecastProducerBinding, ...]
     runtime: CodexRuntimePolicy
     world_model_behavior_id: str
     activated_at: datetime
@@ -48,12 +49,18 @@ class ContextPosteriorPreparation:
         contract_ids = tuple(item.contract_id for item in self.contracts)
         if tuple(sorted(set(contract_ids))) != contract_ids:
             raise ValueError("Posterior contracts 必须按唯一 ID 排序")
+        prior_contract_ids = tuple(item.contract_id for item in self.prior_bindings)
+        if prior_contract_ids != contract_ids or len(set(prior_contract_ids)) != len(
+            prior_contract_ids
+        ):
+            raise ValueError("Posterior prior bindings 必须与 contracts 唯一且逐项对应")
 
     @property
     def producer_behavior_id(self) -> str:
         return posterior_behavior_hash(
             self.runtime,
             contracts=self.contracts,
+            prior_bindings=self.prior_bindings,
             world_model_behavior_id=self.world_model_behavior_id,
         )
 
@@ -80,6 +87,9 @@ class ContextPosteriorPreparation:
         if not prior_results:
             return None
         by_contract = {item.contract_id: item for item in prior_results}
+        expected_prior_bindings = {
+            item.contract_id: item for item in self.prior_bindings
+        }
         expected_ids = tuple(item.contract_id for item in self.contracts)
         if tuple(sorted(by_contract)) != expected_ids or len(by_contract) != len(prior_results):
             raise ValueError("Posterior 必须接收冻结联合行为的全部 prior 结果")
@@ -93,6 +103,16 @@ class ContextPosteriorPreparation:
         targets: list[PosteriorPriorTarget] = []
         for contract in self.contracts:
             result = by_contract[contract.contract_id]
+            expected_prior = expected_prior_bindings[contract.contract_id]
+            if (
+                result.producer_id != expected_prior.producer_id
+                or result.producer_behavior_id != expected_prior.producer_behavior_id
+                or (
+                    isinstance(result, ForecastNoEstimate)
+                    and result.producer_kind != expected_prior.producer_kind
+                )
+            ):
+                raise ValueError("Posterior prior 结果与冻结 ProducerBinding 不一致")
             slot = self.contract_store.slot(
                 result.decision_slot_id if isinstance(result, BaseForecast) else result.slot_id
             )

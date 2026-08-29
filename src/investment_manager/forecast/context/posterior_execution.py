@@ -578,6 +578,29 @@ class ContextAssessmentPosteriorApplication:
             expected_behavior_hash=expected_behavior_hash,
         )
 
+    def close_orchestration_failure(
+        self,
+        *,
+        seed: ContextPosteriorSeed,
+        expected_behavior_hash: str,
+        completed_at: datetime,
+        reason_code: str,
+    ) -> PosteriorExecution:
+        """Terminalize a pre-registered cohort when durable execution cannot start or finish."""
+
+        return self._close(
+            seed,
+            expected_behavior_hash=expected_behavior_hash,
+            completed_at=require_utc(completed_at),
+            reason=ForecastNoEstimateReason.DEADLINE_MISSED,
+            reason_code=reason_code,
+            source_run_id=None,
+            account_id=None,
+            attempts=0,
+            usage=(),
+            extra_refs=(),
+        )
+
     def _close(
         self,
         seed: ContextPosteriorSeed,

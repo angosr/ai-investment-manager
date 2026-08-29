@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 from investment_manager.forecast.context.application import AssessmentCommand
@@ -24,6 +25,7 @@ from investment_manager.platform.orchestration import OrchestrationPolicySnapsho
 from investment_manager.platform.temporal import default_activity_versioning_intent
 
 POSTERIOR_ACTIVITY_NAME = "execute-context-assessment-posterior-v1"
+POSTERIOR_CLOSE_ACTIVITY_NAME = "close-context-posterior-obligations-v1"
 POSTERIOR_WORKFLOW_NAME = "ContextPosteriorWorkflow"
 
 
@@ -150,7 +152,11 @@ class ContextPosteriorWorkflow:
             return _failure(workflow_id, "INVALID_WORKFLOW_INPUT")
         remaining = deadline - workflow.now()
         if remaining <= timedelta(0):
-            return _failure(workflow_id, "POSTERIOR_DEADLINE_EXPIRED")
+            return await _close_obligations(
+                request,
+                workflow_id=workflow_id,
+                reason_code="POSTERIOR_DEADLINE_EXPIRED",
+            )
         try:
             raw_result = await workflow.execute_activity(
                 POSTERIOR_ACTIVITY_NAME,
@@ -163,14 +169,33 @@ class ContextPosteriorWorkflow:
                 summary="依次执行同截止世界认知与后验预测",
             )
         except ActivityError:
-            return _failure(workflow_id, "POSTERIOR_ACTIVITY_FAILED")
+            return await _close_obligations(
+                request,
+                workflow_id=workflow_id,
+                reason_code="POSTERIOR_ACTIVITY_FAILED",
+            )
         if not isinstance(raw_result, dict):
-            return _failure(workflow_id, "INVALID_ACTIVITY_RESULT")
+            return await _close_obligations(
+                request,
+                workflow_id=workflow_id,
+                reason_code="INVALID_ACTIVITY_RESULT",
+            )
         raw_execution = raw_result.get("execution")
         attempt = raw_result.get("attempt")
         if not isinstance(raw_execution, dict) or not isinstance(attempt, int) or attempt < 1:
-            return _failure(workflow_id, "INVALID_ACTIVITY_RESULT")
-        execution = PosteriorExecution.model_validate(raw_execution)
+            return await _close_obligations(
+                request,
+                workflow_id=workflow_id,
+                reason_code="INVALID_ACTIVITY_RESULT",
+            )
+        try:
+            execution = PosteriorExecution.model_validate(raw_execution)
+        except ValueError:
+            return await _close_obligations(
+                request,
+                workflow_id=workflow_id,
+                reason_code="INVALID_ACTIVITY_RESULT",
+            )
         status = (
             PosteriorWorkflowStatus.SUCCEEDED
             if execution.status == PosteriorExecutionStatus.SUCCEEDED
@@ -183,6 +208,63 @@ class ContextPosteriorWorkflow:
             attempt=attempt,
             execution=execution,
         ).model_dump(mode="json")
+
+
+async def _close_obligations(
+    request: dict[str, Any],
+    *,
+    workflow_id: str,
+    reason_code: str,
+) -> dict[str, Any]:
+    """Keep a registered Forecast duty visible until its idempotent terminal write succeeds."""
+
+    policy = request.get("orchestration")
+    if not isinstance(policy, dict):
+        return _failure(workflow_id, reason_code)
+    retry = RetryPolicy(
+        initial_interval=timedelta(seconds=int(policy["retry_initial_seconds"])),
+        maximum_interval=timedelta(seconds=int(policy["retry_maximum_seconds"])),
+        backoff_coefficient=float(policy["retry_backoff_coefficient"]),
+        non_retryable_error_types=["InvalidWorkflowInput", "PermanentDomainError"],
+    )
+    try:
+        completed_at = max(
+            workflow.now(),
+            require_utc(datetime.fromisoformat(str(request["created_at"]))),
+        )
+        raw_result = await workflow.execute_activity(
+            POSTERIOR_CLOSE_ACTIVITY_NAME,
+            {
+                "request": request,
+                "completed_at": completed_at.isoformat(),
+                "reason_code": reason_code,
+            },
+            result_type=dict,
+            start_to_close_timeout=timedelta(
+                seconds=min(60, int(policy["activity_start_to_close_seconds"]))
+            ),
+            retry_policy=retry,
+            versioning_intent=default_activity_versioning_intent(),
+            summary="闭合未完成的世界认知后验义务",
+        )
+    except (ActivityError, KeyError, TypeError, ValueError):
+        return _failure(workflow_id, reason_code)
+    if not isinstance(raw_result, dict):
+        return _failure(workflow_id, reason_code)
+    raw_execution = raw_result.get("execution")
+    attempt = raw_result.get("attempt")
+    if not isinstance(raw_execution, dict) or not isinstance(attempt, int) or attempt < 1:
+        return _failure(workflow_id, reason_code)
+    execution = PosteriorExecution.model_validate(raw_execution)
+    if execution.status != PosteriorExecutionStatus.NO_ESTIMATE:
+        return _failure(workflow_id, reason_code)
+    return PosteriorWorkflowExecution(
+        workflow_id=workflow_id,
+        status=PosteriorWorkflowStatus.NO_ESTIMATE,
+        reason_code=execution.reason_code,
+        attempt=attempt,
+        execution=execution,
+    ).model_dump(mode="json")
 
 
 def _failure(workflow_id: str, reason_code: str) -> dict[str, Any]:

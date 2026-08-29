@@ -229,14 +229,14 @@ def _assemble_context_posterior(
     if policy.artifact_id is None:
         raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
     artifact = load_forecast_baseline(resolve_manifest_artifact(manifest, policy.artifact_id))
-    contracts = tuple(
-        sorted(
-            (item.contract for item in build_prior_targets(artifact)),
-            key=lambda item: item.contract_id,
-        )
+    targets = tuple(
+        sorted(build_prior_targets(artifact), key=lambda item: item.contract.contract_id)
     )
+    contracts = tuple(item.contract for item in targets)
+    prior_bindings = tuple(item.binding for item in targets)
     return ContextPosteriorPreparation(
         contracts=contracts,
+        prior_bindings=prior_bindings,
         runtime=config.codex_runtime,
         world_model_behavior_id=configured_assess_behavior_hash(config),
         activated_at=manifest.created_at,

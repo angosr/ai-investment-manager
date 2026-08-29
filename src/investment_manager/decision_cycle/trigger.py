@@ -25,6 +25,7 @@ from investment_manager.forecast.context.workflow import (
     ASSESSMENT_WORKFLOW_NAME,
     AssessmentWorkflowRequest,
 )
+from investment_manager.forecast.contracts import ForecastNoEstimateReason
 from investment_manager.forecast.models import (
     MAX_WORLD_MECHANISM_CLAIM_CHARACTERS,
     MAX_WORLD_VERIFICATION_TESTS,
@@ -175,7 +176,14 @@ class TriggerDispatchBuilder:
                     as_of=posterior_seed.information_cutoff_at,
                     analysis_identity=posterior_seed.seed_id,
                 )
-                if command is not None:
+                if command is None:
+                    self._posterior_preparation.close_seed(
+                        posterior_seed,
+                        attempted_at=as_of,
+                        reason=ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
+                        detail="WORLD_MODEL_DECISION_PACKET_UNAVAILABLE",
+                    )
+                else:
                     posterior_request = PosteriorWorkflowRequest.create(
                         seed=posterior_seed,
                         assessment_command=command,
