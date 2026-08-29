@@ -18,7 +18,10 @@ from investment_manager.forecast.codex.repository import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
 )
-from investment_manager.forecast.context.analyst import assemble_codex_context_analyst
+from investment_manager.forecast.context.analyst import (
+    assemble_codex_context_analyst,
+    configured_assess_behavior_hash,
+)
 from investment_manager.forecast.context.application import (
     AssessmentApplication,
     AssessmentWorkflowExecution,
@@ -28,7 +31,11 @@ from investment_manager.forecast.context.posterior_analyst import (
     assemble_codex_context_posterior_analyst,
 )
 from investment_manager.forecast.context.posterior_execution import (
+    ContextAssessmentPosteriorApplication,
     ContextPosteriorApplication,
+)
+from investment_manager.forecast.context.posterior_preparation import (
+    ContextPosteriorPreparation,
 )
 from investment_manager.forecast.context.posterior_workflow import (
     POSTERIOR_ACTIVITY_NAME,
@@ -254,7 +261,7 @@ class AssessmentActivities:
 
 @dataclass(slots=True)
 class PosteriorActivities:
-    application: ContextPosteriorApplication
+    application: ContextAssessmentPosteriorApplication
 
     @activity.defn(name=POSTERIOR_ACTIVITY_NAME)
     def execute_context_posterior(self, raw_request: dict[str, Any]) -> dict[str, Any]:
@@ -268,12 +275,13 @@ class PosteriorActivities:
             ) from exc
         try:
             execution = self.application.execute(
-                request.frozen_input,
+                command=request.assessment_command,
+                seed=request.seed,
                 expected_behavior_hash=request.producer_behavior_id,
             )
         except ValueError as exc:
             raise ApplicationError(
-                "ContextPosterior 冻结输入与权威事实冲突",
+                "同截止 WorldModel/Posterior 冻结输入与权威事实冲突",
                 type="PermanentDomainError",
                 non_retryable=True,
             ) from exc
@@ -322,7 +330,7 @@ class AssessmentTemporalWorker(SingleActivityWorker):
         policy: TemporalPolicy,
         application: AssessmentApplication,
         *,
-        posterior_application: ContextPosteriorApplication | None = None,
+        posterior_application: ContextAssessmentPosteriorApplication | None = None,
         worker_threads: int,
     ) -> None:
         activities = [AssessmentActivities(application).execute_context_assessment]
@@ -345,7 +353,7 @@ class AssessmentServiceAssembly:
     """Purely constructed worker graph; activation may update durable wakeups."""
 
     application: AssessmentApplication
-    posterior_application: ContextPosteriorApplication | None
+    posterior_application: ContextAssessmentPosteriorApplication | None
     scheduler: WorldModelReviewScheduler
     analysis_scope: str
 
@@ -390,6 +398,13 @@ def assemble_assessment_service(
         scheduler.schedule(assessment)
         scheduler.publish_update(assessment)
 
+    assessment_application = AssessmentApplication(
+        ContextAssessmentExecutor(
+            assessments,
+            analyst,
+            on_success=complete_world_model,
+        )
+    )
     posterior_application = None
     prior_policy = config.outcome_evaluation.forecast_prior
     if prior_policy.enabled:
@@ -408,28 +423,37 @@ def assemble_assessment_service(
                 key=lambda item: item.contract_id,
             )
         )
-        posterior_application = ContextPosteriorApplication(
+        contract_store = SqlForecastContractStore(engine)
+        forecast_store = SqlForecastStore(engine)
+        preparation = ContextPosteriorPreparation(
+            contracts=posterior_contracts,
+            runtime=config.codex_runtime,
+            world_model_behavior_id=configured_assess_behavior_hash(config),
+            activated_at=manifest.created_at,
+            contract_store=contract_store,
+            forecast_store=forecast_store,
+        )
+        posterior_application = ContextAssessmentPosteriorApplication(
+            assessment=assessment_application,
+            preparation=preparation,
+            posterior=ContextPosteriorApplication(
             analyst=assemble_codex_context_posterior_analyst(
                 config,
                 bundle_root=config.codex_runtime.bundle_root,
                 contracts=posterior_contracts,
+                world_model_behavior_id=configured_assess_behavior_hash(config),
                 code_version=manifest.code_version,
                 leases=leases,
                 audit=audit,
             ),
-            contracts=SqlForecastContractStore(engine),
-            forecasts=SqlForecastStore(engine),
+            contracts=contract_store,
+            forecasts=forecast_store,
             market=SqlMarketDataStore(engine),
             maximum_quote_age_seconds=config.capital.risk.maximum_quote_age_seconds,
+            ),
         )
     return AssessmentServiceAssembly(
-        application=AssessmentApplication(
-            ContextAssessmentExecutor(
-                assessments,
-                analyst,
-                on_success=complete_world_model,
-            )
-        ),
+        application=assessment_application,
         posterior_application=posterior_application,
         scheduler=scheduler,
         analysis_scope=config.assessment.mandate.analysis_scope,
@@ -440,7 +464,7 @@ async def run_assessment_worker_forever(
     *,
     config: AppConfig,
     application: AssessmentApplication,
-    posterior_application: ContextPosteriorApplication | None = None,
+    posterior_application: ContextAssessmentPosteriorApplication | None = None,
 ) -> None:
     coordinator = await AssessmentTemporalCoordinator.connect(config.temporal)
     enabled_accounts = sum(account.enabled for account in config.codex_accounts.accounts)
@@ -461,7 +485,7 @@ def run_assessment_worker_process(
     *,
     config: AppConfig,
     application: AssessmentApplication,
-    posterior_application: ContextPosteriorApplication | None = None,
+    posterior_application: ContextAssessmentPosteriorApplication | None = None,
 ) -> None:
     asyncio.run(
         run_assessment_worker_forever(

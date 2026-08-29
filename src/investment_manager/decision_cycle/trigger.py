@@ -152,40 +152,6 @@ class TriggerDispatchBuilder:
         for consumer in self._program_batch_consumers:
             consumer.consume(batch)
         trigger_types = {item.trigger_type for item in batch.triggers}
-        intelligence_evidence_ids = tuple(
-            sorted(
-                {
-                    evidence
-                    for item in batch.triggers
-                    if item.trigger_type == AnalysisTriggerType.INTELLIGENCE_INSERTED
-                    for evidence in item.evidence_ids
-                }
-            )
-        )
-        market_shock_symbols = tuple(
-            sorted(
-                {
-                    symbol
-                    for item in batch.triggers
-                    if item.trigger_type == AnalysisTriggerType.MARKET_SHOCK
-                    for symbol in (item.affected_symbols or (item.symbol,))
-                }
-            )
-        )
-        reviews_by_id: dict[str, PacketReviewRequest] = {}
-        for trigger in batch.triggers:
-            if trigger.trigger_type != AnalysisTriggerType.AGENT_WAKEUP:
-                continue
-            if trigger.review_reason is None:
-                # v11 以前的历史 payload 没有理由，允许读取但不能伪造评审授权。
-                continue
-            review = PacketReviewRequest.create(
-                requested_at=trigger.occurred_at,
-                reason=trigger.review_reason,
-                evidence_ids=trigger.evidence_ids,
-            )
-            reviews_by_id[review.review_id] = review
-        review_requests = tuple(reviews_by_id[item] for item in sorted(reviews_by_id))
         dispatches: list[AnalysisDispatchRequest] = []
         assessment_triggered = bool(
             trigger_types
@@ -197,81 +163,61 @@ class TriggerDispatchBuilder:
             }
         )
         owns_portfolio_assessment = batch.symbol == self._config.assessment.review_trigger_symbol
+        posterior_seed = None
         if self._posterior_preparation is not None and owns_portfolio_assessment:
-            frozen_posterior = self._posterior_preparation.prepare(
+            posterior_seed = self._posterior_preparation.reserve(
                 tuple(prior_results),
                 as_of=as_of,
             )
-            if frozen_posterior is not None:
-                posterior_request = PosteriorWorkflowRequest.create(
-                    frozen_input=frozen_posterior,
-                    producer_behavior_id=(self._posterior_preparation.producer_behavior_id),
-                    orchestration=OrchestrationPolicySnapshot.from_config(self._config.temporal),
-                    created_at=as_of,
+            if posterior_seed is not None:
+                command = self._assessment_command(
+                    batch,
+                    as_of=posterior_seed.information_cutoff_at,
+                    analysis_identity=posterior_seed.seed_id,
                 )
-                dispatches.append(
-                    AnalysisDispatchRequest(
-                        workflow_name=POSTERIOR_WORKFLOW_NAME,
-                        workflow_id=posterior_request.workflow_id,
-                        task_queue=self._config.temporal.assessment_task_queue,
-                        payload=posterior_request.model_dump(mode="json"),
+                if command is not None:
+                    posterior_request = PosteriorWorkflowRequest.create(
+                        seed=posterior_seed,
+                        assessment_command=command,
+                        producer_behavior_id=(
+                            self._posterior_preparation.producer_behavior_id
+                        ),
+                        orchestration=OrchestrationPolicySnapshot.from_config(
+                            self._config.temporal
+                        ),
+                        created_at=as_of,
                     )
-                )
-        if self._config.assessment.enabled and assessment_triggered and owns_portfolio_assessment:
-            assert self._packet_preparation is not None
-            assert self._assessment_history is not None
-            previous = self._assessment_history.latest_before(
-                analysis_scope=self._config.assessment.mandate.analysis_scope,
-                as_of=as_of,
-            )
-            previous_observations = (
-                self._assessment_history.mechanism_observations(previous.assessment_id)
-                if previous is not None
-                else ()
-            )
-            prepared = self._packet_preparation.prepare(
-                analysis_id=stable_id("assessment_input", batch.batch_id),
-                as_of=as_of,
-                mandate=self._config.assessment.mandate,
-                intelligence_evidence_ids=intelligence_evidence_ids,
-                market_shock_symbols=market_shock_symbols,
-                review_requests=review_requests,
-                previous_context=_previous_context(
-                    previous,
-                    observations=previous_observations,
-                ),
-            )
-            if prepared.status == PacketPreparationStatus.READY:
-                assert prepared.packet is not None
-                packet = prepared.packet
-                if previous is not None:
-                    recorded_observations = self._assessment_history.observe_mechanisms(
-                        assessment=previous,
-                        packet=packet,
+                    dispatches.append(
+                        AnalysisDispatchRequest(
+                            workflow_name=POSTERIOR_WORKFLOW_NAME,
+                            workflow_id=posterior_request.workflow_id,
+                            task_queue=self._config.temporal.assessment_task_queue,
+                            payload=posterior_request.model_dump(mode="json"),
+                        )
                     )
-                    if recorded_observations:
-                        current_context = _previous_context(
-                            previous,
-                            observations=(
-                                *previous_observations,
-                                *recorded_observations,
-                            ),
-                        )
-                        assert current_context is not None
-                        packet = replace_packet_previous_context(
-                            packet,
-                            current_context,
-                            maximum_analysis_characters=(
-                                self._config.decision_state.packet_policy.maximum_packet_characters
-                            ),
-                        )
-                command = AssessmentCommand.create(
-                    packet=packet,
-                    analysis_behavior_hash=assess_behavior_hash(
-                        self._config.codex_runtime,
-                        packet,
-                    ),
-                )
+        later_material_trigger = posterior_seed is not None and any(
+            item.trigger_type
+            in {
+                AnalysisTriggerType.CANONICAL_FACT_REVISED,
+                AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                AnalysisTriggerType.MARKET_SHOCK,
+                AnalysisTriggerType.AGENT_WAKEUP,
+            }
+            and item.observed_at > posterior_seed.information_cutoff_at
+            for item in batch.triggers
+        )
+        if (
+            self._config.assessment.enabled
+            and assessment_triggered
+            and owns_portfolio_assessment
+            and (posterior_seed is None or later_material_trigger)
+        ):
+            command = self._assessment_command(
+                batch,
+                as_of=as_of,
+                analysis_identity=batch.batch_id,
+            )
+            if command is not None:
                 assessment_request = AssessmentWorkflowRequest.create(
                     command=command,
                     orchestration=OrchestrationPolicySnapshot.from_config(self._config.temporal),
@@ -299,6 +245,101 @@ class TriggerDispatchBuilder:
                     raise AnalysisCallDeferred(admission.retry_at)
             self._batch_recorder.record_batch(batch, analysis_submitted_at=submitted_at)
         return tuple(dispatches)
+
+    def _assessment_command(
+        self,
+        batch: TriggerBatch,
+        *,
+        as_of: datetime,
+        analysis_identity: str,
+    ) -> AssessmentCommand | None:
+        assert self._packet_preparation is not None
+        assert self._assessment_history is not None
+        visible_triggers = tuple(item for item in batch.triggers if item.observed_at <= as_of)
+        intelligence_evidence_ids = tuple(
+            sorted(
+                {
+                    evidence
+                    for item in visible_triggers
+                    if item.trigger_type == AnalysisTriggerType.INTELLIGENCE_INSERTED
+                    for evidence in item.evidence_ids
+                }
+            )
+        )
+        market_shock_symbols = tuple(
+            sorted(
+                {
+                    symbol
+                    for item in visible_triggers
+                    if item.trigger_type == AnalysisTriggerType.MARKET_SHOCK
+                    for symbol in (item.affected_symbols or (item.symbol,))
+                }
+            )
+        )
+        reviews_by_id: dict[str, PacketReviewRequest] = {}
+        for trigger in visible_triggers:
+            if (
+                trigger.trigger_type != AnalysisTriggerType.AGENT_WAKEUP
+                or trigger.review_reason is None
+                or trigger.occurred_at > as_of
+            ):
+                continue
+            review = PacketReviewRequest.create(
+                requested_at=trigger.occurred_at,
+                reason=trigger.review_reason,
+                evidence_ids=trigger.evidence_ids,
+            )
+            reviews_by_id[review.review_id] = review
+        previous = self._assessment_history.latest_before(
+            analysis_scope=self._config.assessment.mandate.analysis_scope,
+            as_of=as_of,
+        )
+        previous_observations = (
+            self._assessment_history.mechanism_observations(previous.assessment_id)
+            if previous is not None
+            else ()
+        )
+        prepared = self._packet_preparation.prepare(
+            analysis_id=stable_id("assessment_input", analysis_identity),
+            as_of=as_of,
+            mandate=self._config.assessment.mandate,
+            intelligence_evidence_ids=intelligence_evidence_ids,
+            market_shock_symbols=market_shock_symbols,
+            review_requests=tuple(reviews_by_id[item] for item in sorted(reviews_by_id)),
+            previous_context=_previous_context(
+                previous,
+                observations=previous_observations,
+            ),
+        )
+        if prepared.status != PacketPreparationStatus.READY:
+            return None
+        assert prepared.packet is not None
+        packet = prepared.packet
+        if previous is not None:
+            recorded_observations = self._assessment_history.observe_mechanisms(
+                assessment=previous,
+                packet=packet,
+            )
+            if recorded_observations:
+                current_context = _previous_context(
+                    previous,
+                    observations=(*previous_observations, *recorded_observations),
+                )
+                assert current_context is not None
+                packet = replace_packet_previous_context(
+                    packet,
+                    current_context,
+                    maximum_analysis_characters=(
+                        self._config.decision_state.packet_policy.maximum_packet_characters
+                    ),
+                )
+        return AssessmentCommand.create(
+            packet=packet,
+            analysis_behavior_hash=assess_behavior_hash(
+                self._config.codex_runtime,
+                packet,
+            ),
+        )
 
 
 def _previous_context(

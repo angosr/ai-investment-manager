@@ -8,10 +8,10 @@ from datetime import datetime
 from investment_manager.forecast.context.posterior_contract import (
     POSTERIOR_PRODUCER_ID,
     ContextPosteriorInput,
+    ContextPosteriorSeed,
     PosteriorPriorTarget,
     posterior_behavior_hash,
 )
-from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastContract,
@@ -21,11 +21,13 @@ from investment_manager.forecast.contracts import (
     ForecastProducerBinding,
     ForecastProducerKind,
 )
+from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
+from investment_manager.state.decision.packet import DecisionPacket
 
 PriorResult = BaseForecast | ForecastNoEstimate
 
@@ -34,21 +36,26 @@ PriorResult = BaseForecast | ForecastNoEstimate
 class ContextPosteriorPreparation:
     contracts: tuple[ForecastContract, ...]
     runtime: CodexRuntimePolicy
-    analysis_scope: str
+    world_model_behavior_id: str
     activated_at: datetime
     contract_store: SqlForecastContractStore
     forecast_store: SqlForecastStore
-    assessments: SqlContextAssessmentStore
 
     def __post_init__(self) -> None:
         require_utc(self.activated_at)
+        if len(self.world_model_behavior_id) != 64:
+            raise ValueError("Posterior preparation 缺少 WorldModel 行为身份")
         contract_ids = tuple(item.contract_id for item in self.contracts)
         if tuple(sorted(set(contract_ids))) != contract_ids:
             raise ValueError("Posterior contracts 必须按唯一 ID 排序")
 
     @property
     def producer_behavior_id(self) -> str:
-        return posterior_behavior_hash(self.runtime, contracts=self.contracts)
+        return posterior_behavior_hash(
+            self.runtime,
+            contracts=self.contracts,
+            world_model_behavior_id=self.world_model_behavior_id,
+        )
 
     def binding(self, contract: ForecastContract) -> ForecastProducerBinding:
         if contract.contract_id not in {item.contract_id for item in self.contracts}:
@@ -61,12 +68,14 @@ class ContextPosteriorPreparation:
             permission=ForecastPermission.RESEARCH,
         )
 
-    def prepare(
+    def reserve(
         self,
         prior_results: tuple[PriorResult, ...],
         *,
         as_of: datetime,
-    ) -> ContextPosteriorInput | None:
+    ) -> ContextPosteriorSeed | None:
+        """Record obligations and freeze prior-side input without reading an old WorldModel."""
+
         attempted_at = require_utc(as_of)
         if not prior_results:
             return None
@@ -121,38 +130,27 @@ class ContextPosteriorPreparation:
             targets.append(PosteriorPriorTarget(contract=contract, slot=slot, prior=result))
         if not targets:
             return None
-
-        world_model = self.assessments.latest_before(
-            analysis_scope=self.analysis_scope,
-            as_of=cutoff,
+        return ContextPosteriorSeed.create(
+            information_cutoff_at=cutoff,
+            targets=tuple(targets),
         )
-        if world_model is None:
-            self._close_targets(
-                targets,
-                attempted_at=attempted_at,
-                reason=ForecastNoEstimateReason.WORLD_MODEL_UNAVAILABLE,
-                detail="NO_WORLD_MODEL_AVAILABLE_AT_CUTOFF",
-            )
-            return None
-        if min(item.next_review_at for item in world_model.mechanisms) <= cutoff:
-            self._close_targets(
-                targets,
-                attempted_at=attempted_at,
-                reason=ForecastNoEstimateReason.WORLD_MODEL_STALE,
-                detail="WORLD_MODEL_REVIEW_OVERDUE_AT_CUTOFF",
-                extra_refs=(world_model.assessment_id,),
-            )
-            return None
-        packet = self.assessments.packet_for_assessment(world_model.assessment_id)
-        if packet is None:
-            self._close_targets(
-                targets,
-                attempted_at=attempted_at,
-                reason=ForecastNoEstimateReason.WORLD_MODEL_UNAVAILABLE,
-                detail="WORLD_MODEL_PACKET_UNAVAILABLE",
-                extra_refs=(world_model.assessment_id,),
-            )
-            return None
+
+    @staticmethod
+    def build_input(
+        seed: ContextPosteriorSeed,
+        *,
+        world_model: ContextAssessment,
+        packet: DecisionPacket,
+    ) -> ContextPosteriorInput:
+        """Bind the newly generated same-cutoff WorldModel to the reserved prior seed."""
+
+        if packet.as_of != seed.information_cutoff_at:
+            raise ValueError("Posterior WorldModel Packet 与 Forecast 信息截止不一致")
+        if (
+            world_model.as_of != seed.information_cutoff_at
+            or world_model.decision_packet_hash != packet.content_hash
+        ):
+            raise ValueError("Posterior WorldModel 不属于冻结的同截止 Packet")
         structural_evidence = {
             *(item.revision_id for item in packet.facts),
             *(
@@ -172,18 +170,56 @@ class ContextPosteriorPreparation:
                 }
             )
         )
-        observations = tuple(
-            item
-            for item in self.assessments.mechanism_observations(world_model.assessment_id)
-            if item.observed_at <= cutoff
-        )
         return ContextPosteriorInput.create(
-            information_cutoff_at=cutoff,
+            information_cutoff_at=seed.information_cutoff_at,
             world_model=world_model,
-            mechanism_observations=observations,
+            mechanism_observations=(),
             eligible_mechanism_ids=eligible,
-            targets=tuple(targets),
+            targets=seed.targets,
         )
+
+    def close_seed(
+        self,
+        seed: ContextPosteriorSeed,
+        *,
+        attempted_at: datetime,
+        reason: ForecastNoEstimateReason,
+        detail: str,
+        extra_refs: tuple[str, ...] = (),
+    ) -> tuple[ForecastNoEstimate, ...]:
+        """Close every reserved target after a failed same-cutoff world update."""
+
+        completed = require_utc(attempted_at)
+        results: list[ForecastNoEstimate] = []
+        for target in seed.targets:
+            absence_id = stable_id(
+                "forecast_no_estimate",
+                target.slot.slot_id,
+                self.producer_behavior_id,
+            )
+            existing = self.contract_store.no_estimate(absence_id)
+            if existing is not None:
+                results.append(existing)
+                continue
+            if self.forecast_store.result_for_behavior(
+                decision_slot_id=target.slot.slot_id,
+                producer_behavior_id=self.producer_behavior_id,
+            ) is not None:
+                raise ValueError("已有 Posterior Forecast 时不能再关闭 seed")
+            self._record_no_estimate(
+                contract=target.contract,
+                slot_id=target.slot.slot_id,
+                information_cutoff_at=seed.information_cutoff_at,
+                attempted_at=completed,
+                reason=reason,
+                input_refs=(target.prior.forecast_id, *extra_refs),
+                detail=detail,
+            )
+            recorded = self.contract_store.no_estimate(absence_id)
+            if recorded is None:
+                raise RuntimeError("Posterior seed 关闭后缺少权威 NO_ESTIMATE")
+            results.append(recorded)
+        return tuple(results)
 
     def _terminal(self, slot_id: str) -> bool:
         if (
@@ -198,26 +234,6 @@ class ContextPosteriorPreparation:
             decision_slot_id=slot_id,
             producer_behavior_id=self.producer_behavior_id,
         )
-
-    def _close_targets(
-        self,
-        targets: list[PosteriorPriorTarget],
-        *,
-        attempted_at: datetime,
-        reason: ForecastNoEstimateReason,
-        detail: str,
-        extra_refs: tuple[str, ...] = (),
-    ) -> None:
-        for target in targets:
-            self._record_no_estimate(
-                contract=target.contract,
-                slot_id=target.slot.slot_id,
-                information_cutoff_at=target.slot.information_cutoff_at,
-                attempted_at=attempted_at,
-                reason=reason,
-                input_refs=(target.prior.forecast_id, *extra_refs),
-                detail=detail,
-            )
 
     def _record_no_estimate(
         self,

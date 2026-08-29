@@ -42,11 +42,13 @@ class PosteriorRunBundleBuilder:
         runtime: CodexRuntimePolicy,
         *,
         contracts: tuple[ForecastContract, ...],
+        world_model_behavior_id: str,
         code_version: str,
         configuration_hash: str,
     ) -> None:
         self._runtime = runtime
         self._contracts = contracts
+        self._world_model_behavior_id = world_model_behavior_id
         self._code_version = code_version
         self._configuration_hash = configuration_hash
 
@@ -54,6 +56,7 @@ class PosteriorRunBundleBuilder:
         return posterior_behavior_hash(
             self._runtime,
             contracts=self._contracts,
+            world_model_behavior_id=self._world_model_behavior_id,
         )
 
     def build(self, value: ContextPosteriorInput, target: Path) -> RunBundle:
@@ -190,6 +193,7 @@ def assemble_codex_context_posterior_analyst(
     *,
     bundle_root: Path,
     contracts: tuple[ForecastContract, ...],
+    world_model_behavior_id: str,
     code_version: str,
     leases: AccountLeaseStore,
     audit: RouterAuditStore,
@@ -205,6 +209,7 @@ def assemble_codex_context_posterior_analyst(
         PosteriorRunBundleBuilder(
             config.codex_runtime,
             contracts=contracts,
+            world_model_behavior_id=world_model_behavior_id,
             code_version=code_version,
             configuration_hash=content_hash(config),
         ),

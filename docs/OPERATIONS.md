@@ -63,7 +63,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。TriggerCoordinator 在组合 owner 的 cadence 槽先生成全部 prior，再把共享信息截止、prior、WorldModel、机制观测、Prompt/Schema 行为身份和完成期限冻结到一个耐久 posterior Workflow；现有 Assessment Worker 执行唯一 Codex 调用，结果写回公共 Forecast/`NO_ESTIMATE` 账本。当前不运行材料事件 Forecast 槽、Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
+当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。TriggerCoordinator 在组合 owner 的 cadence 槽先生成全部 prior，再以共享槽边界冻结世界更新 Packet、prior、两侧 Prompt/Schema 行为身份和完成期限。现有 Assessment Worker 在一个耐久 posterior Workflow 内先生成同截止 WorldModel，再顺序执行一次 posterior Codex 调用；不得并行读取上一份 WorldModel。两次生成延迟都进入实际可用时间，任一步失败都把已登记义务闭合到公共 Forecast/`NO_ESTIMATE` 账本。当前不运行材料事件 Forecast 槽、Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；

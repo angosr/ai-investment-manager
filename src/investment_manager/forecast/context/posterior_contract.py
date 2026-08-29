@@ -31,6 +31,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 
 POSTERIOR_INPUT_VERSION = "world-model-posterior-input-v1"
+POSTERIOR_SEED_VERSION = "world-model-posterior-seed-v1"
 POSTERIOR_OUTPUT_VERSION = "world-model-posterior-output-v1"
 POSTERIOR_PRODUCER_ID = "world-model-posterior"
 
@@ -50,6 +51,56 @@ class PosteriorPriorTarget(FrozenModel):
             raise ValueError("Posterior target 的信息截止不一致")
         if self.prior.available_at > self.slot.completion_deadline_at:
             raise ValueError("Posterior target 的 prior 已错过完成期限")
+        return self
+
+
+class ContextPosteriorSeed(FrozenModel):
+    """Prior-side facts reserved at the slot boundary before WorldModel generation."""
+
+    schema_version: Literal["world-model-posterior-seed-v1"] = POSTERIOR_SEED_VERSION
+    seed_id: str = Field(min_length=1)
+    seed_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    information_cutoff_at: datetime
+    targets: tuple[PosteriorPriorTarget, ...] = Field(min_length=1)
+
+    _utc_information_cutoff_at = field_validator("information_cutoff_at")(require_utc)
+
+    @classmethod
+    def create(cls, **values) -> ContextPosteriorSeed:
+        normalized = {
+            "information_cutoff_at": require_utc(values["information_cutoff_at"]),
+            "targets": tuple(sorted(values["targets"], key=lambda item: item.contract.contract_id)),
+        }
+        pending = cls.model_construct(
+            schema_version=POSTERIOR_SEED_VERSION,
+            seed_id="pending",
+            seed_hash="0" * 64,
+            **normalized,
+        )
+        digest = content_hash(pending.model_dump(mode="json", exclude={"seed_id", "seed_hash"}))
+        return cls(
+            seed_id=stable_id("context_posterior_seed", digest),
+            seed_hash=digest,
+            **normalized,
+        )
+
+    @model_validator(mode="after")
+    def identity_scope_and_timing_are_canonical(self):
+        contract_ids = tuple(item.contract.contract_id for item in self.targets)
+        if tuple(sorted(set(contract_ids))) != contract_ids:
+            raise ValueError("Posterior seed targets 必须按唯一 Contract 排序")
+        if any(
+            item.slot.information_cutoff_at != self.information_cutoff_at
+            for item in self.targets
+        ):
+            raise ValueError("Posterior seed targets 必须共享信息截止")
+        expected_hash = content_hash(
+            self.model_dump(mode="json", exclude={"seed_id", "seed_hash"})
+        )
+        if self.seed_hash != expected_hash:
+            raise ValueError("Posterior seed_hash 与内容不一致")
+        if self.seed_id != stable_id("context_posterior_seed", expected_hash):
+            raise ValueError("Posterior seed_id 与内容不一致")
         return self
 
 
@@ -95,10 +146,11 @@ class ContextPosteriorInput(FrozenModel):
     @model_validator(mode="after")
     def identity_scope_and_timing_are_canonical(self):
         cutoff = self.information_cutoff_at
-        if self.world_model.available_at > cutoff:
-            raise ValueError("Posterior 不得读取信息截止后的 WorldModel")
-        if min(item.next_review_at for item in self.world_model.mechanisms) <= cutoff:
-            raise ValueError("Posterior WorldModel 在信息截止前已到期复核")
+        if self.world_model.as_of != cutoff:
+            raise ValueError("Posterior 必须读取同一信息截止新生成的 WorldModel")
+        deadline = min(item.slot.completion_deadline_at for item in self.targets)
+        if self.world_model.available_at > deadline:
+            raise ValueError("Posterior WorldModel 在 Forecast 完成期限后才可用")
         contract_ids = tuple(item.contract.contract_id for item in self.targets)
         if tuple(sorted(set(contract_ids))) != contract_ids:
             raise ValueError("Posterior targets 必须按唯一 Contract 排序")
@@ -200,7 +252,10 @@ def posterior_behavior_hash(
     runtime: CodexRuntimePolicy,
     *,
     contracts: tuple[ForecastContract, ...],
+    world_model_behavior_id: str,
 ) -> str:
+    if len(world_model_behavior_id) != 64:
+        raise ValueError("Posterior 缺少完整 WorldModel 行为身份")
     return content_hash(
         {
             "input_version": POSTERIOR_INPUT_VERSION,
@@ -214,6 +269,7 @@ def posterior_behavior_hash(
                 (item.contract_id, tuple(bucket.bucket_id for bucket in item.outcome_buckets))
                 for item in sorted(contracts, key=lambda item: item.contract_id)
             ),
+            "world_model_behavior_id": world_model_behavior_id,
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,
             "expected_cli_version": runtime.expected_cli_version,

@@ -266,7 +266,7 @@ capital:
       instrument_keys: [BINANCE:USD_M_PERPETUAL:PAXGUSDT]
       maximum_rule_age_seconds: 900
 outcome_evaluation:
-  version: typed-outcome-settlement-v57
+  version: typed-outcome-settlement-v58
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   product_payoff_version: product-payoff-outcome-v1

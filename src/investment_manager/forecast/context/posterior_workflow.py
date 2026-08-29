@@ -10,7 +10,8 @@ from pydantic import Field, field_validator, model_validator
 from temporalio import workflow
 from temporalio.exceptions import ActivityError
 
-from investment_manager.forecast.context.posterior_contract import ContextPosteriorInput
+from investment_manager.forecast.context.application import AssessmentCommand
+from investment_manager.forecast.context.posterior_contract import ContextPosteriorSeed
 from investment_manager.forecast.context.posterior_execution import (
     PosteriorExecution,
     PosteriorExecutionStatus,
@@ -22,13 +23,14 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.platform.temporal import default_activity_versioning_intent
 
-POSTERIOR_ACTIVITY_NAME = "execute-context-posterior-v1"
+POSTERIOR_ACTIVITY_NAME = "execute-context-assessment-posterior-v1"
 POSTERIOR_WORKFLOW_NAME = "ContextPosteriorWorkflow"
 
 
 class PosteriorWorkflowRequest(FrozenModel):
     workflow_id: str = Field(min_length=1)
-    frozen_input: ContextPosteriorInput
+    seed: ContextPosteriorSeed
+    assessment_command: AssessmentCommand
     producer_behavior_id: str = Field(min_length=1)
     orchestration: OrchestrationPolicySnapshot
     created_at: datetime
@@ -42,14 +44,16 @@ class PosteriorWorkflowRequest(FrozenModel):
     def create(
         cls,
         *,
-        frozen_input: ContextPosteriorInput,
+        seed: ContextPosteriorSeed,
+        assessment_command: AssessmentCommand,
         producer_behavior_id: str,
         orchestration: OrchestrationPolicySnapshot,
         created_at: datetime,
     ) -> PosteriorWorkflowRequest:
-        deadline = min(item.slot.completion_deadline_at for item in frozen_input.targets)
+        deadline = min(item.slot.completion_deadline_at for item in seed.targets)
         payload = {
-            "frozen_input": frozen_input,
+            "seed": seed,
+            "assessment_command": assessment_command,
             "producer_behavior_id": producer_behavior_id,
             "orchestration": orchestration,
             "created_at": require_utc(created_at),
@@ -59,7 +63,7 @@ class PosteriorWorkflowRequest(FrozenModel):
         return cls(
             workflow_id=stable_id(
                 "context_posterior_workflow",
-                frozen_input.input_id,
+                seed.seed_id,
                 producer_behavior_id,
             ),
             input_hash=digest,
@@ -69,10 +73,12 @@ class PosteriorWorkflowRequest(FrozenModel):
     @model_validator(mode="after")
     def identity_and_deadline_are_canonical(self):
         expected_deadline = min(
-            item.slot.completion_deadline_at for item in self.frozen_input.targets
+            item.slot.completion_deadline_at for item in self.seed.targets
         )
         if self.deadline != expected_deadline or self.created_at >= self.deadline:
             raise ValueError("Posterior Workflow deadline 与冻结槽不一致")
+        if self.assessment_command.packet.as_of != self.seed.information_cutoff_at:
+            raise ValueError("Posterior Workflow 的 WorldModel Packet 与 seed 截止不一致")
         expected_hash = content_hash(
             self.model_dump(mode="json", exclude={"workflow_id", "input_hash"})
         )
@@ -80,7 +86,7 @@ class PosteriorWorkflowRequest(FrozenModel):
             raise ValueError("Posterior Workflow input_hash 与内容不一致")
         expected_id = stable_id(
             "context_posterior_workflow",
-            self.frozen_input.input_id,
+            self.seed.seed_id,
             self.producer_behavior_id,
         )
         if self.workflow_id != expected_id:
@@ -154,7 +160,7 @@ class ContextPosteriorWorkflow:
                 schedule_to_close_timeout=min(schedule_to_close, remaining),
                 retry_policy=retry,
                 versioning_intent=default_activity_versioning_intent(),
-                summary="执行冻结世界认知后验预测",
+                summary="依次执行同截止世界认知与后验预测",
             )
         except ActivityError:
             return _failure(workflow_id, "POSTERIOR_ACTIVITY_FAILED")

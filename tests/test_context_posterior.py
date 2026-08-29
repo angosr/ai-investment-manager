@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +11,11 @@ from temporalio.testing import WorkflowEnvironment
 
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
 from investment_manager.forecast.codex.router import AnalystResult
+from investment_manager.forecast.context.application import AssessmentCommand
+from investment_manager.forecast.context.executor import (
+    AssessmentExecution,
+    AssessmentExecutionStatus,
+)
 from investment_manager.forecast.context.increment_evidence import (
     ForecastIncrementStatus,
     SqlForecastIncrementEvidenceReader,
@@ -20,6 +26,7 @@ from investment_manager.forecast.context.posterior_analyst import (
 )
 from investment_manager.forecast.context.posterior_contract import (
     ContextPosteriorInput,
+    ContextPosteriorSeed,
     ContextPosteriorStructuredOutput,
     PosteriorBucketDraft,
     PosteriorPriorTarget,
@@ -28,6 +35,7 @@ from investment_manager.forecast.context.posterior_contract import (
     posterior_output_schema,
 )
 from investment_manager.forecast.context.posterior_execution import (
+    ContextAssessmentPosteriorApplication,
     ContextPosteriorApplication,
     PosteriorExecutionStatus,
 )
@@ -67,6 +75,7 @@ from investment_manager.forecast.results import (
 )
 from investment_manager.forecast.tables import forecasts as forecast_rows
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.information.models import SourceTier
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketQuote
 from investment_manager.market.repository import InMemoryMarketDataStore
@@ -78,8 +87,91 @@ from investment_manager.scheduling.models import (
     build_trigger_event,
 )
 from investment_manager.schema import create_schema
+from investment_manager.state.decision.packet import (
+    DecisionPacket,
+    MandateExposure,
+    PacketAssetState,
+    PacketFact,
+    PacketPortfolioState,
+    PacketReviewRequest,
+    RequiredView,
+)
+from investment_manager.state.models import FactDecisionMateriality, FactRevisionStatus
 
 SLOT_AT = datetime(2026, 8, 30, tzinfo=UTC)
+
+
+def _packet() -> DecisionPacket:
+    review = PacketReviewRequest.create(
+        requested_at=SLOT_AT,
+        reason="正式 Forecast 槽世界认知更新",
+    )
+    return DecisionPacket.create(
+        schema_version="packet-v1",
+        policy_version="packet-policy-v1",
+        mandate_version="mandate-v1",
+        analysis_scope="primary-portfolio",
+        as_of=SLOT_AT,
+        state_id="state-1",
+        question="更新同一截止的组合世界认知。",
+        trigger_ids=(review.review_id,),
+        mandate_exposures=(
+            MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),
+        ),
+        required_views=(RequiredView(asset="BTC", horizon_minutes=4320),),
+        portfolio=PacketPortfolioState(
+            quote_balance=Decimal("10000"),
+            equity=Decimal("10000"),
+            daily_pnl=Decimal("0"),
+            drawdown_fraction=Decimal("0"),
+            open_order_count=0,
+            kill_switch_active=False,
+            reconciled=True,
+            positions=(),
+        ),
+        asset_states=(
+            PacketAssetState(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                observed_at=SLOT_AT,
+                bid=Decimal("109999"),
+                ask=Decimal("110001"),
+                last=Decimal("110000"),
+                return_fraction=Decimal("0"),
+                realized_volatility=Decimal("0.3"),
+                atr=Decimal("1000"),
+                spread_bps=Decimal("0.2"),
+                volume_ratio=Decimal("1"),
+                regime="RANGE",
+                market_age_seconds=0,
+            ),
+        ),
+        deltas=(),
+        facts=(
+            PacketFact(
+                fact_id="liquidity-fact",
+                revision_id="fact-1",
+                fact_type="liquidity",
+                status=FactRevisionStatus.ACTIVE,
+                event_time=SLOT_AT,
+                observed_at=SLOT_AT,
+                headline="政策现金流",
+                claim="value=1 INDEX.",
+                affected_assets=("BTC",),
+                risk_factors=("LIQUIDITY",),
+                decision_materiality=FactDecisionMateriality.CANDIDATE,
+                highest_source_tier=SourceTier.FIRST_PARTY,
+                independent_source_count=1,
+                prompt_injection_suspected=False,
+                directly_triggered=False,
+            ),
+        ),
+        review_requests=(review,),
+        data_quality_codes=(),
+        coverage_gap_codes=(),
+        missing_fact_revision_ids=(),
+        omitted_fact_revision_ids=(),
+    )
 
 
 def _prior_targets():
@@ -130,7 +222,7 @@ def _prior_targets():
     return contracts, forecasts, targets, market, engine
 
 
-def _world_model() -> ContextAssessment:
+def _world_model(*, decision_packet_hash: str | None = None) -> ContextAssessment:
     mechanism = ContextMechanism(
         mechanism_id="structural-liquidity-1",
         relationship=ContextMechanismRelationship.SUPPORTS,
@@ -158,10 +250,10 @@ def _world_model() -> ContextAssessment:
         assessment_id="world-model-1",
         analysis_scope="primary-portfolio",
         mandate_version="mandate-v1",
-        as_of=SLOT_AT - timedelta(hours=6),
-        available_at=SLOT_AT - timedelta(hours=5),
+        as_of=SLOT_AT,
+        available_at=SLOT_AT + timedelta(minutes=5),
         analysis_behavior_hash="a" * 64,
-        decision_packet_hash="b" * 64,
+        decision_packet_hash=decision_packet_hash or "b" * 64,
         trigger_ids=("trigger-1",),
         synthesis="政策现金流改善流动性，但仍需观察融资条件传导。",
         synthesis_horizon_hours=72,
@@ -334,6 +426,7 @@ def test_posterior_analyst_freezes_bundle_and_uses_joint_behavior_identity(
     builder = PosteriorRunBundleBuilder(
         runtime,
         contracts=contracts,
+        world_model_behavior_id="a" * 64,
         code_version="test-code",
         configuration_hash="f" * 64,
     )
@@ -363,26 +456,7 @@ def test_posterior_analyst_freezes_bundle_and_uses_joint_behavior_identity(
     assert analyst.behavior_hash(subset) == analyst.behavior_hash(frozen)
 
 
-class _AssessmentFacts:
-    def __init__(self, world_model):
-        self.world_model = world_model
-
-    def latest_before(self, *, analysis_scope, as_of):
-        assert analysis_scope == "primary-portfolio"
-        assert as_of == SLOT_AT
-        return self.world_model
-
-    def packet_for_assessment(self, assessment_id):
-        assert assessment_id == self.world_model.assessment_id
-        fact = type("Fact", (), {"revision_id": "fact-1"})()
-        return type("Packet", (), {"facts": (fact,), "intelligence_events": ()})()
-
-    def mechanism_observations(self, assessment_id):
-        assert assessment_id == self.world_model.assessment_id
-        return ()
-
-
-def _preparation(base_app_config, world_model):
+def _preparation(base_app_config):
     contract_store, forecast_store, targets, market, engine = _prior_targets()
     contracts = tuple(
         sorted((item.contract for item in targets), key=lambda item: item.contract_id)
@@ -391,11 +465,10 @@ def _preparation(base_app_config, world_model):
         ContextPosteriorPreparation(
             contracts=contracts,
             runtime=base_app_config.codex_runtime,
-            analysis_scope="primary-portfolio",
+            world_model_behavior_id="a" * 64,
             activated_at=SLOT_AT - timedelta(hours=1),
             contract_store=contract_store,
             forecast_store=forecast_store,
-            assessments=_AssessmentFacts(world_model),
         ),
         contract_store,
         forecast_store,
@@ -409,36 +482,43 @@ def test_preparation_records_research_obligations_and_structural_eligibility(
     base_app_config,
 ) -> None:
     preparation, contract_store, _forecast_store, targets, _market, _engine = _preparation(
-        base_app_config,
-        _world_model(),
+        base_app_config
     )
 
-    frozen = preparation.prepare(
+    seed = preparation.reserve(
         tuple(item.prior for item in targets),
         as_of=SLOT_AT + timedelta(minutes=2),
     )
 
-    assert frozen is not None
-    assert frozen.eligible_mechanism_ids == ("structural-liquidity-1",)
-    for target in frozen.targets:
+    assert seed is not None
+    for target in seed.targets:
         binding = preparation.binding(target.contract)
         assert contract_store.latest_obligated_slot_at(binding_id=binding.binding_id) == SLOT_AT
 
 
-def test_preparation_records_no_estimate_when_world_model_was_not_available(
+def test_posterior_behavior_identity_includes_world_model_behavior(base_app_config) -> None:
+    preparation, *_rest = _preparation(base_app_config)
+    changed = replace(preparation, world_model_behavior_id="b" * 64)
+
+    assert changed.producer_behavior_id != preparation.producer_behavior_id
+
+
+def test_preparation_closes_reserved_obligations_when_world_model_fails(
     base_app_config,
 ) -> None:
     preparation, _contract_store, forecast_store, targets, _market, _engine = _preparation(
-        base_app_config,
-        None,
+        base_app_config
     )
-
-    assert (
-        preparation.prepare(
-            tuple(item.prior for item in targets),
-            as_of=SLOT_AT + timedelta(minutes=2),
-        )
-        is None
+    seed = preparation.reserve(
+        tuple(item.prior for item in targets),
+        as_of=SLOT_AT + timedelta(minutes=2),
+    )
+    assert seed is not None
+    preparation.close_seed(
+        seed,
+        attempted_at=SLOT_AT + timedelta(minutes=3),
+        reason="PRODUCER_FAILED",
+        detail="WORLD_MODEL_FAILED",
     )
     assert all(
         forecast_store.no_estimate_exists(
@@ -464,15 +544,18 @@ class _ExecutionAnalyst:
 
 
 def _execution_fixture(base_app_config):
-    preparation, contracts, forecasts, targets, market, engine = _preparation(
-        base_app_config,
-        _world_model(),
-    )
-    frozen = preparation.prepare(
+    preparation, contracts, forecasts, targets, market, engine = _preparation(base_app_config)
+    seed = preparation.reserve(
         tuple(item.prior for item in targets),
         as_of=SLOT_AT + timedelta(minutes=2),
     )
-    assert frozen is not None
+    assert seed is not None
+    packet = _packet()
+    frozen = preparation.build_input(
+        seed,
+        world_model=_world_model(decision_packet_hash=packet.content_hash),
+        packet=packet,
+    )
     completed_at = SLOT_AT + timedelta(minutes=10)
     for target in frozen.targets:
         instrument = target.contract.target.legs[0].instrument
@@ -709,9 +792,81 @@ def test_posterior_business_failure_records_terminal_no_estimates(
     assert analyst.calls == 1
 
 
-class _UnusedAssessmentApplication:
-    def execute(self, _command):
-        raise AssertionError("Posterior Workflow 不应调用 ContextAssessment application")
+class _SuccessfulAssessmentApplication:
+    def __init__(self, packet: DecisionPacket, completed_at: datetime) -> None:
+        self.packet = packet
+        self.completed_at = completed_at
+        self.calls = 0
+
+    def execute(self, command):
+        self.calls += 1
+        assert command.packet == self.packet
+        assessment = _world_model(decision_packet_hash=self.packet.content_hash)
+        return AssessmentExecution.create(
+            status=AssessmentExecutionStatus.SUCCEEDED,
+            packet_id=self.packet.packet_id,
+            analysis_behavior_hash=command.analysis_behavior_hash,
+            completed_at=self.completed_at,
+            assessment=assessment,
+            reason_code="CODEX_ANALYSIS_SUCCEEDED",
+        )
+
+
+class _FailedAssessmentApplication:
+    def __init__(self, packet: DecisionPacket, completed_at: datetime) -> None:
+        self.packet = packet
+        self.completed_at = completed_at
+
+    def execute(self, command):
+        assert command.packet == self.packet
+        return AssessmentExecution.create(
+            status=AssessmentExecutionStatus.FAILED,
+            packet_id=self.packet.packet_id,
+            analysis_behavior_hash=command.analysis_behavior_hash,
+            completed_at=self.completed_at,
+            reason_code="CODEX_ACCOUNTS_UNAVAILABLE",
+        )
+
+
+def test_same_cutoff_world_model_failure_closes_posterior_obligations(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, _engine, frozen, completed_at = (
+        _execution_fixture(base_app_config)
+    )
+    packet = _packet()
+    posterior = ContextPosteriorApplication(
+        analyst=_ExecutionAnalyst(
+            preparation.producer_behavior_id,
+            AnalystResult(False, None, "SHOULD_NOT_RUN"),
+        ),
+        contracts=contracts,
+        forecasts=forecasts,
+        market=market,
+        maximum_quote_age_seconds=300,
+    )
+    application = ContextAssessmentPosteriorApplication(
+        assessment=_FailedAssessmentApplication(packet, completed_at),
+        preparation=preparation,
+        posterior=posterior,
+    )
+    seed = ContextPosteriorSeed.create(
+        information_cutoff_at=SLOT_AT,
+        targets=frozen.targets,
+    )
+
+    result = application.execute(
+        command=AssessmentCommand.create(
+            packet=packet,
+            analysis_behavior_hash="a" * 64,
+        ),
+        seed=seed,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+
+    assert result.status == PosteriorExecutionStatus.NO_ESTIMATE
+    assert len(result.no_estimate_ids) == len(seed.targets)
+    assert result.reason_code == "WORLD_MODEL_CODEX_ACCOUNTS_UNAVAILABLE"
 
 
 def test_existing_assessment_worker_executes_posterior_workflow(
@@ -743,19 +898,34 @@ def test_existing_assessment_worker_executes_posterior_workflow(
         policy = base_app_config.temporal.model_copy(
             update={"assessment_task_queue": "posterior-workflow-test"}
         )
+        packet = _packet()
+        seed = ContextPosteriorSeed.create(
+            information_cutoff_at=SLOT_AT,
+            targets=frozen.targets,
+        )
+        assessment_application = _SuccessfulAssessmentApplication(packet, completed_at)
+        combined = ContextAssessmentPosteriorApplication(
+            assessment=assessment_application,
+            preparation=preparation,
+            posterior=application,
+        )
         request = PosteriorWorkflowRequest.create(
-            frozen_input=frozen,
+            seed=seed,
+            assessment_command=AssessmentCommand.create(
+                packet=packet,
+                analysis_behavior_hash="a" * 64,
+            ),
             producer_behavior_id=preparation.producer_behavior_id,
             orchestration=OrchestrationPolicySnapshot.from_config(policy),
             created_at=SLOT_AT + timedelta(minutes=2),
         )
         async with (
             await WorkflowEnvironment.start_time_skipping() as environment,
-            AssessmentTemporalWorker(
-                environment.client,
-                policy,
-                _UnusedAssessmentApplication(),
-                posterior_application=application,
+                AssessmentTemporalWorker(
+                    environment.client,
+                    policy,
+                    assessment_application,
+                    posterior_application=combined,
                 worker_threads=1,
             ),
         ):
@@ -770,12 +940,21 @@ def test_existing_assessment_worker_executes_posterior_workflow(
         assert result.attempt == 1
         assert result.execution is not None
         assert len(result.execution.forecast_ids) == len(frozen.targets)
+        assert assessment_application.calls == 1
 
     asyncio.run(scenario())
 
 
 def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -> None:
     frozen = _input()
+    seed = ContextPosteriorSeed.create(
+        information_cutoff_at=SLOT_AT,
+        targets=frozen.targets,
+    )
+    command = AssessmentCommand.create(
+        packet=_packet(),
+        analysis_behavior_hash="a" * 64,
+    )
 
     class PriorProducer:
         def produce(self, *, as_of):
@@ -785,10 +964,16 @@ def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -
     class PosteriorPreparation:
         producer_behavior_id = "posterior-behavior-v1"
 
-        def prepare(self, prior_results, *, as_of):
+        def reserve(self, prior_results, *, as_of):
             assert prior_results == tuple(item.prior for item in frozen.targets)
             assert as_of == SLOT_AT + timedelta(minutes=1)
-            return frozen
+            return seed
+
+    class DispatchBuilder(TriggerDispatchBuilder):
+        def _assessment_command(self, batch, *, as_of, analysis_identity):
+            assert as_of == SLOT_AT
+            assert analysis_identity == seed.seed_id
+            return command
 
     config = app_config.model_copy(
         update={
@@ -824,7 +1009,7 @@ def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -
         deadline=SLOT_AT + timedelta(minutes=15),
     )
 
-    dispatches = TriggerDispatchBuilder(
+    dispatches = DispatchBuilder(
         config=config,
         program_forecast_producers=(PriorProducer(),),
         posterior_preparation=PosteriorPreparation(),
@@ -834,5 +1019,6 @@ def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -
     dispatch = dispatches[0]
     assert dispatch.workflow_name == "ContextPosteriorWorkflow"
     request = PosteriorWorkflowRequest.model_validate(dispatch.payload)
-    assert request.frozen_input == frozen
+    assert request.seed == seed
+    assert request.assessment_command == command
     assert request.producer_behavior_id == "posterior-behavior-v1"

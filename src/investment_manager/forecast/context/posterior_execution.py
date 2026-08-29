@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol
@@ -10,11 +11,20 @@ from typing import Protocol
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.forecast.codex.router import AnalystResult
+from investment_manager.forecast.context.application import (
+    AssessmentApplication,
+    AssessmentCommand,
+)
+from investment_manager.forecast.context.executor import AssessmentExecutionStatus
 from investment_manager.forecast.context.posterior_contract import (
     POSTERIOR_PRODUCER_ID,
     ContextPosteriorInput,
+    ContextPosteriorSeed,
     ContextPosteriorStructuredOutput,
     finalize_posterior,
+)
+from investment_manager.forecast.context.posterior_preparation import (
+    ContextPosteriorPreparation,
 )
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
@@ -507,4 +517,99 @@ class ContextPosteriorApplication:
             source_run_id=analyst_result.run_id if analyst_result else None,
             account_id=analyst_result.account_id if analyst_result else None,
             reused_authoritative=reused,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextAssessmentPosteriorApplication:
+    """Execute one fresh same-cutoff WorldModel before its joint posterior."""
+
+    assessment: AssessmentApplication
+    preparation: ContextPosteriorPreparation
+    posterior: ContextPosteriorApplication
+
+    def execute(
+        self,
+        *,
+        command: AssessmentCommand,
+        seed: ContextPosteriorSeed,
+        expected_behavior_hash: str,
+    ) -> PosteriorExecution:
+        if command.packet.as_of != seed.information_cutoff_at:
+            raise ValueError("WorldModel command 与 Posterior seed 信息截止不一致")
+        if command.analysis_behavior_hash != self.preparation.world_model_behavior_id:
+            raise ValueError("WorldModel command 行为身份与 Posterior cohort 不一致")
+        assessment = self.assessment.execute(command)
+        deadline = min(item.slot.completion_deadline_at for item in seed.targets)
+        if assessment.status != AssessmentExecutionStatus.SUCCEEDED:
+            return self._close(
+                seed,
+                expected_behavior_hash=expected_behavior_hash,
+                completed_at=assessment.completed_at,
+                reason=ForecastNoEstimateReason.PRODUCER_FAILED,
+                reason_code=f"WORLD_MODEL_{assessment.reason_code}",
+                source_run_id=assessment.source_run_id,
+                account_id=assessment.account_id,
+                attempts=assessment.codex_attempts,
+                usage=assessment.usage,
+                extra_refs=(assessment.execution_id,),
+            )
+        assert assessment.assessment is not None
+        if assessment.completed_at > deadline or assessment.assessment.available_at > deadline:
+            return self._close(
+                seed,
+                expected_behavior_hash=expected_behavior_hash,
+                completed_at=assessment.completed_at,
+                reason=ForecastNoEstimateReason.DEADLINE_MISSED,
+                reason_code="WORLD_MODEL_COMPLETED_AFTER_FORECAST_DEADLINE",
+                source_run_id=assessment.source_run_id,
+                account_id=assessment.account_id,
+                attempts=assessment.codex_attempts,
+                usage=assessment.usage,
+                extra_refs=(assessment.assessment.assessment_id,),
+            )
+        frozen_input = self.preparation.build_input(
+            seed,
+            world_model=assessment.assessment,
+            packet=command.packet,
+        )
+        return self.posterior.execute(
+            frozen_input,
+            expected_behavior_hash=expected_behavior_hash,
+        )
+
+    def _close(
+        self,
+        seed: ContextPosteriorSeed,
+        *,
+        expected_behavior_hash: str,
+        completed_at: datetime,
+        reason: ForecastNoEstimateReason,
+        reason_code: str,
+        source_run_id: str | None,
+        account_id: str | None,
+        attempts: int,
+        usage: tuple[tuple[str, int], ...],
+        extra_refs: tuple[str, ...],
+    ) -> PosteriorExecution:
+        if self.preparation.producer_behavior_id != expected_behavior_hash:
+            raise ValueError("Posterior runtime 行为身份与冻结请求不一致")
+        results = self.preparation.close_seed(
+            seed,
+            attempted_at=completed_at,
+            reason=reason,
+            detail=reason_code,
+            extra_refs=extra_refs,
+        )
+        return PosteriorExecution.create(
+            status=PosteriorExecutionStatus.NO_ESTIMATE,
+            input_id=seed.seed_id,
+            producer_behavior_id=expected_behavior_hash,
+            completed_at=completed_at,
+            no_estimate_ids=(item.result_id for item in results),
+            reason_code=reason_code,
+            codex_attempts=attempts,
+            usage=usage,
+            source_run_id=source_run_id,
+            account_id=account_id,
         )

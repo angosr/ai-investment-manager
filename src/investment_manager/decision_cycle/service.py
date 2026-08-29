@@ -17,6 +17,7 @@ from investment_manager.decision_cycle.trigger import (
     TriggerDispatchBuilder,
 )
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
+from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.posterior_preparation import (
     ContextPosteriorPreparation,
 )
@@ -237,9 +238,8 @@ def _assemble_context_posterior(
     return ContextPosteriorPreparation(
         contracts=contracts,
         runtime=config.codex_runtime,
-        analysis_scope=config.assessment.mandate.analysis_scope,
+        world_model_behavior_id=configured_assess_behavior_hash(config),
         activated_at=manifest.created_at,
         contract_store=SqlForecastContractStore(engine),
         forecast_store=SqlForecastStore(engine),
-        assessments=SqlContextAssessmentStore(engine),
     )

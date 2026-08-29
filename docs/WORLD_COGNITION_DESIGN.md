@@ -184,7 +184,7 @@ WorldModel 在以下情况更新：出现材料事实修订或意外事件；活
 
 WorldModel 更新时钟与 Forecast 槽时钟是两个领域概念，但共用唯一 TriggerCoordinator：前者来自材料变化和显式复核计划；后者来自合同 cadence，或冻结的材料状态触发政策。事件槽不是新闻到来就任意插入一次 AI，而是由点时 `State/Delta` 和 producer behavior 确定性地产生。每个槽在生产前冻结唯一来源、实际 delta 引用、Outcome、截止和失败处理；固定 cadence 与材料事件分别形成独立义务，时间接近也不得合并。触发政策不判断多空，也不读取账户；Heartbeat 只恢复已登记任务、遗漏终态、账户和风险复核，不能制造新样本。
 
-`next_review_at` 只表示该机制下一次应被新事实复核的自然时间点，不是 WorldModel 的有效期，也不授予程序宣告机制失效的语义。复核到期后，上一份完整 WorldModel 仍是该时点可获得的最新认知，Forecast 必须照常冻结并引用它；新 WorldModel 只能从自身 `available_at` 起影响之后的新 Forecast。若程序在复核点把旧模型立即改写为 `NO_ESTIMATE`，就会把调度延迟伪装成认知缺失并系统性丢失样本。真正的数据时效由各输入事实自己的点时时效合同裁决，机制的反驳、延续或退休则由下一份 WorldModel 显式完成。
+`next_review_at` 只表示该机制下一次应被新事实复核的自然时间点，不是 WorldModel 的有效期，也不授予程序宣告机制失效的语义。复核到期后，上一份完整 WorldModel 仍是网页和普通材料更新前可获得的最新认知，不能被程序机械删除；但正式 Forecast 槽不把它当作本槽条件输入，而是按第 7 节用槽边界冻结的新 Packet 生成同截止 WorldModel。若这次生成失败，诚实记录本槽 `NO_ESTIMATE`，不能退回旧认知，也不能把 AI 自定复核时间当作数据时效。真正的数据时效由各输入事实自己的点时时效合同裁决，机制的反驳、延续或退休则由下一份 WorldModel 显式完成。
 
 市场冲击是组合事件，不是 symbol 事件数量。每个资产的原始成交、报价和确定性状态继续独立保存；在同一冻结冲击窗口内，首次阈值命中触发组合复核，之后只有调度优先级从普通跨越到紧急才允许再次触发。其他资产的等等级命中仍可由原始行情重放，但不再次调用 AI，因为首份组合信息包已经覆盖 mandate 全部资产状态。窗口结束后的新冲击重新取得触发资格。这个规则不能推广到政策、流动性或监管等不同因果事实，也不能根据 AI 判断是否相似。
 
@@ -273,9 +273,9 @@ AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定
 
 现役读取层直接从公共 Forecast 义务、`Forecast`/`NO_ESTIMATE` 与来源无关的 `Outcome` 形成同槽配对，不读取已退役实验表，也不另建评价账本。它按 posterior 的完整 producer behavior 隔离 cohort：Prompt、模型、合同或输入行为换代后从新队列重新累计，不能把不同版本拼成漂亮均值；联合目标有任一项漏答就计为未完整产出，Outcome 未结算就只显示等待，不提前判定有效。结算后，同一读取层把 prior 与 posterior 分别映射到当时合法的 BTC/PAXG 永续多空产品，并复用唯一 Portfolio、Risk、Planner、Mock 成交、Funding 和手续费语义，从相同 10,000 USDT 各自重放独立逻辑账户；映射只读取预测可用时点已经可见的 Spot、永续报价、产品规则与 Funding，basis 不假设事后收敛。网页先报告同窗概率误差的改善、持平和变差，再用通俗措辞报告世界认知路径相对透明 prior 多赚、少赚或相同多少净权益。逻辑账户是从公共事实确定性派生的只读评价，不产生第二资本链、第二交易服务或真实权限；首个独立终点尚未形成，因此当前只能证明评价链成立，不能声称世界认知已经产生资本价值。
 
-同槽不等于把 Codex 串在数据与结算关键路径上。Quant prior 和 posterior 的完整模型输入在槽时冻结，posterior 由现有 Assessment worker 异步完成，Outcome 服务只负责独立结算；评价记录生成延迟并坚持原 information cutoff，晚到后不能偷看新事实。posterior 若晋升为唯一资本来源，仍只保留这一份 AI 调用，不得恢复纯 Context 或维持“双 AI 再投票”。
+同槽不等于把 Codex 串在行情采集、风险或结算关键路径上，但 WorldModel 与 posterior 之间必须存在真实的数据依赖，不能在同一触发批次里并行读取上一份认知。正式槽先以槽边界作为唯一 `information_cutoff_at`，冻结 Quant prior 和一份世界更新 Packet；Assessment worker 先基于该 Packet 形成新的 WorldModel，成功后才允许同一耐久 Workflow 把它与 prior 组合为 posterior 输入。WorldModel 可以在截止后完成，因为它只读取截止时已经冻结的 Packet；其生成延迟进入 Forecast 的 `available_at` 和实际入场价格，且全部工作必须在同一完成期限内结束。不得用一份更早但尚未到 AI 自定 `next_review_at` 的 WorldModel 代替本槽更新，也不得让截止后到达的事实进入本槽。
 
-异步 challenger 只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把正式输入、同槽 Quant 终态、posterior Prompt/Schema、研究 ProducerBinding 和截止时间冻结为一个内容寻址的 Temporal 子 Workflow 请求；Assessment worker 只消费该冻结请求，并把成功 Forecast 或明确 `NO_ESTIMATE` 写回公共 Forecast/Outcome 账本。成功输出自身就是任务终态，不另建重复 result 表、策略账户或候选组合。Quant 缺少某个目标时，准备器必须显式保留该缺失终态并立刻为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。一次联合调用仍可覆盖其余拥有真实 Quant prior 的目标。
+这条顺序链仍只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把同槽 Quant 终态、世界更新 Packet、posterior Prompt/Schema、研究 ProducerBinding 和截止时间冻结为一个内容寻址请求；同一 Assessment worker 依次完成世界更新与 posterior，并把新 WorldModel、成功 Forecast 或明确 `NO_ESTIMATE` 写回既有公共账本。第一步失败、超时或第二步失败都必须闭合已经登记的 posterior obligation，不能留下永久等待；重试复用已经持久化的权威 Assessment 或 Forecast，不能重复调用成功阶段。普通材料事件仍只更新 WorldModel；若它晚于正式槽截止，即使与 cadence heartbeat 被合并进同一触发批次，也必须形成截止后的独立世界更新，不能污染正式槽。Quant 缺少某个目标时，准备器立即为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。
 
 ForecastContract 是来源无关的公共问题，但槽义务属于具体 producer behavior。行为覆盖率只用事前分配给该行为的到期槽作分母，并把 Forecast 与 `NO_ESTIMATE` 都计作终态；换模型、Prompt 或输入行为后，旧行为槽不能稀释新行为，也不能因切换而从原行为漏报中消失。
 

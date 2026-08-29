@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-capital-shadow-v82"
+    assert config.pipeline.version == "world-capital-shadow-v83"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -147,7 +147,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v55"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v57"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v58"
     assert config.outcome_evaluation.forecast_prior.enabled
     assert config.outcome_evaluation.forecast_prior.artifact_id == (
         "forecast_baseline_7edf2cf090b47cdad2e5"
