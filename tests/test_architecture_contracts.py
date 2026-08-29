@@ -27,6 +27,7 @@ CLI_CONTRACT = {
     "dashboard-service": (
         "config,database_url,release_manifest,host,port,web_dist"
     ),
+    "evaluate-forecast-baseline": "plan,project_root,dataset_catalog,result_catalog",
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
     ),
@@ -67,6 +68,7 @@ CLI_CONTRACT = {
 }
 
 RESEARCH_COMMAND_NAMES = {
+    "evaluate-forecast-baseline",
     "fetch-binance-carry-history",
     "fetch-binance-funding-history",
     "fetch-binance-history",
@@ -275,6 +277,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "operate-release",
         },
         "entrypoints/cli/research_commands.py": {
+            "evaluate-forecast-baseline",
             "record-reference-rejection",
             "freeze-executable-quotes",
             "freeze-reference-product-mapping",
@@ -376,6 +379,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
             "policy.py",
             "repository.py",
             "results.py",
+            "scoring.py",
             "settlement.py",
             "tables.py",
         },

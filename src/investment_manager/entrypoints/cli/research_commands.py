@@ -645,3 +645,64 @@ def freeze_event_history_command(
             indent=2,
         )
     )
+
+
+@app.command("evaluate-forecast-baseline")
+def evaluate_forecast_baseline_command(
+    plan: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
+    dataset_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    result_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        "evidence/forecast-baselines"
+    ),
+) -> None:
+    """验证点时无条件先验；结果只提供 Forecast 比较坐标。"""
+
+    from investment_manager.governance.models import (
+        committed_file_revision,
+        current_clean_code_version,
+    )
+    from investment_manager.research.forecast_prior import (
+        evaluate_forecast_baseline,
+        load_forecast_baseline_plan,
+        store_forecast_baseline,
+    )
+
+    root = project_root.resolve()
+    registered = load_forecast_baseline_plan(plan)
+    plan_commit, _committed_at = committed_file_revision(plan, repository_root=root)
+    artifact = evaluate_forecast_baseline(
+        registered,
+        dataset_catalog=dataset_catalog,
+        plan_commit=plan_commit,
+        evaluator_code_version=current_clean_code_version(repository_root=root),
+        evaluated_at=datetime.now(UTC),
+    )
+    target = store_forecast_baseline(artifact, root=result_catalog)
+    typer.echo(
+        json.dumps(
+            {
+                "artifact_id": artifact.artifact_id,
+                "status": artifact.status,
+                "targets": [
+                    {
+                        "symbol": item.symbol,
+                        "development_samples": item.development_sample_count,
+                        "validation_samples": item.validation_sample_count,
+                        "rolling_brier": str(item.rolling_mean_brier),
+                        "fixed_brier": str(item.fixed_mean_brier),
+                        "maximum_calibration_error": str(
+                            item.rolling_maximum_absolute_calibration_error
+                        ),
+                    }
+                    for item in artifact.results
+                ],
+                "capital_change": artifact.capital_change,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
