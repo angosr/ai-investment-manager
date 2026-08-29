@@ -269,11 +269,11 @@ Quant panel 是 State 到 Forecast 的确定性高密度投影，不是第二个
 
 AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定性 State、当前 WorldModel 投影、Quant panel、ForecastContract。AI 先把 Quant prior 当作可被证据修正的基准，再判断有引用的事件、政策博弈和传导机制是否构成历史模型尚未表达的结构变化；最终逐目标输出唯一 posterior、逐 bucket 的 prior→posterior 变化、造成变化的机制/反证引用和失效条件。AI 的权限止于这种结构性概率修正，不延伸到算法选择、因子计算和交易执行。解释若不能对应概率变化就不进入 Forecast；概率变化若不能对应输入中的点时事实就拒绝。`posterior == prior` 是合法的单槽结论，不要求 AI 为证明存在感制造观点；若一个前瞻 cohort 在定时与材料事件层都持续逐位复制 prior，说明这项输入、时域和目标映射没有形成可评价增量，应退役该行为并重新提出独立假设，不能继续烧调用等待 Outcome 改变一个数学上恒为零的配对差。
 
-透明 prior 与 AI+prior 使用同一 DecisionSlot/Outcome 账本形成唯一前瞻对照。当前两者都未运行；未来启用时均先以 `RESEARCH` 身份形成不可变结果，至多一个被明确授权的行为可以进入 Portfolio。对照不是多 Agent 投票，也不产生第二目标组合。评价既比较概率、校准和覆盖，也比较预测幅度是否足以在统一产品映射与完整成本后形成资本增量。若 posterior 只增加噪声、换手或费用，直接删除该行为或无增量输入，而不是增加门禁、置信乘数或更多叙事字段。
+透明 prior 与 AI+prior 使用同一 DecisionSlot/Outcome 账本形成唯一前瞻对照。当前两者均只以 `RESEARCH` 身份运行，首个真实前瞻槽为 2026-08-30 00:00 UTC；在同槽结果、独立 Outcome 与费用后资本对照形成前，二者都没有 Portfolio 权限。对照不是多 Agent 投票，也不产生第二目标组合。评价既比较概率、校准和覆盖，也比较预测幅度是否足以在统一产品映射与完整成本后形成资本增量。若 posterior 只增加噪声、换手或费用，直接删除该行为或无增量输入，而不是增加门禁、置信乘数或更多叙事字段。
 
-同槽不等于把 Codex 串在数据与结算关键路径上。Quant prior 和 posterior 的完整模型输入在槽时冻结，posterior 由 Evaluation worker 异步完成；评价记录生成延迟并坚持原 information cutoff，晚到后不能偷看新事实。posterior 若晋升为唯一资本来源，仍只保留这一份 AI 调用，不得恢复纯 Context 或维持“双 AI 再投票”。
+同槽不等于把 Codex 串在数据与结算关键路径上。Quant prior 和 posterior 的完整模型输入在槽时冻结，posterior 由现有 Assessment worker 异步完成，Outcome 服务只负责独立结算；评价记录生成延迟并坚持原 information cutoff，晚到后不能偷看新事实。posterior 若晋升为唯一资本来源，仍只保留这一份 AI 调用，不得恢复纯 Context 或维持“双 AI 再投票”。
 
-异步 challenger 只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把正式输入、同槽 Quant 终态、posterior Prompt/Schema、研究 ProducerBinding 和截止时间原子冻结为一份 assignment；Evaluation worker 只消费该 assignment，并把成功 Forecast 或明确 `NO_ESTIMATE` 写回公共 Forecast/Outcome 账本。成功输出自身就是任务终态，不另建重复 result 表、策略账户或候选组合。Quant 缺少某个目标时，assignment 必须显式保留该缺失终态并立刻为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。一次联合调用仍可覆盖其余拥有真实 Quant prior 的目标。
+异步 challenger 只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把正式输入、同槽 Quant 终态、posterior Prompt/Schema、研究 ProducerBinding 和截止时间冻结为一个内容寻址的 Temporal 子 Workflow 请求；Assessment worker 只消费该冻结请求，并把成功 Forecast 或明确 `NO_ESTIMATE` 写回公共 Forecast/Outcome 账本。成功输出自身就是任务终态，不另建重复 result 表、策略账户或候选组合。Quant 缺少某个目标时，准备器必须显式保留该缺失终态并立刻为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。一次联合调用仍可覆盖其余拥有真实 Quant prior 的目标。
 
 ForecastContract 是来源无关的公共问题，但槽义务属于具体 producer behavior。行为覆盖率只用事前分配给该行为的到期槽作分母，并把 Forecast 与 `NO_ESTIMATE` 都计作终态；换模型、Prompt 或输入行为后，旧行为槽不能稀释新行为，也不能因切换而从原行为漏报中消失。
 
@@ -307,9 +307,9 @@ Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和�
 
 审计显示该 cohort 投影的 WorldModel 机制原生时域全部为 12 或 24 小时，而目标合同为 4 小时；模型对稳定币、ETF、融资条件和宏观发布的回答反复是尚未传导、已经定价或缺少本合同窗口的新边际影响。该证据只否定当前时域映射与行为，不能证明 WorldModel 永久无用，也不能作为放宽引用约束、允许市场状态临场组成第二套技术信号的理由。
 
-当前 Shadow 不运行 Forecast producer。已退役 posterior 与 4h Quant 的生产配置、运行器、训练命令、专属 Dashboard 解析和在线研究轮询均已删除；不可变数据库事实、迁移与证据制品保留。4h Quant 即使在最强条件 cell 也无法覆盖确定性的往返手续费下界，继续在线积累 proper score 不会产生资本价值。下一项世界认知实验必须先建立与机制时域匹配的来源无关合同、不读取 WorldModel 的透明 prior、目标相关机制和时域投影；prior 的资格是点时可重建、无泄漏和可评价，不要求它先取得资本 Alpha。首个 24 小时结构性资金流候选已按冻结的两日可用滞后验证：ETF 净流入强度与稳定币七日供给变化的等权分数在总体 RPS、MAE、相关性及跨相位稳定性上失败，blind 未读取，因此该主动模型被删除，不能替换简单 prior。随后组合级低频趋势候选虽然降低了静态组合回撤并在四个阶段中的三个胜过现金，但成本后年化收益和超额 Sharpe 均落后于更简单的静态同权基线，因此也被拒绝；不得借较低回撤之名搜索相邻窗口、权重或阶段边界。失败候选不产生 Forecast、AI 调用或运行机制；新的 WorldModel 假设仍可相对简单 prior 取得真实前瞻评价，但只有其 posterior 的预测增量继续转化为费用后资本增量时才获得资本权限。若以后建立该候选，仍只允许一次组合调用、独立 Outcome 和费用后逻辑账户，不增加 Agent、摘要层或资本链。
+当前 Shadow 只运行新的 72h prior/posterior 研究行为。已退役 posterior 与 4h Quant 的生产配置、运行器、训练命令、专属 Dashboard 解析和在线研究轮询均已删除；不可变数据库事实、迁移与证据制品保留。4h Quant 即使在最强条件 cell 也无法覆盖确定性的往返手续费下界，继续在线积累 proper score 不会产生资本价值。现役透明 prior 只承担点时可重建、无泄漏的来源无关对照，不自动取得资本 Alpha。首个 24 小时结构性资金流候选已按冻结的两日可用滞后验证：ETF 净流入强度与稳定币七日供给变化的等权分数在总体 RPS、MAE、相关性及跨相位稳定性上失败，blind 未读取，因此该主动模型被删除，不能替换简单 prior。随后组合级低频趋势候选虽然降低了静态组合回撤并在四个阶段中的三个胜过现金，但成本后年化收益和超额 Sharpe 均落后于更简单的静态同权基线，因此也被拒绝；不得借较低回撤之名搜索相邻窗口、权重或阶段边界。失败候选不产生 Forecast、AI 调用或运行机制；新的 WorldModel 假设可相对简单 prior 取得真实前瞻评价，但只有其 posterior 的预测增量继续转化为费用后资本增量时才获得资本权限。现役行为只允许一次组合调用、独立 Outcome 和费用后逻辑账户，不增加 Agent、摘要层或资本链。
 
-当前 WorldModel 的现役机制主要落在 12～72 小时，已退役 4 小时合同与其经济持续期不匹配。下一项候选只登记一个 72 小时终点：BTC 与 PAXG 使用截止前可见的现货收益形成各自滚动无条件 prior，WorldModel posterior 只能依据当前机制中至少一项非市场结构事实调整同一分布。该实验是世界认知组件评价，不是完整总组合或 Reference 的替代；SPY 在缺少足够长且独立的经济 Outcome 与合格产品映射前不进入本候选。离线阶段只冻结 bucket、滚动更新、点时 Outcome 和成本映射并验证无泄漏；Codex Alpha 从首个未来槽开始计算。定时槽按 72 小时非重叠形成，材料事件槽单独保存并按重叠时间簇评价，不能用更密调用冒充更多独立样本。
+当前 WorldModel 的现役机制主要落在 12～72 小时，已退役 4 小时合同与其经济持续期不匹配。现役候选只登记一个 72 小时终点：BTC 与 PAXG 使用截止前可见的现货收益形成各自滚动无条件 prior，WorldModel posterior 只能依据当前机制中至少一项非市场结构事实调整同一分布。该实验是世界认知组件评价，不是完整总组合或 Reference 的替代；SPY 在缺少足够长且独立的经济 Outcome 与合格产品映射前不进入本候选。bucket、滚动更新、点时 Outcome 和成本映射均已冻结；Codex Alpha 从 2026-08-30 00:00 UTC 的首个未来槽开始计算。当前只运行 72 小时非重叠定时槽，不运行材料事件 Forecast 槽，不能用更密调用冒充更多独立样本。
 
 产品表达与资本规则由 [`ARCHITECTURE.md` 第 4.3.4 节](ARCHITECTURE.md#434-现役多资产模拟实验)唯一规定，本文件不复制第二套产品准入或仓位规则。世界认知评价只消费每份 Forecast 的 proper score、校准、方向、覆盖和同槽“读取 WorldModel / 不读取 WorldModel”配对差异；Product residual 只评价标的到产品的映射；Capital choice 先把产品结果重锚到真实决策时点，再用当时冻结的完整未来成本按经济暴露识别捕获、错误入场与错过机会；实际执行损耗由账户 evaluator 归因。未被 Portfolio 选择的产品投影照常结算，因此不需要靠随机交易取得方向和产品反馈，也不能再用“没有订单”回避方向判断失败。
 

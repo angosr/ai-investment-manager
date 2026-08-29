@@ -63,13 +63,13 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-当前没有在线 Forecast producer，也没有后台 posterior、Quant 产品投影或稳定性任务。未来合格 producer 仍由 TriggerCoordinator 直接唤醒；槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽。每个槽都保存单一来源、政策和触发引用，两类义务始终独立：材料事件不能消费、提前履行或改写固定 cadence 槽，即使二者时间接近。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
+当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。TriggerCoordinator 在组合 owner 的 cadence 槽先生成全部 prior，再把共享信息截止、prior、WorldModel、机制观测、Prompt/Schema 行为身份和完成期限冻结到一个耐久 posterior Workflow；现有 Assessment Worker 执行唯一 Codex 调用，结果写回公共 Forecast/`NO_ESTIMATE` 账本。当前不运行材料事件 Forecast 槽、Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
 - 服务停机错过截止后恢复为 `DEADLINE_MISSED`，不得事后调用 AI；
 - ProducerBinding 首次激活前已经开始的槽不归属于该行为，也不能追记为漏报；行为等价的新 Release 不重置该激活点；
-- 材料事件发生在旧槽 information cutoff 之后时产生新事件槽，不能修改旧 Forecast；
+- information cutoff 之后发生的事件不得修改既有定时槽 Forecast；
 - 失败槽只进入 Forecast 覆盖与健康，不制造虚假资本行动。
 
 市场冲击检测以 mandate 为作用域：窗口内首次普通冲击立即触发，其他资产的同等级命中不重复调用，只有升级为紧急或新窗口开始才重新触发。排查时应查看永久行情事实和已发布 Trigger；不得通过缩短 heartbeat、增加 symbol 规则或人工重复触发补偿被正确合并的候选冲击。
