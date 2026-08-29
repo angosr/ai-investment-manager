@@ -36,7 +36,7 @@ POSTERIOR_MODEL_INPUT_VERSION = "world-model-posterior-projection-v2"
 POSTERIOR_SEED_VERSION = "world-model-posterior-seed-v1"
 POSTERIOR_OUTPUT_VERSION = "world-model-posterior-output-v1"
 POSTERIOR_PRODUCER_ID = "world-model-posterior"
-POSTERIOR_PRODUCTION_SEMANTICS_VERSION = "same-cutoff-structural-conditioning-v3"
+POSTERIOR_PRODUCTION_SEMANTICS_VERSION = "contract-horizon-structural-conditioning-v4"
 
 
 class PosteriorPriorTarget(FrozenModel):
@@ -210,16 +210,15 @@ class ContextPosteriorStructuredOutput(FrozenModel):
 
 POSTERIOR_INSTRUCTIONS = (
     "你是组合级概率预测员。只能读取 posterior_input_json 中冻结的 prior 与 WorldModel，"
-    "为全部 targets 一次性输出同一信息截止下的 72 小时收益桶概率；不得输出订单、仓位、"
-    "杠杆、交易频率、成本判断或数据建设建议。",
+    "为全部 targets 一次性输出同一信息截止下、各自 horizon_minutes 所定义的收益桶概率；"
+    "不得输出订单、仓位、杠杆、交易频率、成本判断或数据建设建议。",
     "prior 是唯一统计起点。只有 eligible_mechanism_ids 中的结构机制能够实质改变 prior；"
     "行情、技术状态、funding、basis、持仓量或价格响应本身不得成为第二套方向信号。"
     "没有可归因的结构增量时必须逐桶保持 prior 原值。",
     "每个 target 必须按 eligible_mechanism_ids 的顺序逐项输出 mechanism_contributions，"
-    "明确该机制对本资产、本期限是 UPSIDE、DOWNSIDE、UNCERTAINTY 或 NO_MATERIAL_EFFECT；"
-    "没有 eligible mechanism 时该列表必须为空。已经由事件前后预期或政策路径变化以及利率、"
-    "美元、信用或流动性响应确认的机制，必须体现其有符号影响，不能仅因慢变量缓冲仍存在而降格为"
-    "无实质影响；存在抵消力量时必须分别归因。",
+    "根据机制的 horizon_hours、传导阶段和 target 的 horizon_minutes 判断 UPSIDE、DOWNSIDE、"
+    "UNCERTAINTY 或 NO_MATERIAL_EFFECT；期限缺乏可靠投影时不得强行缩放。已经由结构事实和"
+    "中介响应共同确认的有符号影响必须保留；存在抵消力量时分别归因。",
     "每个 bucket 必须给出简洁中文 rationale，明确相对 prior 是上调、下调还是不变及原因。"
     "概率变化必须与机制净方向一致：单边 UPSIDE 不得下调期望收益，单边 DOWNSIDE 不得上调，"
     "只有 UNCERTAINTY 时必须扩大分布离散度；全部为 NO_MATERIAL_EFFECT 时必须保持 prior。"

@@ -125,7 +125,7 @@ decision_state:
     # 低可靠聚合新闻永久入库，但不作为人工复核时的普通背景占用 AI 注意力。
     minimum_background_attention_priority: "0.80"
     minimum_background_source_reliability: "0.70"
-    # AI 投影的上限；精简后的通用分析契约约 2K，完整提示仍须低于 runtime 的 16K 硬上限。
+    # AI 投影上限；固定分析指令保持短小，完整提示仍须低于 runtime 的 16K 硬上限。
     maximum_packet_characters: 12750
     maximum_market_age_seconds: 180
 
@@ -540,7 +540,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v55
+  version: context-assessment-v56
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

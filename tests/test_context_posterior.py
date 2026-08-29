@@ -446,6 +446,8 @@ def test_posterior_prompt_projects_decision_semantics_once_within_capacity() -> 
     assert "entry_prices" not in prompt
     assert "cutoff_prices" not in prompt
     assert "forecast_benchmark" not in prompt
+    assert "各自 horizon_minutes" in prompt
+    assert "72 小时收益桶" not in prompt
 
 
 def test_posterior_rejects_direction_inconsistent_with_mechanism() -> None:

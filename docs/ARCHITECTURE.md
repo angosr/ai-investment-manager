@@ -72,6 +72,8 @@ event_time <= observed_at <= decision_as_of
 
 WorldModel 解释“哪些力量正在起作用、如何传导、什么会推翻解释”，Forecast 回答“某个冻结收益对象在冻结时域内的结果分布是什么”。两者必须分开：复杂叙事只有转化为可结算 Forecast 后，才可能影响资本。
 
+分析提示词不是业务规则容器。Evidence 资格、点时窗口、字段结构、机制生命周期、预测期限、bucket、成本和资本权限分别由其领域的类型与合同拥有；AI 的固定任务只负责在这些冻结边界内进行联合因果推理。所有 target 的精确期限只读取 `ForecastContract.horizon_minutes`，不得在通用 posterior 提示中写死。某次事件漏判不能产生一条事件专用提示或第二条“快速认知”链；应沿唯一闭环定位是采集延迟、State 表达、因果推理、期限合同还是费用后资本映射失效，并只修复该唯一所有者。提示、模型输入投影和 Schema 的变化都属于 producer 行为变化，必须建立新的前瞻 cohort，旧结果不得混算。
+
 机制验证测试用于约束和评价 WorldModel 如何修正自身，不是 Portfolio 的隐藏有效性规则。新的 Evidence 可以让 AI 延续、修正、退休或新增机制，但任何 WorldModel 文本、机制身份或结构变化都不能直接判旧 Forecast 失效，也不能触发换手；否则会形成绕过 Forecast 的 `WorldModel → Portfolio` 第二条 Alpha 链。需要改变收益判断的新信息必须形成一份新的可结算 Forecast，紧急市场或账户风险则只能经程序化 Risk 形成只减险动作。
 
 完整 WorldModel 永久保存。Forecast 只读可由 `world_model_id` 追溯的目标高密度投影，不建立第二套认知状态；Portfolio 只读取 Forecast 自身冻结的概率、可用时间、产品、时域和有效期。旧 Forecast 由新 Forecast 接替或按自身合同到期，不因后续 AI 改写因果叙事而被旁路撤销。

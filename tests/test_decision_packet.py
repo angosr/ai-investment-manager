@@ -16,6 +16,7 @@ from investment_manager.forecast.context.analyst import (
     configured_assess_behavior_hash,
 )
 from investment_manager.forecast.context.contract import (
+    ASSESS_INSTRUCTIONS,
     ContextAssessmentContractError,
     ContextMechanismDraft,
     ContextVerificationTestDraft,
@@ -1865,9 +1866,9 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     assert '"verification_tests"' in schema
     assert '"causal_chain"' in schema
     assert "联合因果解释" in prompt
-    assert "结构化字段中的资产代码、数值和枚举必须遵守 Schema" in prompt
-    assert "不得把 GTE、LTE、BETWEEN、SUPPORTS 等结构枚举当作中文叙述" in prompt
-    assert "有界假设状态" in prompt
+    assert "同一因果骨架" in prompt
+    assert "上一轮每个机制必须由本轮证据明确延续或退休" in prompt
+    assert len("\n".join(ASSESS_INSTRUCTIONS)) < 1_000
     assert "decision_packet_json=" in prompt
 
 
@@ -1954,7 +1955,6 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
     for allowed_ids in (causal_ids, conflicting_ids, retirement_ids):
         assert packet_event.evidence_ref not in allowed_ids
     assert "event_relevance_updates" not in definitions["WorldModelDraft"]["properties"]
-    assert "入选本身不是现实影响大小" in build_assess_prompt(packet)
     assert "directional_support_eligible=false" in build_assess_prompt(packet)
 
 
