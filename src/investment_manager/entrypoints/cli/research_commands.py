@@ -10,6 +10,9 @@ import typer
 
 from investment_manager.entrypoints.cli.research_root import app
 from investment_manager.entrypoints.cli.support import (
+    observed_market_instruments as _observed_market_instruments,
+)
+from investment_manager.entrypoints.cli.support import (
     parse_research_symbol as _parse_research_symbol,
 )
 from investment_manager.entrypoints.cli.support import (
@@ -151,6 +154,8 @@ def record_reference_rejection_command(
             indent=2,
         )
     )
+
+
 @app.command("freeze-executable-quotes")
 def freeze_executable_quotes_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
@@ -175,13 +180,13 @@ def freeze_executable_quotes_command(
 
     loaded = load_config(config)
     specs = tuple(
-        item.instrument
-        for item in loaded.capital.execution_specs
-        if item.instrument.key == instrument_key
+        item
+        for item in _observed_market_instruments(loaded)
+        if item.key == instrument_key
     )
     if len(specs) != 1:
         raise typer.BadParameter(
-            "instrument-key 必须唯一属于当前 Capital execution specs"
+            "instrument-key 必须唯一属于当前 Market 观测产品"
         )
     engine = _runtime_engine(database_url)
     try:

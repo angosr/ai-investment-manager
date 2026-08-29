@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from investment_manager.entrypoints.cli.support import observed_market_instruments
 from investment_manager.forecast.context.contract import ASSESS_INSTRUCTIONS
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
@@ -100,9 +101,19 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
     assert config.decision_state.packet_policy.maximum_market_age_seconds == 180
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.market_data.version == "binance-public-shadow-v16"
-    assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
+    assert config.market_data.version == "binance-public-shadow-v17"
+    assert config.market_data.symbols == (
+        "BTCUSDT",
+        "ETHUSDT",
+        "PAXGUSDT",
+        "SPYBUSDT",
+    )
     assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
+    observed = {item.key for item in observed_market_instruments(config)}
+    assert "BINANCE:SPOT:SPYBUSDT" in observed
+    assert "BINANCE:SPOT:SPYBUSDT" not in {
+        item.instrument.key for item in config.capital.execution_specs
+    }
     assert config.market_data.perpetual_quote_poll_seconds == 5
     assert config.market_data.perpetual_poll_seconds == 120
     assert tuple(item.symbol for item in config.market_data.perpetual_instruments) == (

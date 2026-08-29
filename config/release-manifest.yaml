@@ -12,7 +12,7 @@ component_versions:
   - [outcome_evaluation, typed-outcome-settlement-v56]
   - [trigger, analysis-trigger-v33]
   - [temporal, temporal-analysis-v5]
-  - [market_data, binance-public-shadow-v16]
+  - [market_data, binance-public-shadow-v17]
   - [shadow, shadow-simulation-v2]
   - [information, information-intake-v46]
   - [pipeline, off-pipeline-v8]

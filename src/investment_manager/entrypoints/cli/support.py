@@ -14,8 +14,9 @@ from investment_manager.governance.models import (
     validate_runtime_release_checkout,
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
+from investment_manager.market.models import InstrumentId
 from investment_manager.platform.database import build_engine, require_current_schema
-from investment_manager.settings import load_config
+from investment_manager.settings import AppConfig, load_config
 
 
 def runtime_engine(database_url: str):
@@ -79,3 +80,26 @@ def parse_research_symbol(value: str) -> str:
     if not canonical.isalnum():
         raise typer.BadParameter("研究品种只能包含字母和数字", param_hint="symbol")
     return canonical
+
+
+def observed_market_instruments(config: AppConfig) -> tuple[InstrumentId, ...]:
+    """Return Market-owned identities without granting Capital authorization."""
+
+    quote_asset = config.binance_testnet.quote_asset
+    spot: list[InstrumentId] = []
+    for symbol in config.market_data.symbols:
+        base_asset = symbol.removesuffix(quote_asset)
+        if not base_asset or f"{base_asset}{quote_asset}" != symbol:
+            raise ValueError("Market Spot symbol 无法映射为配置的结算资产")
+        spot.append(
+            InstrumentId.binance_spot(
+                symbol=symbol,
+                base_asset=base_asset,
+                quote_asset=quote_asset,
+            )
+        )
+    instruments = (*spot, *config.market_data.perpetual_instruments)
+    by_key = {item.key: item for item in instruments}
+    if len(by_key) != len(instruments):
+        raise ValueError("Market 观测产品身份不得重复")
+    return tuple(by_key[key] for key in sorted(by_key))

@@ -1,0 +1,51 @@
+{
+  "schema_version": "reference-product-observation-readiness-v1",
+  "evaluated_at": "2026-08-29T01:01:18Z",
+  "base_commit": "7d0172ef6ffb688039c476a804a4b88b2ca246f1",
+  "candidate_instrument_key": "BINANCE:SPOT:SPYBUSDT",
+  "authority": "PRODUCT_RESEARCH_OBSERVATION_ONLY",
+  "public_product_directory": {
+    "mainnet": {
+      "url": "https://api.binance.com/api/v3/exchangeInfo?symbol=SPYBUSDT",
+      "response_sha256": "770200836136d6043b919612c5a78e75209795a1139e2bf8a6641f6b36ed4716",
+      "http_status": 200,
+      "product_status": "TRADING",
+      "spot_permission_present": true,
+      "additional_account_trade_groups_present": true
+    },
+    "spot_testnet": {
+      "url": "https://testnet.binance.vision/api/v3/exchangeInfo?symbol=SPYBUSDT",
+      "response_sha256": "96a85f8e0949f1ec532a7c7c0fc33d541a6071c6e05c0e4fc59587777bdc18d0",
+      "http_status": 200,
+      "product_status": "TRADING",
+      "permission_sets": [
+        [
+          "SPOT"
+        ]
+      ]
+    }
+  },
+  "account_readiness": {
+    "environment": "testnet",
+    "endpoint": "GET /api/v3/account",
+    "order_submitted": false,
+    "validated": false,
+    "http_status": 401,
+    "binance_code": -2015,
+    "bounded_interpretation": "当前配置凭证被 Testnet 拒绝；响应不能区分 API Key 环境不匹配、IP 白名单或账户权限，因而不能据此否定 SPYB 产品资格。"
+  },
+  "decision": "PUBLIC_OBSERVATION_READY_ACCOUNT_ELIGIBILITY_UNVERIFIED",
+  "capital_authorization": "NONE",
+  "runtime_order_authorization": "NONE",
+  "implementation_boundary": "SPYBUSDT 只进入 Market 公开观测集合并复用既有行情事实与报价冻结器；不得进入 Mandate、材料触发、Forecast、Portfolio、Risk、Planner 或 Execution。",
+  "next_evidence": [
+    "在现有 Market 流中积累主网 SPYB 点时双边报价、成交和闭合 K 线",
+    "修复或更换官方 Spot Testnet 凭证后重新运行只读账户检查，再单独决定是否执行不撮合的 order/test",
+    "将 SPYB 与同期底层 SPY 总回报或可验证参考价格比较，评价溢折价、跟踪残差、深度和非美股交易时段行为"
+  ],
+  "forbidden_inference": [
+    "不得把公开 Testnet 上线解释为当前账户已具备交易资格",
+    "不得为完成资格核验把 Testnet 安全客户端改指向主网",
+    "不得因为候选进入 Market 观测集合而授予任何资本或订单权限"
+  ]
+}
