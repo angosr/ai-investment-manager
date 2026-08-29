@@ -357,6 +357,29 @@ def test_spot_projection_preserves_the_reference_distribution() -> None:
     assert result.entry_basis_bps == 0
 
 
+def test_projection_removes_the_cutoff_return_already_missed_before_entry() -> None:
+    contract = _contract()
+    result = project_product_payoff(
+        contract=contract,
+        forecast=_forecast(contract),
+        state=_state(
+            instrument=SPOT,
+            direction=ExposureDirection.LONG,
+            entry="101",
+        ),
+        economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+        projection_version="linear-product-payoff-v1",
+    )
+
+    expected_payoffs = tuple(
+        (terminal_price / Decimal("101") - Decimal("1")) * Decimal("10000")
+        for terminal_price in (Decimal("99"), Decimal("100"), Decimal("101"))
+    )
+    assert tuple(item.payoff_bps for item in result.outcome_payoffs) == expected_payoffs
+    assert result.entry_basis_bps == Decimal("100")
+    assert result.expected_gross_bps < 0
+
+
 def test_perpetual_long_and_short_share_one_distribution_but_have_distinct_payoffs() -> None:
     contract = _contract()
     forecast = _forecast(contract)
