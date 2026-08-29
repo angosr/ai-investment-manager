@@ -221,7 +221,13 @@ class ScheduledWakeup(FrozenModel):
     reason: str = Field(min_length=1, max_length=500)
     evidence_ids: tuple[str, ...] = Field(default=(), max_length=100)
     hypothesis: str = Field(default="", max_length=2_000)
-    required_freshness_seconds: int = Field(default=180, ge=1, le=86_400)
+    legacy_required_freshness_seconds: int = Field(
+        default=180,
+        ge=1,
+        le=86_400,
+        validation_alias="required_freshness_seconds",
+        exclude=True,
+    )
 
     _utc_wake_at = field_validator("wake_at")(require_utc)
     _utc_expires_at = field_validator("expires_at")(require_utc)
@@ -233,6 +239,19 @@ class ScheduledWakeup(FrozenModel):
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("ScheduledWakeup evidence_ids 不得重复")
         return self
+
+
+def _retained_review_wakeups(
+    wakeups: tuple[ScheduledWakeup, ...],
+    updated_at: datetime,
+) -> tuple[ScheduledWakeup, ...]:
+    """Carry only future review intent; evidence arrival owns its own trigger."""
+
+    return tuple(
+        item
+        for item in wakeups
+        if item.expires_at > updated_at and not item.evidence_ids
+    )
 
 
 class TriggerPlanOrigin(StrEnum):
@@ -319,9 +338,7 @@ def carry_forward_trigger_plan(
         ai_paused=previous.ai_paused,
         heartbeat_seconds=previous.heartbeat_seconds,
         event_rules=previous.event_rules,
-        scheduled_wakeups=tuple(
-            item for item in previous.scheduled_wakeups if item.expires_at > updated_at
-        ),
+        scheduled_wakeups=_retained_review_wakeups(previous.scheduled_wakeups, updated_at),
         updated_at=updated_at,
         origin=TriggerPlanOrigin.CARRIED_FORWARD,
     )
@@ -342,8 +359,9 @@ def rebind_trigger_plan_manifest(
         update={
             "revision": current.revision + 1,
             "manifest_id": manifest_id,
-            "scheduled_wakeups": tuple(
-                item for item in current.scheduled_wakeups if item.expires_at > updated_at
+            "scheduled_wakeups": _retained_review_wakeups(
+                current.scheduled_wakeups,
+                updated_at,
             ),
             "updated_at": updated_at,
             "applied_patch_id": None,
@@ -660,12 +678,16 @@ class TriggerPlanGate:
         emitted: list[AnalysisTriggerEvent] = []
         for operation in patch.operations:
             if isinstance(operation, AddWakeup):
+                if operation.wakeup.evidence_ids:
+                    raise ValueError("未来唤醒只能安排复核，不得预绑定证据")
                 if operation.wakeup.wake_at <= now:
                     raise ValueError("ADD_WAKEUP 目标必须位于未来")
                 if operation.wakeup.wakeup_id in wakeups:
                     raise ValueError("ADD_WAKEUP 目标已经存在")
                 wakeups[operation.wakeup.wakeup_id] = operation.wakeup
             elif isinstance(operation, UpdateWakeup):
+                if operation.wakeup.evidence_ids:
+                    raise ValueError("未来唤醒只能安排复核，不得预绑定证据")
                 if operation.wakeup.wake_at <= now:
                     raise ValueError("UPDATE_WAKEUP 目标必须位于未来")
                 if operation.wakeup.wakeup_id not in wakeups:
@@ -702,7 +724,7 @@ class TriggerPlanGate:
 
         retained_wakeups = tuple(
             sorted(
-                (item for item in wakeups.values() if item.expires_at > now),
+                _retained_review_wakeups(tuple(wakeups.values()), now),
                 key=lambda item: (item.wake_at, item.wakeup_id),
             )
         )

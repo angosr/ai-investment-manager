@@ -259,79 +259,6 @@ def test_retired_position_recheck_rule_remains_read_compatible(replay_input) -> 
     assert restored == plan
 
 
-def test_trigger_plan_bootstrap_adds_owned_wakeups_without_replacing_existing_plan(
-    app_config,
-    replay_input,
-) -> None:
-    now = replay_input.market.as_of
-    official = ScheduledWakeup(
-        wakeup_id="official-release",
-        wake_at=now + timedelta(days=1),
-        expires_at=now + timedelta(days=1, minutes=15),
-        reason="官方数据发布时间",
-    )
-    candidate = ScheduledWakeup(
-        wakeup_id="candidate-natural-window",
-        wake_at=now + timedelta(days=2),
-        expires_at=now + timedelta(days=2, minutes=30),
-        reason="候选自然信号窗口",
-    )
-    initial = build_initial_trigger_plan(
-        symbol="BTCUSDT",
-        pipeline_id="pipeline-v1",
-        manifest_id="manifest-v1",
-        updated_at=now - timedelta(hours=1),
-        heartbeat_seconds=900,
-    ).model_copy(update={"scheduled_wakeups": (official,)})
-
-    class Repository:
-        def __init__(self):
-            self.plan = initial
-            self.patch_count = 0
-
-        def current_plans_for_symbols(self, _symbols):
-            return (self.plan,)
-
-        def plan_for_scope(self, *, symbol, pipeline_id):
-            assert (symbol, pipeline_id) == ("BTCUSDT", "pipeline-v1")
-            return self.plan
-
-        def create_plan(self, _plan):
-            raise AssertionError("existing plan must be reused")
-
-        def apply_patch(self, patch, *, now, current_manifest_id):
-            self.patch_count += 1
-            result = TriggerPlanGate(app_config.trigger).apply(
-                self.plan,
-                patch,
-                now=now,
-                current_manifest_id=current_manifest_id,
-            )
-            self.plan = result.plan
-            return result
-
-    repository = Repository()
-    kwargs = {
-        "repository": repository,
-        "symbols": ("BTCUSDT",),
-        "pipeline_id": "pipeline-v1",
-        "manifest_id": "manifest-v1",
-        "heartbeat_seconds": 900,
-        "minimum_intelligence_review_priority": (
-            app_config.trigger.minimum_intelligence_review_priority
-        ),
-        "debounce_seconds": 30,
-        "now": now,
-        "scheduled_wakeups_by_symbol": {"BTCUSDT": (candidate,)},
-    }
-
-    ensure_trigger_plans(**kwargs)
-    ensure_trigger_plans(**kwargs)
-
-    assert repository.patch_count == 1
-    assert repository.plan.scheduled_wakeups == (official, candidate)
-
-
 def test_immediate_trigger_use_case_applies_the_authoritative_plan_gate(
     app_config, replay_input
 ) -> None:
@@ -574,7 +501,6 @@ def test_trigger_plan_patch_has_full_bounded_scheduling_authority(app_config, re
         wake_at=now + timedelta(hours=1),
         expires_at=now + timedelta(hours=1, minutes=5),
         reason="宏观事件后复核",
-        evidence_ids=("calendar-fed",),
     )
     patch = build_trigger_plan_patch(
         plan=plan,
@@ -629,6 +555,13 @@ def test_plan_patch_prunes_expired_wakeup_without_blocking_future_changes(
                     expires_at=now - timedelta(minutes=5),
                     reason="already expired",
                 ),
+                ScheduledWakeup(
+                    wakeup_id="legacy-evidence-reminder",
+                    wake_at=now + timedelta(minutes=10),
+                    expires_at=now + timedelta(minutes=15),
+                    reason="legacy acquisition reminder",
+                    evidence_ids=("already-visible-schedule",),
+                ),
             )
         }
     )
@@ -649,7 +582,9 @@ def test_plan_patch_prunes_expired_wakeup_without_blocking_future_changes(
     assert revised.plan.heartbeat_seconds is None
 
 
-def test_release_cutover_carries_agent_plan_and_drops_expired_wakeups(replay_input) -> None:
+def test_release_cutover_carries_reviews_and_drops_expired_or_evidence_wakeups(
+    replay_input,
+) -> None:
     now = replay_input.market.as_of
     live = ScheduledWakeup(
         wakeup_id="live",
@@ -662,6 +597,16 @@ def test_release_cutover_carries_agent_plan_and_drops_expired_wakeups(replay_inp
         wake_at=now - timedelta(minutes=10),
         expires_at=now - timedelta(minutes=5),
         reason="已经过期",
+    )
+    legacy_evidence_wakeup = ScheduledWakeup.model_validate(
+        {
+            "wakeup_id": "legacy-calendar-reminder",
+            "wake_at": now + timedelta(days=1),
+            "expires_at": now + timedelta(days=1, minutes=15),
+            "reason": "旧数据获取提醒",
+            "evidence_ids": ["schedule-fact"],
+            "required_freshness_seconds": 180,
+        }
     )
     previous = build_initial_trigger_plan(
         symbol="BTCUSDT",
@@ -681,7 +626,7 @@ def test_release_cutover_carries_agent_plan_and_drops_expired_wakeups(replay_inp
     ).model_copy(
         update={
             "ai_paused": True,
-            "scheduled_wakeups": (expired, live),
+            "scheduled_wakeups": (expired, live, legacy_evidence_wakeup),
         }
     )
 
@@ -700,6 +645,53 @@ def test_release_cutover_carries_agent_plan_and_drops_expired_wakeups(replay_inp
     assert carried.event_rules == previous.event_rules
     assert carried.scheduled_wakeups == (live,)
     assert carried.applied_patch_id is None
+
+
+def test_future_review_cannot_prebind_evidence(app_config, replay_input) -> None:
+    now = replay_input.market.as_of
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=now,
+        heartbeat_seconds=900,
+    )
+    wakeup = ScheduledWakeup(
+        wakeup_id="future-review",
+        wake_at=now + timedelta(minutes=5),
+        expires_at=now + timedelta(minutes=10),
+        reason="未来复核",
+        evidence_ids=("already-visible-fact",),
+    )
+    patch = build_trigger_plan_patch(
+        plan=plan,
+        submitted_at=now,
+        operations=(AddWakeup(wakeup=wakeup),),
+    )
+
+    with pytest.raises(ValueError, match="不得预绑定证据"):
+        TriggerPlanGate(app_config.trigger).apply(
+            plan,
+            patch,
+            now=now,
+            current_manifest_id=plan.manifest_id,
+        )
+
+
+def test_scheduled_wakeup_reads_but_no_longer_writes_legacy_freshness(replay_input) -> None:
+    now = replay_input.market.as_of
+    wakeup = ScheduledWakeup.model_validate(
+        {
+            "wakeup_id": "legacy-review",
+            "wake_at": now + timedelta(minutes=5),
+            "expires_at": now + timedelta(minutes=10),
+            "reason": "复核",
+            "required_freshness_seconds": 300,
+        }
+    )
+
+    assert wakeup.legacy_required_freshness_seconds == 300
+    assert "required_freshness_seconds" not in wakeup.model_dump(mode="json")
 
 
 def test_trigger_plan_gate_rejects_past_wakeup(app_config, replay_input) -> None:

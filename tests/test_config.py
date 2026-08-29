@@ -153,7 +153,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "forecast_baseline_7edf2cf090b47cdad2e5"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v36"
+    assert config.trigger.version == "analysis-trigger-v37"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v15"
     assert tuple(
         (item.target_asset, item.reference_instrument_key)
