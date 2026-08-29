@@ -6,6 +6,7 @@ from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
+from temporalio.common import WorkflowIDReusePolicy
 
 from investment_manager.scheduling.application import (
     ensure_trigger_plans,
@@ -44,7 +45,7 @@ from investment_manager.scheduling.runtime import (
     TemporalTriggerDispatcher,
     terminate_inactive_trigger_coordinators,
 )
-from investment_manager.scheduling.workflows import coordinator_workflow_id
+from investment_manager.scheduling.workflows import TRIGGER_SIGNAL, coordinator_workflow_id
 from investment_manager.state.models import CanonicalFactRevision, FactRevisionStatus
 
 trigger_runtime = import_module("investment_manager.decision_cycle.service")
@@ -880,3 +881,70 @@ def test_dispatcher_acknowledges_superseded_outbox_without_reviving_it(
     )
 
     asyncio.run(dispatcher.deliver(message))
+
+
+def test_dispatcher_restarts_a_closed_current_pipeline_coordinator(
+    app_config,
+    replay_input,
+) -> None:
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="manifest-current",
+        updated_at=replay_input.market.as_of,
+        heartbeat_seconds=900,
+    )
+    message = TriggerOutboxMessage(
+        outbox_id="outbox-current",
+        aggregate_key=f"BTCUSDT:{app_config.pipeline.version}",
+        message_kind=TriggerOutboxKind.PLAN_REVISED,
+        created_at=replay_input.market.as_of,
+        available_at=replay_input.market.as_of,
+        attempt_count=0,
+        payload={
+            "kind": TriggerOutboxKind.PLAN_REVISED.value,
+            "plan": plan.model_dump(mode="json"),
+        },
+    )
+
+    class Plans:
+        def plan_for_scope(self, *, symbol, pipeline_id):
+            assert (symbol, pipeline_id) == ("BTCUSDT", app_config.pipeline.version)
+            return plan
+
+    class Handle:
+        def __init__(self) -> None:
+            self.signals = []
+
+        async def signal(self, name, payload):
+            self.signals.append((name, payload))
+
+    class Client:
+        def __init__(self) -> None:
+            self.starts = []
+            self.handle = Handle()
+
+        async def start_workflow(self, workflow, request, **kwargs):
+            self.starts.append((workflow, request, kwargs))
+
+        def get_workflow_handle(self, workflow_id):
+            assert workflow_id == coordinator_workflow_id(
+                "BTCUSDT",
+                app_config.pipeline.version,
+            )
+            return self.handle
+
+    client = Client()
+    dispatcher = TemporalTriggerDispatcher(
+        client=client,
+        config=app_config,
+        plans=Plans(),
+    )
+
+    asyncio.run(dispatcher.deliver(message))
+
+    assert len(client.starts) == 1
+    assert client.starts[0][2]["id_reuse_policy"] == (
+        WorkflowIDReusePolicy.ALLOW_DUPLICATE
+    )
+    assert client.handle.signals == [(TRIGGER_SIGNAL, message.payload)]

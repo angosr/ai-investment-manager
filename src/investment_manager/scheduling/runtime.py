@@ -78,7 +78,7 @@ class TemporalTriggerDispatcher:
                 build_trigger_coordinator_input(plan, self.config),
                 id=workflow_id,
                 task_queue=self.config.temporal.trigger_task_queue,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
             )
         handle = self.client.get_workflow_handle(workflow_id)
         await handle.signal(TRIGGER_SIGNAL, message.payload)
