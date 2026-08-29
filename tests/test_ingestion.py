@@ -141,6 +141,43 @@ def test_trendradar_adapter_uses_only_fixed_read_tool_and_normalizes_once() -> N
     )
 
 
+def test_aggregate_review_contract_is_stable_across_acquisition_routes() -> None:
+    observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    transport = FakeMcpTransport(
+        json.dumps(
+            {
+                "success": True,
+                "data": [
+                    {
+                        "title": "Federal Reserve communication reprices Treasury yields",
+                        "platform": "mktnews-flash",
+                        "rank": 1,
+                        "timestamp": "2026-08-18 20:00:00",
+                    }
+                ],
+            }
+        )
+    )
+    source = TrendRadarMcpSource(
+        transport,
+        event_feeds=(
+            NewsNowEventFeed(
+                stream_id="mktnews-flash",
+                immediate_review_eligible=True,
+            ),
+        ),
+    )
+
+    raw = source.read(observed_at=observed_at)[0]
+    event = EventNormalizer().normalize(raw)
+
+    assert raw.acquisition_route == "trendradar-mcp-v1"
+    assert raw.immediate_review_eligible
+    assert event is not None
+    assert event.trigger_priority == 99
+    assert not event.directional_support_eligible
+
+
 def test_newsnow_fast_source_parses_millisecond_and_iso_timestamps() -> None:
     observed_at = datetime(2026, 8, 18, 23, 15, tzinfo=UTC)
     transport = FakeNewsNowTransport(

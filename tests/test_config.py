@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-capital-shadow-v89"
+    assert config.pipeline.version == "world-capital-shadow-v90"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -83,12 +83,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
     )
     assert config.capital.decision.version == "portfolio-net-edge-v17"
-    assert config.information.version == "information-intake-v48"
+    assert config.information.version == "information-intake-v49"
     assert tuple(
         (item.stream_id, item.immediate_review_eligible)
         for item in config.information.newsnow_event_feeds
     ) == (("mktnews-flash", True), ("fastbull-express", False))
-    assert config.information.normalizer_version == "trendradar-collector-v13"
+    assert config.information.normalizer_version == "trendradar-collector-v14"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.economic_release_actual_poll_seconds == 15
     assert config.information.economic_release_actual_deadline_seconds == 900

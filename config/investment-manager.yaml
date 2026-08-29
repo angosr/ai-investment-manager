@@ -415,8 +415,8 @@ shadow:
   analysis_deadline_seconds: 900
 
 information:
-  version: information-intake-v48
-  normalizer_version: trendradar-collector-v13
+  version: information-intake-v49
+  normalizer_version: trendradar-collector-v14
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
   # 两条源都永久保存；只让一条稳定快速流唤醒认知，避免同一快讯复制 AI 调用。

@@ -121,13 +121,20 @@ class TrendRadarMcpSource:
         transport: McpToolTransport,
         *,
         platforms: tuple[str, ...] = (),
+        event_feeds: tuple[NewsNowEventFeed, ...] = (),
         limit: int = 100,
         source_timezone: str = "Asia/Shanghai",
     ) -> None:
         if not 1 <= limit <= 1000:
             raise ValueError("TrendRadar limit 必须在 1..1000")
+        feed_ids = tuple(item.stream_id for item in event_feeds)
+        if len(feed_ids) != len(set(feed_ids)):
+            raise ValueError("聚合事件 source contract 不得重复")
         self._transport = transport
         self._platforms = platforms
+        self._immediate_review_stream_ids = frozenset(
+            item.stream_id for item in event_feeds if item.immediate_review_eligible
+        )
         self._limit = limit
         self._timezone = ZoneInfo(source_timezone)
 
@@ -181,6 +188,9 @@ class TrendRadarMcpSource:
                     ),
                     url=_bounded_external_url(raw.get("url") or raw.get("mobileUrl")),
                     rank=int(raw["rank"]) if raw.get("rank") is not None else None,
+                    immediate_review_eligible=(
+                        platform in self._immediate_review_stream_ids
+                    ),
                 )
             )
         return tuple(items)

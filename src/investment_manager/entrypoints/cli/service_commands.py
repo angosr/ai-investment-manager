@@ -413,6 +413,7 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
     source = TrendRadarMcpSource(
         transport,
         platforms=policy.platforms,
+        event_feeds=policy.newsnow_event_feeds,
         limit=policy.read_limit,
         source_timezone=policy.source_timezone,
     )
