@@ -1,0 +1,96 @@
+{
+  "schema_version": "cash-product-component-evaluation-plan-v2",
+  "plan_id": "usdt-flexible-cash-implementation-v2",
+  "evaluation_family_id": "reference-cash-implementation-usdt-v1",
+  "frozen_at": "2026-08-29T00:29:14Z",
+  "base_commit": "7026eedeee2ee41f46b46bbdb966c6c1ded7dbae",
+  "permission": "MOCK_COMPONENT_RETAIN_OR_REJECT_ONLY",
+  "candidate": {
+    "venue": "BINANCE",
+    "product": "SIMPLE_EARN_FLEXIBLE",
+    "product_id": "USDT001",
+    "settlement_asset": "USDT"
+  },
+  "hypothesis": "USDT Flexible 可以在不建立第二套账户、决策或调度链的前提下，作为同一 PortfolioAccount 中经济现金的一种可选实现；只要未完成赎回的产品余额永不冒充可用流动性，产品生命周期就能增加已确认现金收益而不扩大方向风险。",
+  "bound_evidence": [
+    {
+      "path": "evidence/reference-selections/binance-cash-yield-feasibility-2026-08-28.json",
+      "sha256": "07b7c52ea0c572817682bbe3f68a861ec1748834aafd431c215434cae2abf71a",
+      "use": "固定候选、账户资格、额度和结算资产"
+    },
+    {
+      "path": "evidence/reference-selections/usdt-flexible-rate-tracking-v1.json",
+      "sha256": "b192f7bc062a8948bbf077f72ba38b9f1f6b3195d740f313da82c3eec3e75465",
+      "use": "固定历史 APR 量级；不得推导赎回速度或未来收益"
+    },
+    {
+      "path": "evidence/reference-selections/usdt-flexible-runtime-admission-v1-result.json",
+      "sha256": "deab00aab475180f2b647394f90ccb7123abafe90516ba7fc01416674f27efda",
+      "use": "保留原 DEFER 事实及官方合同引用"
+    },
+    {
+      "path": "evidence/reference-selections/cash-yield-economic-feasibility-v1-result.json",
+      "sha256": "344084ce3e3f03df8b2a6fe5fa93773c0027204e1f526fe6ec000b841a5f98a0",
+      "use": "只证明收益型经济现金值得继续评价，不授予产品或 Reference 资格"
+    }
+  ],
+  "prior_result_correction": {
+    "immutable_result_remains": "DEFER_RUNTIME_ADMISSION",
+    "invalidated_reason_code": "OPPORTUNITY_COST_UNMEASURABLE_WITHOUT_QUALIFIED_ALPHA",
+    "invalidated_reconsideration_condition": "等待合格 Alpha",
+    "reason": "Reference 产品必须独立于被评价的 Alpha 成立；产品余额是否值得转换由同一 Portfolio 在真实资本义务出现时计算。"
+  },
+  "fixed_domain_contract": {
+    "owner": "Execution/Account",
+    "single_account": "产品余额、待确认转换、奖励和自由 USDT 都属于现有 PortfolioAccount 的同一经济账本，不创建现金专属账户。",
+    "cash_semantics": "cash_balance 只表示已确认、可立即履行资本义务的自由 USDT；产品本金、待确认转换和奖励不得重复进入 cash_balance。",
+    "nav_semantics": "只有交易场所已确认的产品本金和已入账奖励可以进入权益；预览奖励、请求受理和 canRedeem 不形成资产。",
+    "liquidity_semantics": "产品本金与已确认奖励在赎回记录终态 PAID 之前对可用流动性的贡献恒为零。",
+    "command_semantics": "申购或赎回响应未知时不得重发并假定成功；先按稳定命令身份读取持仓和历史终态完成对账。",
+    "decision_semantics": "只有同一 PortfolioTarget 变化、账户恢复或产品规则实质变化可以请求转换；APR 时钟、观察频率和产品模块自身不得创造转换。",
+    "risk_semantics": "任何产品状态未知或账本不一致都使账户 unreconciled，并阻止新增风险；它不能制造方向退出、伪造损失或重写已确认账户事实。",
+    "information_semantics": "产品事实按评价或资本决策需要读取，不保留独立轮询器；读取失败不阻塞行情、世界认知和已有仓位减险。"
+  },
+  "fixed_replay_scenarios": [
+    "不可申购、售罄或额度不足时保持自由 USDT，不创建命令",
+    "申购请求成功、终态确认后自由 USDT 减少且产品本金等额增加",
+    "申购响应未知时账户标记未对账，重复恢复不产生第二次扣款",
+    "APR 变化和奖励预览不改变本金、权益或可用流动性",
+    "奖励历史确认后只增加一次产品权益，不增加自由 USDT",
+    "赎回请求受理但没有 PAID 时产品权益可继续估值、可用流动性仍为零",
+    "赎回长期延迟或 canRedeem=false 时不得用该余额建立新风险仓位",
+    "赎回 PAID 后产品本金与确认奖励只转入自由 USDT 一次",
+    "命令、持仓和历史事实重复、乱序或恢复重放时最终快照保持内容一致",
+    "持仓、奖励、赎回记录或结算资产冲突时拒绝对账并停止新增风险"
+  ],
+  "evaluation": {
+    "method": "对同一初始账户和冻结事实序列运行完整生命周期回放，再从不可变产品事实重建账户；比较逐步快照和最终内容哈希。",
+    "gate_all_required": [
+      "每一步满足自由现金、已确认产品权益、其他产品市值和累计损益的会计恒等式",
+      "本金、奖励和待确认转换在任一状态都不重复计入权益或流动性",
+      "赎回 PAID 前产品余额对新增风险的可用资本贡献严格为零",
+      "未知响应、重复事实、乱序事实和恢复重放不产生重复经济效果",
+      "不完整或冲突事实只能使账户未对账，不能由默认值补齐",
+      "完整回放与从事实恢复得到相同账户快照内容哈希",
+      "现役 Capital、Risk 和 Execution 不依赖独立轮询、第二账户或第二决策链",
+      "产品代码不包含真实 TRADE 调用，且没有 Reference、Forecast 或资本授权副作用"
+    ],
+    "diagnostics_not_gates": [
+      "绑定历史 APR 下的理论收益量级",
+      "相对自由 USDT 的已确认净奖励",
+      "因产品余额不可用而放弃的当时合法 PortfolioTarget 价值"
+    ]
+  },
+  "terminal_actions": {
+    "on_pass": "只保留一个嵌入现有账户投影的 Mock 产品生命周期纵切片；候选获得可选现金实现资格，但不改变 Reference、不产生目标配置、不授权方向风险或真实申购。",
+    "on_rejection": "保存不可变否定结果并删除候选专属实现和测试；不调整场景、估值、终态或流动性语义后重试。",
+    "on_inconclusive": "删除未被证明必要的运行接线，只保留计划、事实和结果；不得用更多轮询或 AI 调用补足产品合同。"
+  },
+  "forbidden_scope": [
+    "RWUSD 或其他收益产品比较",
+    "真实申购或赎回",
+    "现金专属 Portfolio、Risk、Worker、轮询器或 Dashboard 模块",
+    "固定现金预留额、固定持有期、APR 入场阈值或周期搬运",
+    "把产品收益称为 Alpha、Reference 通过或稳定盈利"
+  ]
+}
