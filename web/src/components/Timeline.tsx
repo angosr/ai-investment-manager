@@ -137,7 +137,7 @@ function WorldModelIncrementLine({
         <span>
           尚无固定时点的同窗预测，因此目前不能判断世界认知是否改善决策或盈利。
           <MaterialForecastText evidence={material} />
-          <EventResponseText evidence={eventResponse} />
+          <EventResponseText evidence={eventResponse} horizonMinutes={evidence.horizon_minutes} />
         </span>
       </div>
     );
@@ -164,7 +164,7 @@ function WorldModelIncrementLine({
           已有 {cadenceEvidence.forecast_panel_count} 个固定窗口完成预测；行情终点形成前，
           不判断方向是否更准，也不判断扣除手续费后是否有价值。
           <MaterialForecastText evidence={material} />
-          <EventResponseText evidence={eventResponse} />
+          <EventResponseText evidence={eventResponse} horizonMinutes={evidence.horizon_minutes} />
         </span>
       </div>
     );
@@ -179,13 +179,14 @@ function WorldModelIncrementLine({
     <div className={styles.forecastEvidence}>
       <b>{outcome}</b>
       <span>
-        基于 {cadenceEvidence.non_overlapping_panel_count} 个互不重叠的 72 小时固定窗口，
+        基于 {cadenceEvidence.non_overlapping_panel_count} 个互不重叠的
+        {forecastWindowLabel(evidence.horizon_minutes)}，
         相对同一时点的统计先验：改善 {cadenceEvidence.candidate_better_panel_count} 次，
         持平 {cadenceEvidence.equal_panel_count} 次，变差
         {cadenceEvidence.candidate_worse_panel_count} 次。
         <CapitalIncrementText evidence={capitalEvidence} />
         <MaterialForecastText evidence={material} />
-        <EventResponseText evidence={eventResponse} />
+        <EventResponseText evidence={eventResponse} horizonMinutes={evidence.horizon_minutes} />
       </span>
     </div>
   );
@@ -210,8 +211,10 @@ function MaterialForecastText({
 
 function EventResponseText({
   evidence,
+  horizonMinutes,
 }: {
   evidence: ForecastEvaluationEvidence["event_response_capital_evidence"];
+  horizonMinutes: number | null;
 }) {
   if (evidence.status === "EVIDENCE_AVAILABLE") {
     const increment = Number(evidence.net_equity_increment ?? 0);
@@ -219,12 +222,28 @@ function EventResponseText({
     return <>{` 纳入重大事件调仓后，相对只按固定时点调仓${relation}${increment === 0 ? "" : ` ${Math.abs(increment).toFixed(2)} USDT`}。`}</>;
   }
   if (evidence.status === "AWAITING_SETTLEMENT") {
-    return <> 重大事件调仓的费用后影响仍在等待首个72小时终点。</>;
+    return (
+      <>
+        重大事件调仓的费用后影响仍在等待首个
+        {forecastHorizonLabel(horizonMinutes)}结算终点。
+      </>
+    );
   }
   if (evidence.status === "INPUT_UNAVAILABLE") {
     return <> 重大事件调仓对照缺少当时的可成交报价或产品规则，未伪造结果。</>;
   }
   return null;
+}
+
+function forecastHorizonLabel(horizonMinutes: number | null): string {
+  if (horizonMinutes === null) return "";
+  return horizonMinutes % 60 === 0
+    ? `${horizonMinutes / 60}小时`
+    : `${horizonMinutes}分钟`;
+}
+
+function forecastWindowLabel(horizonMinutes: number | null): string {
+  return `${forecastHorizonLabel(horizonMinutes)}固定窗口`;
 }
 
 function CapitalIncrementText({

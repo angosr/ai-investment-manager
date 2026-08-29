@@ -793,6 +793,7 @@ def test_posterior_increment_is_scored_only_after_shared_outcomes_settle(
     pending = reader.read()
 
     assert pending.status == ForecastIncrementStatus.AWAITING_SETTLEMENT
+    assert pending.horizon_minutes == 4_320
     assert pending.due_panel_count == 1
     assert pending.forecast_panel_count == 1
     assert pending.pair.settled_panel_count == 0

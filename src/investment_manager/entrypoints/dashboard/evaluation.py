@@ -350,6 +350,7 @@ def serialize_world_model_increment_evidence(
             "candidate_producer_id": evidence.candidate_producer_id,
             "comparator_producer_id": evidence.comparator_producer_id,
             "candidate_behavior_id": evidence.candidate_behavior_id,
+            "horizon_minutes": evidence.horizon_minutes,
             "due_panel_count": evidence.due_panel_count,
             "forecast_panel_count": evidence.forecast_panel_count,
             "unavailable_panel_count": evidence.unavailable_panel_count,

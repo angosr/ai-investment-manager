@@ -17,6 +17,7 @@ from investment_manager.forecast.context.evaluation import (
     evaluate_forecast_pair_evidence,
 )
 from investment_manager.forecast.contracts import (
+    ForecastContract,
     ForecastDecisionSlot,
     ForecastNoEstimate,
     ForecastSlotObligation,
@@ -33,6 +34,7 @@ from investment_manager.forecast.scoring import (
     ordinal_ranked_probability_score,
 )
 from investment_manager.forecast.tables import (
+    forecast_contracts,
     forecast_decision_slots,
     forecast_no_estimates,
     forecast_outcomes,
@@ -56,6 +58,7 @@ class ForecastIncrementEvidence:
     candidate_producer_id: str
     comparator_producer_id: str
     candidate_behavior_id: str | None
+    horizon_minutes: int | None
     due_panel_count: int
     forecast_panel_count: int
     unavailable_panel_count: int
@@ -89,7 +92,11 @@ class SqlForecastIncrementEvidenceReader:
     def read(self) -> ForecastIncrementEvidence:
         behavior_id = self._latest_behavior_id()
         if behavior_id is None:
-            return self._empty(ForecastIncrementStatus.NOT_STARTED, behavior_id=None)
+            return self._empty(
+                ForecastIncrementStatus.NOT_STARTED,
+                behavior_id=None,
+                horizon_minutes=None,
+            )
 
         with self.engine.connect() as connection:
             expected_contracts = set(
@@ -100,6 +107,18 @@ class SqlForecastIncrementEvidenceReader:
                     )
                 ).scalars()
             )
+            contracts = tuple(
+                ForecastContract.model_validate(payload)
+                for payload in connection.execute(
+                    select(forecast_contracts.c.payload).where(
+                        forecast_contracts.c.contract_id.in_(expected_contracts)
+                    )
+                ).scalars()
+            )
+            if len(contracts) != len(expected_contracts):
+                raise ValueError("Forecast 增量评价行为缺少已注册 Contract")
+            horizons = {item.horizon_minutes for item in contracts}
+            horizon_minutes = next(iter(horizons)) if len(horizons) == 1 else None
             obligations = tuple(
                 ForecastSlotObligation.model_validate(item)
                 for item in connection.execute(
@@ -109,7 +128,11 @@ class SqlForecastIncrementEvidenceReader:
                 ).scalars()
             )
             if not obligations:
-                return self._empty(ForecastIncrementStatus.NOT_STARTED, behavior_id=behavior_id)
+                return self._empty(
+                    ForecastIncrementStatus.NOT_STARTED,
+                    behavior_id=behavior_id,
+                    horizon_minutes=horizon_minutes,
+                )
             slot_ids = tuple(sorted({item.slot_id for item in obligations}))
             slots = {
                 item.slot_id: item
@@ -251,6 +274,7 @@ class SqlForecastIncrementEvidenceReader:
             candidate_producer_id=self.candidate_producer_id,
             comparator_producer_id=self.comparator_producer_id,
             candidate_behavior_id=behavior_id,
+            horizon_minutes=horizon_minutes,
             due_panel_count=len(panels),
             forecast_panel_count=forecast_panels,
             unavailable_panel_count=unavailable_panels,
@@ -264,12 +288,14 @@ class SqlForecastIncrementEvidenceReader:
         status: ForecastIncrementStatus,
         *,
         behavior_id: str | None,
+        horizon_minutes: int | None,
     ) -> ForecastIncrementEvidence:
         return ForecastIncrementEvidence(
             status=status,
             candidate_producer_id=self.candidate_producer_id,
             comparator_producer_id=self.comparator_producer_id,
             candidate_behavior_id=behavior_id,
+            horizon_minutes=horizon_minutes,
             due_panel_count=0,
             forecast_panel_count=0,
             unavailable_panel_count=0,

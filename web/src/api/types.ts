@@ -245,6 +245,7 @@ export interface ForecastEvaluationEvidence {
     candidate_producer_id: string;
     comparator_producer_id: string;
     candidate_behavior_id: string | null;
+    horizon_minutes: number | null;
     due_panel_count: number;
     forecast_panel_count: number;
     unavailable_panel_count: number;

@@ -464,6 +464,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             "candidate_producer_id": "world-model-posterior",
             "comparator_producer_id": "rolling-unconditional-prior",
             "candidate_behavior_id": None,
+            "horizon_minutes": None,
             "due_panel_count": 0,
             "forecast_panel_count": 0,
             "unavailable_panel_count": 0,
