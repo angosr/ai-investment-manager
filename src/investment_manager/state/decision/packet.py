@@ -479,6 +479,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     if previous is not None and not previous_context_is_decision_relevant(packet.previous_context):
         payload.pop("previous_context")
     elif previous is not None:
+        current_event_refs = {item.evidence_ref for item in packet.intelligence_events}
         test_catalog: list[tuple[object, ...]] = []
         test_index: dict[str, int] = {}
         for mechanism in previous["mechanisms"]:
@@ -517,6 +518,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 }
                 for item in previous["event_references"]
                 if item["impact_state"] == "ACTIVE"
+                and item["evidence_id"] not in current_event_refs
             ),
         }
     if not packet.review_requests:

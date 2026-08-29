@@ -63,6 +63,7 @@ from investment_manager.state.decision.packet import (
     MandateExposure,
     ObservationAsset,
     PacketDerivativeState,
+    PacketIntelligenceEvent,
     PacketPreviousCausalNode,
     PacketPreviousContext,
     PacketPreviousEventReference,
@@ -1768,6 +1769,62 @@ def test_replacing_verified_context_drops_event_stale_for_one_day(
     assert tuple(item.evidence_id for item in refrozen.previous_context.event_references) == (
         "a" * 64,
     )
+
+
+def test_analysis_projection_deduplicates_current_event_from_previous_citations(
+    app_config,
+    replay_input,
+) -> None:
+    event_ref = "a" * 64
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-deduplicated-event",
+    ).model_copy(
+        update={
+            "event_references": (
+                PacketPreviousEventReference(
+                    evidence_id=event_ref,
+                    source="official-source",
+                    title="本轮重新取得的政策事件",
+                    event_time=replay_input.market.as_of - timedelta(hours=1),
+                    impact_state="ACTIVE",
+                    rationale="上一轮机制仍引用该事件。",
+                ),
+            )
+        }
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    direct = PacketIntelligenceEvent(
+        evidence_id="current-event",
+        evidence_ref=event_ref,
+        normalizer_version="test-normalizer-v1",
+        acquisition_route="official-feed-v1",
+        source="official-source",
+        event_time=replay_input.market.as_of - timedelta(hours=1),
+        observed_at=replay_input.market.as_of,
+        title="本轮重新取得的政策事件",
+        body="本轮事件正文保留在当前证据中。",
+        symbols=("BTCUSDT",),
+        relevance="1",
+        impact="1",
+        source_reliability="1",
+        novelty="1",
+        directional_support_eligible=True,
+        directly_triggered=True,
+    )
+    packet = DecisionPacket.create(
+        **{
+            name: getattr(packet, name)
+            for name in DecisionPacket.model_fields
+            if name not in {"packet_id", "content_hash", "intelligence_events"}
+        },
+        intelligence_events=(direct,),
+    )
+
+    projected = decision_packet_analysis_projection(packet)
+
+    assert projected["intelligence_events"][0]["evidence_ref"] == event_ref
+    assert projected["previous_context"]["event_references"] == ()
 
 
 def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
