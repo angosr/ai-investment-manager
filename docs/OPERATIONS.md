@@ -100,12 +100,12 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 `fetch-economic-series` 从 Kenneth French/CRSP 冻结含股息的美国市场总回报，从 World Bank Pink Sheet 自动解析当前黄金月度价格文件，并从 FRED 冻结 BLS CPI 作为 `REAL_CAPITAL_GROWTH` 的购买力折算序列。CPI 不是可投资暴露。每份数据保存官方原文件哈希、采集时间和 `CURRENT_VINTAGE_AT_COLLECTION`，只用于当前 Reference 的长期风险估计，不能冒充历史当时可见数据。SPY 合约历史、PAXG 现货历史、交易成本和 SPY 普通/特殊 funding 继续由 Binance 数据集独立拥有；代理层和产品层都通过冻结选择制品前，Reference Policy 保持为空，观测台不能拿任一单资产补成账户主基准。
 
-`config/reference-selection-plan.yaml` 是当前唯一 Reference 候选计划；必须先提交计划，之后 evaluator 才接受其精确字节。命令会把登记提交、登记时间、计划哈希和 evaluator 提交写进结果，同时只把实际命中的源 Manifest 保存到 `evidence/reference-selections/<artifact-id>/evidence-manifests/`。结果和 Manifest 必须与本次代码一起提交；原始大数据仍留在内容寻址数据目录，Manifest 已保存其原文件或观测哈希。若计划未提交、被修改或经济失败与产品缺口都不存在，命令拒绝继续：
+当前没有开放的 Reference 候选计划；已拒绝计划只存在于不可变结果中，不能留在运行配置里被误认为现役。新的单一候选必须先写入 `evidence/reference-selections/` 并提交，之后 evaluator 才接受其精确字节。命令会把登记提交、登记时间、计划哈希和 evaluator 提交写进结果，同时只把实际命中的源 Manifest 保存到 `evidence/reference-selections/<artifact-id>/evidence-manifests/`。结果和 Manifest 必须与本次代码一起提交；原始大数据仍留在内容寻址数据目录，Manifest 已保存其原文件或观测哈希。若计划未提交、被修改或经济失败与产品缺口都不存在，命令拒绝继续：
 
 ```bash
 .venv/bin/investment-manager-research record-reference-rejection \
   --config config/investment-manager.shadow.yaml \
-  --plan config/reference-selection-plan.yaml \
+  --plan evidence/reference-selections/<candidate>-plan.yaml \
   --project-root . \
   --information-cutoff YYYY-MM-DD
 ```

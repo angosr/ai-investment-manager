@@ -26,7 +26,6 @@ from investment_manager.governance.evaluation.reference_selection import (
     build_reference_rejection,
     build_reference_selection_artifact,
     build_reference_selection_plan,
-    load_reference_selection_plan,
     validate_reference_policy_selection,
 )
 from investment_manager.kernel.identity import content_hash
@@ -61,20 +60,6 @@ def test_rejected_selection_artifact_cannot_grant_reference_policy() -> None:
 
     with pytest.raises(ValueError, match="被拒绝"):
         validate_reference_policy_selection(artifact, policy)
-
-
-def test_registered_reference_plan_is_content_addressed_and_rejection_only() -> None:
-    plan = load_reference_selection_plan(Path("config/reference-selection-plan.yaml"))
-
-    assert plan.plan_id == "reference_selection_plan_5a04c8005c8c04d8dc41"
-    assert len(plan.candidates) == 1
-    assert plan.candidates[0].allocations[-1].implementation_key == "CASH:USDT"
-    assert plan.qualification.minimum_annualized_real_return_fraction == 0
-    assert {item.fixed_evidence_id for item in plan.evidence_requirements} - {None} == {
-        "historical_economic_series_2ba31ef4ef4c5f2b558e",
-        "historical_economic_series_3abd061b67f0abe0cbe0",
-        "historical_economic_series_ba97b40f042388278e45",
-    }
 
 
 def test_reference_result_must_follow_durable_plan_registration() -> None:
@@ -344,7 +329,7 @@ def _plan():
 
 def _registration(plan) -> ReferencePlanRegistration:
     return ReferencePlanRegistration(
-        repository_path="config/reference-selection-plan.yaml",
+        repository_path="evidence/reference-selections/candidate-plan.yaml",
         commit="a" * 40,
         committed_at=datetime(2026, 8, 24, 1, tzinfo=UTC),
         plan_hash=content_hash(plan),
