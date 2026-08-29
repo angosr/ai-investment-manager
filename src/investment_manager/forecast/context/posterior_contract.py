@@ -35,7 +35,7 @@ POSTERIOR_INPUT_VERSION = "world-model-posterior-input-v1"
 POSTERIOR_SEED_VERSION = "world-model-posterior-seed-v1"
 POSTERIOR_OUTPUT_VERSION = "world-model-posterior-output-v1"
 POSTERIOR_PRODUCER_ID = "world-model-posterior"
-POSTERIOR_PRODUCTION_SEMANTICS_VERSION = "same-cutoff-structural-conditioning-v1"
+POSTERIOR_PRODUCTION_SEMANTICS_VERSION = "same-cutoff-structural-conditioning-v2"
 
 
 class PosteriorPriorTarget(FrozenModel):
@@ -213,9 +213,15 @@ POSTERIOR_INSTRUCTIONS = (
     "杠杆、交易频率、成本判断或数据建设建议。",
     "prior 是唯一统计起点。只有 eligible_mechanism_ids 中的结构机制能够实质改变 prior；"
     "行情、技术状态、funding、basis、持仓量或价格响应本身不得成为第二套方向信号。"
-    "没有可归因的结构增量时必须逐桶保持 prior 原值，mechanism_contributions 留空。",
+    "没有可归因的结构增量时必须逐桶保持 prior 原值。",
+    "每个 target 必须按 eligible_mechanism_ids 的顺序逐项输出 mechanism_contributions，"
+    "明确该机制对本资产、本期限是 UPSIDE、DOWNSIDE、UNCERTAINTY 或 NO_MATERIAL_EFFECT；"
+    "没有 eligible mechanism 时该列表必须为空。已经由事件前后预期或政策路径变化以及利率、"
+    "美元、信用或流动性响应确认的机制，必须体现其有符号影响，不能仅因慢变量缓冲仍存在而降格为"
+    "无实质影响；存在抵消力量时必须分别归因。",
     "每个 bucket 必须给出简洁中文 rationale，明确相对 prior 是上调、下调还是不变及原因。"
-    "发生任何概率变化时，至少引用一个 eligible mechanism，并说明传导与反向证据；"
+    "概率变化必须与机制净方向一致：单边 UPSIDE 不得下调期望收益，单边 DOWNSIDE 不得上调，"
+    "只有 UNCERTAINTY 时必须扩大分布离散度；全部为 NO_MATERIAL_EFFECT 时必须保持 prior。"
     "不得为了显得有判断而强行偏离 prior。",
     "所有 contract_id、bucket_id 和 mechanism_id 必须逐字来自输入。概率必须为 0 到 1，"
     "每个 target 的概率和必须精确等于 1。只输出 Schema 要求的 JSON。",
@@ -235,8 +241,9 @@ def posterior_output_schema(value: ContextPosteriorInput) -> dict[str, object]:
     contribution["properties"]["mechanism_id"]["enum"] = list(
         value.eligible_mechanism_ids or ("NO_ELIGIBLE_MECHANISM",)
     )
-    if not value.eligible_mechanism_ids:
-        definitions["PosteriorTargetDraft"]["properties"]["mechanism_contributions"]["maxItems"] = 0
+    contribution_list = definitions["PosteriorTargetDraft"]["properties"]["mechanism_contributions"]
+    contribution_list["minItems"] = len(value.eligible_mechanism_ids)
+    contribution_list["maxItems"] = len(value.eligible_mechanism_ids)
     return schema
 
 
@@ -322,17 +329,86 @@ def finalize_posterior(
         contribution_ids = tuple(
             contribution.mechanism_id for contribution in draft.mechanism_contributions
         )
-        if changed and not contribution_ids:
+        if changed and not eligible:
             raise ValueError("Posterior 偏离 prior 时必须绑定结构机制")
-        if not changed and contribution_ids:
-            raise ValueError("Posterior 未偏离 prior 时不得伪造机制贡献")
-        if not set(contribution_ids) <= eligible:
-            raise ValueError("Posterior 引用了没有结构资格的机制")
-        if any(
-            contribution.effect == ForecastMechanismEffect.NO_MATERIAL_EFFECT
-            for contribution in draft.mechanism_contributions
+        if contribution_ids != frozen_input.eligible_mechanism_ids:
+            raise ValueError("Posterior 必须按顺序逐项评估全部 eligible mechanism")
+        effects = tuple(contribution.effect for contribution in draft.mechanism_contributions)
+        material_effects = {
+            effect for effect in effects if effect != ForecastMechanismEffect.NO_MATERIAL_EFFECT
+        }
+        if changed and not material_effects:
+            raise ValueError("Posterior 全部为 NO_MATERIAL_EFFECT 时必须保持 prior")
+        if (
+            not changed
+            and material_effects
+            and not {
+                ForecastMechanismEffect.UPSIDE,
+                ForecastMechanismEffect.DOWNSIDE,
+            }
+            <= material_effects
         ):
-            raise ValueError("实质调整不得使用 NO_MATERIAL_EFFECT 机制")
+            raise ValueError("Posterior 未变化时只能保留明确相互抵消的方向机制")
+        prior_expected = sum(
+            (
+                probability * bucket.representative_bps
+                for probability, bucket in zip(
+                    prior_probabilities,
+                    item.contract.outcome_buckets,
+                    strict=True,
+                )
+            ),
+            Decimal("0"),
+        )
+        posterior_expected = sum(
+            (
+                probability * bucket.representative_bps
+                for probability, bucket in zip(
+                    posterior_probabilities,
+                    item.contract.outcome_buckets,
+                    strict=True,
+                )
+            ),
+            Decimal("0"),
+        )
+        expected_delta = posterior_expected - prior_expected
+        directional_effects = material_effects & {
+            ForecastMechanismEffect.UPSIDE,
+            ForecastMechanismEffect.DOWNSIDE,
+        }
+        if directional_effects == {ForecastMechanismEffect.UPSIDE} and expected_delta <= 0:
+            raise ValueError("Posterior 单边 UPSIDE 机制必须上调期望收益")
+        if directional_effects == {ForecastMechanismEffect.DOWNSIDE} and expected_delta >= 0:
+            raise ValueError("Posterior 单边 DOWNSIDE 机制必须下调期望收益")
+        if (
+            changed
+            and not directional_effects
+            and material_effects == {ForecastMechanismEffect.UNCERTAINTY}
+        ):
+            prior_variance = sum(
+                (
+                    probability * (bucket.representative_bps - prior_expected) ** 2
+                    for probability, bucket in zip(
+                        prior_probabilities,
+                        item.contract.outcome_buckets,
+                        strict=True,
+                    )
+                ),
+                Decimal("0"),
+            )
+            posterior_variance = sum(
+                (
+                    probability * (bucket.representative_bps - posterior_expected) ** 2
+                    for probability, bucket in zip(
+                        posterior_probabilities,
+                        item.contract.outcome_buckets,
+                        strict=True,
+                    )
+                ),
+                Decimal("0"),
+            )
+            if posterior_variance <= prior_variance:
+                raise ValueError("Posterior 单独 UNCERTAINTY 机制必须扩大分布离散度")
         anchors = entry_anchors.get(item.contract.contract_id, ())
         if tuple(anchor.instrument_id for anchor in anchors) != tuple(
             leg.instrument.key for leg in item.contract.target.legs
@@ -388,17 +464,7 @@ def finalize_posterior(
                 available_at=completed,
                 valid_until=item.slot.evaluation_at,
                 outcome_probabilities=distribution,
-                expected_gross_bps=sum(
-                    (
-                        probability.probability * bucket.representative_bps
-                        for probability, bucket in zip(
-                            distribution,
-                            item.contract.outcome_buckets,
-                            strict=True,
-                        )
-                    ),
-                    Decimal("0"),
-                ),
+                expected_gross_bps=posterior_expected,
                 input_refs=tuple(
                     sorted(
                         {

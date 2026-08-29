@@ -315,16 +315,21 @@ def _output(value: ContextPosteriorInput, *, change: bool, contribute: bool):
                         strict=True,
                     )
                 ),
-                mechanism_contributions=(
-                    (
-                        ForecastMechanismContribution(
-                            mechanism_id="structural-liquidity-1",
-                            effect=ForecastMechanismEffect.UPSIDE,
-                            rationale="政策现金流通过融资条件传导。",
+                mechanism_contributions=tuple(
+                    ForecastMechanismContribution(
+                        mechanism_id=mechanism_id,
+                        effect=(
+                            ForecastMechanismEffect.UPSIDE
+                            if change and contribute
+                            else ForecastMechanismEffect.NO_MATERIAL_EFFECT
+                        ),
+                        rationale=(
+                            "政策现金流通过融资条件传导。"
+                            if change and contribute
+                            else "该机制未给本目标带来可归因增量。"
                         ),
                     )
-                    if contribute
-                    else ()
+                    for mechanism_id in value.eligible_mechanism_ids
                 ),
             )
         )
@@ -409,6 +414,11 @@ def test_posterior_schema_is_bounded_to_frozen_contracts_and_mechanisms() -> Non
     assert definitions["ForecastMechanismContribution"]["properties"]["mechanism_id"]["enum"] == [
         "structural-liquidity-1"
     ]
+    contribution_schema = definitions["PosteriorTargetDraft"]["properties"][
+        "mechanism_contributions"
+    ]
+    assert contribution_schema["minItems"] == 1
+    assert contribution_schema["maxItems"] == 1
 
     without_eligible = posterior_output_schema(_input(eligible=False))
     assert (
@@ -417,6 +427,40 @@ def test_posterior_schema_is_bounded_to_frozen_contracts_and_mechanisms() -> Non
         ]
         == 0
     )
+
+
+def test_posterior_rejects_direction_inconsistent_with_mechanism() -> None:
+    frozen = _input()
+    completed = SLOT_AT + timedelta(minutes=10)
+    output = _output(frozen, change=True, contribute=True)
+    reversed_forecasts = []
+    for forecast in output.forecasts:
+        reversed_probabilities = [bucket.probability for bucket in forecast.buckets]
+        reversed_probabilities[0] += Decimal("0.02")
+        reversed_probabilities[-1] -= Decimal("0.02")
+        reversed_forecasts.append(
+            forecast.model_copy(
+                update={
+                    "buckets": tuple(
+                        bucket.model_copy(update={"probability": probability})
+                        for bucket, probability in zip(
+                            forecast.buckets,
+                            reversed_probabilities,
+                            strict=True,
+                        )
+                    )
+                }
+            )
+        )
+
+    with pytest.raises(ValueError, match="单边 UPSIDE"):
+        finalize_posterior(
+            output=output.model_copy(update={"forecasts": tuple(reversed_forecasts)}),
+            frozen_input=frozen,
+            producer_behavior_id="posterior-behavior-v1",
+            completed_at=completed,
+            entry_anchors=_entry_anchors(frozen, completed),
+        )
 
 
 class _PosteriorRouter:
@@ -634,8 +678,8 @@ def _execution_fixture(base_app_config):
 def test_posterior_execution_records_joint_forecasts_and_reuses_them(
     base_app_config,
 ) -> None:
-    preparation, contracts, forecasts, market, _engine, frozen, completed_at = _execution_fixture(
-        base_app_config
+    preparation, contracts, forecasts, market, _engine, frozen, completed_at = (
+        _execution_fixture(base_app_config)
     )
     analyst = _ExecutionAnalyst(
         preparation.producer_behavior_id,
@@ -892,8 +936,8 @@ class _ConflictingAssessmentApplication:
 def test_same_cutoff_world_model_failure_closes_posterior_obligations(
     base_app_config,
 ) -> None:
-    preparation, contracts, forecasts, market, _engine, frozen, completed_at = (
-        _execution_fixture(base_app_config)
+    preparation, contracts, forecasts, market, _engine, frozen, completed_at = _execution_fixture(
+        base_app_config
     )
     packet = _packet()
     posterior = ContextPosteriorApplication(

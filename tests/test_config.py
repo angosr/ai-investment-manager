@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-capital-shadow-v84"
+    assert config.pipeline.version == "world-capital-shadow-v85"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -100,7 +100,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     } == {"fed-speeches", "fed-testimony"}
     assert config.information.official_metric_slow_poll_seconds == 21_600
     assert config.decision_state.version == "portfolio-state-v52"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v19"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v20"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v56"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"

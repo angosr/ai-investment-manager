@@ -121,6 +121,7 @@ class OfficialMetricName(StrEnum):
     )
     TREASURY_COUPON_SOMA_ADDON_14D_USD_M = "treasury_coupon_soma_addon_14d_usd_m"
     TREASURY_2Y_PCT = "treasury_2y_pct"
+    TREASURY_2Y_CHANGE_1D_BPS = "treasury_2y_change_1d_bps"
     TREASURY_10Y_PCT = "treasury_10y_pct"
     TREASURY_30Y_PCT = "treasury_30y_pct"
     TREASURY_2S10S_BPS = "treasury_2s10s_bps"
@@ -538,10 +539,11 @@ def _parse_treasury_yields(
     y2 = _decimal(latest.get("BC_2YEAR"), name="Treasury 2Y")
     y10 = _decimal(latest.get("BC_10YEAR"), name="Treasury 10Y")
     y30 = _decimal(latest.get("BC_30YEAR"), name="Treasury 30Y")
+    previous_y2 = _decimal(previous.get("BC_2YEAR"), name="previous Treasury 2Y")
     previous_y10 = _decimal(previous.get("BC_10YEAR"), name="previous Treasury 10Y")
     previous_y30 = _decimal(previous.get("BC_30YEAR"), name="previous Treasury 30Y")
-    ten_year_history = tuple(
-        (record_date, _decimal(values.get("BC_10YEAR"), name="Treasury 10Y"))
+    two_year_history = tuple(
+        (record_date, _decimal(values.get("BC_2YEAR"), name="Treasury 2Y"))
         for record_date, values in entries
     )
     return _snapshot(
@@ -554,6 +556,11 @@ def _parse_treasury_yields(
         risk_factors=("US_INTEREST_RATES",),
         metrics=(
             _metric(OfficialMetricName.TREASURY_2Y_PCT, y2, OfficialMetricUnit.PERCENT),
+            _metric(
+                OfficialMetricName.TREASURY_2Y_CHANGE_1D_BPS,
+                (y2 - previous_y2) * 100,
+                OfficialMetricUnit.BASIS_POINTS,
+            ),
             _metric(OfficialMetricName.TREASURY_10Y_PCT, y10, OfficialMetricUnit.PERCENT),
             _metric(OfficialMetricName.TREASURY_30Y_PCT, y30, OfficialMetricUnit.PERCENT),
             _metric(
@@ -573,10 +580,10 @@ def _parse_treasury_yields(
             ),
         ),
         change_context=_most_unusual_change_context(
-            ten_year_history,
+            two_year_history,
             candidates=(
                 (
-                    OfficialMetricName.TREASURY_10Y_CHANGE_1D_BPS,
+                    OfficialMetricName.TREASURY_2Y_CHANGE_1D_BPS,
                     1,
                     OfficialMetricUnit.BASIS_POINTS,
                     Decimal("100"),

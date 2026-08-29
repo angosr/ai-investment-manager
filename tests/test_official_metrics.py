@@ -405,6 +405,18 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
     assert auction_values["treasury_coupon_offering_14d_usd_m"] == 24_000
     assert auction_values["treasury_bill_offering_14d_usd_m"] == 110_000
     assert auction_values["treasury_coupon_bid_to_cover"] == Decimal("2.6267")
+    nominal_yields = next(
+        item for item in snapshots if item.stream_id == TREASURY_YIELD_STREAM_ID
+    )
+    nominal_yield_values = {
+        item.name.value: item.value for item in nominal_yields.metrics
+    }
+    assert nominal_yield_values["treasury_2y_change_1d_bps"] == Decimal("5")
+    assert nominal_yields.change_context is not None
+    assert (
+        nominal_yields.change_context.metric_name
+        == OfficialMetricName.TREASURY_2Y_CHANGE_1D_BPS
+    )
     real_yields = next(
         item for item in snapshots if item.stream_id == TREASURY_REAL_YIELD_STREAM_ID
     )

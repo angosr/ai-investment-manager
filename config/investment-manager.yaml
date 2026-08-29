@@ -7,7 +7,7 @@ decision_state:
   version: portfolio-state-v52
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v19
+    version: official-fact-v20
     affected_assets: [BTC, ETH, PAXG]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。

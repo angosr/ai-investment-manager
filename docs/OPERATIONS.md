@@ -63,7 +63,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。TriggerCoordinator 在组合 owner 的 cadence 槽先生成全部 prior，再以共享槽边界冻结世界更新 Packet、prior、两侧 Prompt/Schema 行为身份和完成期限。现有 Assessment Worker 在一个耐久 posterior Workflow 内先生成同截止 WorldModel，再顺序执行一次 posterior Codex 调用；不得并行读取上一份 WorldModel。两次生成延迟都进入实际可用时间，Packet 或业务阶段失败直接闭合已登记义务；Activity 无法开始、超时或返回无效结果时，同一 Workflow 只调用一个幂等终态 Activity 写入 `NO_ESTIMATE`，不增加分析调用或第二结果系统。当前不运行材料事件 Forecast 槽、Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
+当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。TriggerCoordinator 在组合 owner 的 cadence 槽先生成全部 prior，再以共享槽边界冻结世界更新 Packet、prior、两侧 Prompt/Schema 行为身份和完成期限。现有 Assessment Worker 在一个耐久 posterior Workflow 内先生成同截止 WorldModel，再顺序执行一次 posterior Codex 调用；不得并行读取上一份 WorldModel。两次生成延迟都进入实际可用时间，Packet 或业务阶段失败直接闭合已登记义务；Activity 无法开始、超时或返回无效结果时，同一 Workflow 只调用一个幂等终态 Activity 写入 `NO_ESTIMATE`，不增加分析调用或第二结果系统。posterior 必须逐目标按冻结顺序裁决全部 eligible mechanism；遗漏机制，或概率变化与单边上涨、单边下跌、纯不确定贡献不一致，均作为结构失败终止该槽而不重试第二次 AI。当前不运行材料事件 Forecast 槽、Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
