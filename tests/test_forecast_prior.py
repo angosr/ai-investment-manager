@@ -203,6 +203,11 @@ def test_forecast_baseline_is_deterministic_non_overlapping_and_round_trips(tmp_
     assert first.capital_change == "NONE"
     assert first.results[0].validation_sample_count > 0
     assert sum(first.results[0].mean_rolling_probabilities) == 1
+    assert sum(first.results[0].terminal_probabilities) == 1
+    assert (
+        first.results[0].terminal_history_count
+        >= first.results[0].maximum_visible_history_count
+    )
     target = store_forecast_baseline(first, root=tmp_path / "results")
     assert load_forecast_baseline(target) == first
     assert ForecastBaselineArtifact.model_validate_json(target.read_text()) == first

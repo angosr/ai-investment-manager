@@ -138,9 +138,11 @@ class ForecastBaselineTargetResult(FrozenModel):
     representative_bps: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
     fixed_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
     mean_rolling_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
+    terminal_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
     realized_probabilities: tuple[Decimal, ...] = Field(min_length=5, max_length=5)
     minimum_visible_history_count: int = Field(gt=0)
     maximum_visible_history_count: int = Field(gt=0)
+    terminal_history_count: int = Field(gt=0)
     rolling_mean_brier: Decimal = Field(ge=0)
     fixed_mean_brier: Decimal = Field(ge=0)
     rolling_mean_ranked_probability_score: Decimal = Field(ge=0)
@@ -159,20 +161,23 @@ class ForecastBaselineTargetResult(FrozenModel):
         for values in (
             self.fixed_probabilities,
             self.mean_rolling_probabilities,
+            self.terminal_probabilities,
             self.realized_probabilities,
         ):
             if any(item < 0 or item > 1 for item in values) or sum(values) != 1:
                 raise ValueError("预测先验概率必须位于 [0, 1] 且总和为 1")
         if self.minimum_visible_history_count > self.maximum_visible_history_count:
             raise ValueError("预测先验可见历史数量边界非法")
+        if self.terminal_history_count < self.maximum_visible_history_count:
+            raise ValueError("预测先验终态历史不能少于最后验证时点")
         if self.first_validation_cutoff_at >= self.last_validation_outcome_at:
             raise ValueError("预测先验验证时间边界非法")
         return self
 
 
 class ForecastBaselineArtifact(FrozenModel):
-    schema_version: Literal["forecast-baseline-artifact-v1"] = (
-        "forecast-baseline-artifact-v1"
+    schema_version: Literal["forecast-baseline-artifact-v2"] = (
+        "forecast-baseline-artifact-v2"
     )
     artifact_id: str
     plan_id: str
@@ -331,6 +336,11 @@ def evaluate_forecast_baseline(
             fixed_ranked.append(ordinal_ranked_probability_score(fixed_pairs, realized_id))
         mean_rolling = _mean_distribution(tuple(rolling_predictions))
         realized = _frequencies(tuple(realized_buckets), len(_BUCKET_IDS))
+        terminal, terminal_count = expanding_prior(
+            outcomes,
+            boundaries_bps=boundaries,
+            information_cutoff_at=dataset.manifest.last_close_time,
+        )
         results.append(
             ForecastBaselineTargetResult(
                 symbol=target.symbol,
@@ -345,9 +355,11 @@ def evaluate_forecast_baseline(
                 representative_bps=representatives,
                 fixed_probabilities=fixed,
                 mean_rolling_probabilities=mean_rolling,
+                terminal_probabilities=terminal,
                 realized_probabilities=realized,
                 minimum_visible_history_count=min(visible_counts),
                 maximum_visible_history_count=max(visible_counts),
+                terminal_history_count=terminal_count,
                 rolling_mean_brier=_mean(tuple(rolling_brier)),
                 fixed_mean_brier=_mean(tuple(fixed_brier)),
                 rolling_mean_ranked_probability_score=_mean(tuple(rolling_ranked)),
