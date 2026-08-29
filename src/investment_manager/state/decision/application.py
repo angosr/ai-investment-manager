@@ -8,7 +8,11 @@ from typing import Protocol
 from pydantic import Field, model_validator
 
 from investment_manager.information.coverage import SqlInformationCoverageStore
-from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
+from investment_manager.information.models import (
+    DomainCoverageSnapshot,
+    IntelligenceEvent,
+    IntelligenceEventContentReference,
+)
 from investment_manager.information.policy import CoverageRequirement
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
@@ -92,6 +96,13 @@ class IntelligenceEventReader(Protocol):
         self,
         *,
         symbol: str,
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]: ...
+
+    def resolve_content_references(
+        self,
+        *,
+        references: tuple[IntelligenceEventContentReference, ...],
         as_of: datetime,
     ) -> tuple[IntelligenceEvent, ...]: ...
 
@@ -240,6 +251,22 @@ class DecisionPacketPreparation:
                 as_of=as_of,
             )
         }
+        active_references = tuple(
+            IntelligenceEventContentReference(
+                content_ref=item.evidence_id,
+                source=item.source,
+                title=item.title,
+                event_time=item.event_time,
+            )
+            for item in (() if previous_context is None else previous_context.event_references)
+            if item.impact_state == "ACTIVE"
+        )
+        if active_references:
+            for event in self._event_reader.resolve_content_references(
+                references=active_references,
+                as_of=as_of,
+            ):
+                visible_by_id[event.evidence_id] = event
         for event in triggered_events:
             existing = visible_by_id.get(event.evidence_id)
             if existing is not None and existing != event:

@@ -879,7 +879,7 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
 
     with pytest.raises(
         DecisionPacketCapacityError,
-        match="direct intelligence events exceed intelligence capacity",
+        match="required intelligence events exceed intelligence capacity",
     ):
         build(16_000, maximum_intelligence_characters=10)
 
@@ -1910,6 +1910,60 @@ def test_analysis_projection_deduplicates_current_event_from_previous_citations(
 
     assert projected["intelligence_events"][0]["evidence_ref"] == event_ref
     assert projected["previous_context"]["event_references"] == ()
+
+
+def test_active_event_body_survives_background_age_without_becoming_a_trigger(
+    app_config,
+    replay_input,
+) -> None:
+    as_of = replay_input.market.as_of
+    event = IntelligenceEvent(
+        evidence_id="retained-policy-event",
+        normalizer_version="official-document-v1",
+        acquisition_route="official-feed-v1",
+        event_time=as_of - timedelta(days=3),
+        observed_at=as_of - timedelta(days=3) + timedelta(minutes=1),
+        source="official-source",
+        title="仍在传导的政策讲话",
+        body="完整正文说明政策目标、约束和反应函数。",
+        decision_excerpt="政策制定者强调固定目标以及当前约束。",
+        symbols=("BTCUSDT",),
+        relevance="1",
+        impact="0.1",
+        source_reliability="0.1",
+        novelty="1",
+        directional_support_eligible=True,
+    )
+    event_ref = content_hash(event)
+    previous = _previous_world_model(
+        as_of,
+        assessment_id="assessment-retained-policy-event",
+    ).model_copy(
+        update={
+            "event_references": (
+                PacketPreviousEventReference(
+                    evidence_id=event_ref,
+                    source=event.source,
+                    title=event.title,
+                    event_time=event.event_time,
+                    impact_state="ACTIVE",
+                    rationale="政策约束仍通过折现率影响当前判断。",
+                ),
+            )
+        }
+    )
+
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        previous_context=previous,
+        intelligence_events=(event,),
+    )
+
+    assert len(packet.intelligence_events) == 1
+    assert packet.intelligence_events[0].evidence_ref == event_ref
+    assert packet.intelligence_events[0].body == event.decision_excerpt
+    assert packet.intelligence_events[0].directly_triggered is False
 
 
 def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(

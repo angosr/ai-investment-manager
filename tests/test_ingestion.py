@@ -24,6 +24,7 @@ from investment_manager.information.collector import (
 from investment_manager.information.models import (
     CausalDomain,
     IntelligenceEvent,
+    IntelligenceEventContentReference,
     SourcePollRecord,
     SourcePollStatus,
 )
@@ -39,6 +40,7 @@ from investment_manager.information.policy import (
 )
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
+from investment_manager.kernel.identity import content_hash
 from investment_manager.scheduling.models import AnalysisTriggerEvent
 from investment_manager.scheduling.tables import analysis_trigger_events
 from investment_manager.schema import create_schema
@@ -1175,9 +1177,21 @@ def test_sql_event_store_reads_only_latest_bounded_symbol_events(replay_input) -
         evidence_ids=("bounded-0", "bounded-2"),
         as_of=inserted[-1].observed_at,
     )
+    retained = store.resolve_content_references(
+        references=(
+            IntelligenceEventContentReference(
+                content_ref=content_hash(inserted[0]),
+                source=inserted[0].source,
+                title=inserted[0].title,
+                event_time=inserted[0].event_time,
+            ),
+        ),
+        as_of=inserted[-1].observed_at,
+    )
 
     assert [item.evidence_id for item in visible] == ["bounded-1", "bounded-2"]
     assert [item.evidence_id for item in exact] == ["bounded-0", "bounded-2"]
+    assert [item.evidence_id for item in retained] == ["bounded-0"]
     with pytest.raises(ValueError, match="缺少截至 as_of 可见的事件"):
         store.exact(
             evidence_ids=("bounded-2",),

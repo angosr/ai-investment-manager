@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import and_, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql.elements import ColumnElement
 
 from investment_manager.information.models import (
     IntelligenceEvent,
+    IntelligenceEventContentReference,
+    resolve_intelligence_event_content_references,
     source_document_revision_adds_information,
 )
 from investment_manager.information.tables import normalized_events
@@ -246,3 +248,34 @@ class SqlEventStore:
         if missing:
             raise ValueError("缺少截至 as_of 可见的事件: " + ", ".join(missing))
         return tuple(by_id[item] for item in evidence_ids)
+
+    def resolve_content_references(
+        self,
+        *,
+        references: tuple[IntelligenceEventContentReference, ...],
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]:
+        """Recover exact active event bodies independently of recent-feed rank."""
+
+        as_of = require_utc(as_of)
+        if not references:
+            return ()
+        candidates = or_(
+            *(
+                and_(
+                    normalized_events.c.source == item.source,
+                    normalized_events.c.event_time == item.event_time,
+                    normalized_events.c.payload["title"].as_string() == item.title,
+                )
+                for item in references
+            )
+        )
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(normalized_events.c.payload).where(
+                    normalized_events.c.observed_at <= as_of,
+                    candidates,
+                )
+            ).scalars()
+            events = tuple(IntelligenceEvent.model_validate(item) for item in payloads)
+        return resolve_intelligence_event_content_references(events, references)

@@ -118,7 +118,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v62
+    version: decision-packet-policy-v63
     schema_version: decision-packet-v22
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -555,7 +555,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v62
+  version: context-assessment-v63
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

@@ -1514,9 +1514,15 @@ class DecisionPacketBuilder:
                 ),
             }
         )
+        retained_event_refs = frozenset(
+            item.evidence_id
+            for item in (() if previous_context is None else previous_context.event_references)
+            if item.impact_state == "ACTIVE"
+        )
         selected_events, omitted_events = self._select_intelligence_events(
             events=intelligence_events,
             direct_event_refs=direct_event_refs,
+            retained_event_refs=retained_event_refs,
             as_of=state.as_of,
         )
         market_by_symbol = {item.symbol: item for item in markets}
@@ -1777,23 +1783,22 @@ class DecisionPacketBuilder:
         *,
         events: tuple[IntelligenceEvent, ...],
         direct_event_refs: frozenset[str],
+        retained_event_refs: frozenset[str],
         as_of: datetime,
     ) -> tuple[tuple[PacketIntelligenceEvent, ...], tuple[str, ...]]:
         eligible: list[IntelligenceEvent] = []
         omitted: list[str] = []
         for event in events:
             evidence_ref = content_hash(event)
+            required = evidence_ref in direct_event_refs or evidence_ref in retained_event_refs
             age_seconds = (as_of - event.event_time).total_seconds()
-            if evidence_ref not in direct_event_refs and (
+            if not required and (
                 event.attention_priority < self._policy.minimum_background_attention_priority
                 or event.source_reliability < self._policy.minimum_background_source_reliability
             ):
                 omitted.append(evidence_ref)
                 continue
-            if (
-                evidence_ref not in direct_event_refs
-                and age_seconds > self._policy.maximum_background_fact_distance_seconds
-            ):
+            if not required and age_seconds > self._policy.maximum_background_fact_distance_seconds:
                 omitted.append(evidence_ref)
                 continue
             eligible.append(event)
@@ -1801,6 +1806,7 @@ class DecisionPacketBuilder:
             eligible,
             key=lambda item: (
                 content_hash(item) not in direct_event_refs,
+                content_hash(item) not in retained_event_refs,
                 -item.attention_priority,
                 -item.source_reliability,
                 -item.novelty,
@@ -1828,9 +1834,9 @@ class DecisionPacketBuilder:
                 len(selected) >= self._policy.maximum_intelligence_events
                 or used_characters + character_cost > self._policy.maximum_intelligence_characters
             ):
-                if evidence_ref in direct_event_refs:
+                if evidence_ref in direct_event_refs or evidence_ref in retained_event_refs:
                     raise DecisionPacketCapacityError(
-                        "direct intelligence events exceed intelligence capacity"
+                        "required intelligence events exceed intelligence capacity"
                     )
                 omitted.append(evidence_ref)
                 continue

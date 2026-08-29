@@ -207,6 +207,38 @@ class IntelligenceEvent(FrozenModel):
         return int(rank_component * 100)
 
 
+class IntelligenceEventContentReference(FrozenModel):
+    """Immutable locator for rehydrating an active WorldModel event."""
+
+    content_ref: str = Field(pattern=SHA256_PATTERN)
+    source: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=1_000)
+    event_time: datetime
+
+    _utc_event_time = field_validator("event_time")(require_utc)
+
+
+def resolve_intelligence_event_content_references(
+    events: tuple[IntelligenceEvent, ...],
+    references: tuple[IntelligenceEventContentReference, ...],
+) -> tuple[IntelligenceEvent, ...]:
+    refs = tuple(sorted(references, key=lambda item: item.content_ref))
+    if len({item.content_ref for item in refs}) != len(refs):
+        raise ValueError("事件内容引用必须唯一")
+    by_ref = {content_hash(item): item for item in events}
+    missing = tuple(item.content_ref for item in refs if item.content_ref not in by_ref)
+    if missing:
+        raise ValueError("缺少截至 as_of 可恢复的活跃事件内容: " + ", ".join(missing))
+    resolved = tuple(by_ref[item.content_ref] for item in refs)
+    if any(
+        (event.source, event.title, event.event_time)
+        != (reference.source, reference.title, reference.event_time)
+        for event, reference in zip(resolved, refs, strict=True)
+    ):
+        raise ValueError("活跃事件内容与冻结引用身份不一致")
+    return resolved
+
+
 def source_document_revision_adds_information(
     event: IntelligenceEvent,
     *,

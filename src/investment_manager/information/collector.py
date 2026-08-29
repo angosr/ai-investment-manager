@@ -26,8 +26,10 @@ from investment_manager.information.coverage import build_source_poll_record
 from investment_manager.information.models import (
     CausalDomain,
     IntelligenceEvent,
+    IntelligenceEventContentReference,
     SourcePollRecord,
     SourcePollStatus,
+    resolve_intelligence_event_content_references,
 )
 from investment_manager.information.official.document import (
     MAXIMUM_OFFICIAL_DOCUMENT_CHARACTERS,
@@ -808,6 +810,19 @@ class InMemoryEventStore:
             if missing:
                 raise ValueError("缺少截至 as_of 可见的事件: " + ", ".join(missing))
             return tuple(self._events[evidence_id] for evidence_id in evidence_ids)
+
+    def resolve_content_references(
+        self,
+        *,
+        references: tuple[IntelligenceEventContentReference, ...],
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]:
+        as_of = require_utc(as_of)
+        with self._lock:
+            events = tuple(
+                item for item in self._events.values() if item.observed_at <= as_of
+            )
+        return resolve_intelligence_event_content_references(events, references)
 
 
 @dataclass(frozen=True, slots=True)

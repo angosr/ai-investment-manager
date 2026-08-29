@@ -106,7 +106,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v57"
     assert config.decision_state.official_fact_policy.version == "official-fact-v21"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v62"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v63"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v22"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
@@ -151,7 +151,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BTCUSDT",
         "ETHUSDT",
     )
-    assert config.assessment.version == "context-assessment-v62"
+    assert config.assessment.version == "context-assessment-v63"
     assert config.outcome_evaluation.version == "typed-outcome-settlement-v60"
     assert config.outcome_evaluation.forecast_prior.enabled
     assert config.outcome_evaluation.forecast_prior.artifact_id == (
