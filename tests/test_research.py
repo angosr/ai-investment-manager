@@ -41,9 +41,7 @@ def test_public_data_research_symbol_is_independent_of_production_allowlist(
     app_config,
 ) -> None:
     assert "BNBUSDT" not in app_config.market_data.symbols
-    assert "BNBUSDT" not in {
-        item.instrument.symbol for item in app_config.capital.execution_specs
-    }
+    assert "BNBUSDT" not in {item.instrument.symbol for item in app_config.capital.execution_specs}
     assert parse_research_symbol("bnbusdt") == "BNBUSDT"
 
     with pytest.raises(typer.BadParameter, match="字母和数字"):
@@ -60,9 +58,7 @@ def test_history_command_overrides_production_symbol_and_interval(
     )
     from investment_manager.research import dataset as dataset_module
 
-    instrument = _instrument().model_copy(
-        update={"symbol": "BNBUSDT", "base_asset": "BNB"}
-    )
+    instrument = _instrument().model_copy(update={"symbol": "BNBUSDT", "base_asset": "BNB"})
     frozen = _dataset(
         count=2,
         interval="1d",
@@ -88,6 +84,7 @@ def test_history_command_overrides_production_symbol_and_interval(
     payload = json.loads(capsys.readouterr().out)
     assert captured["symbol"] == payload["symbol"] == "BNBUSDT"
     assert captured["interval"] == payload["interval"] == "1d"
+
 
 def _instrument() -> InstrumentSpec:
     return InstrumentSpec(
@@ -124,9 +121,7 @@ def _dataset(
     price = initial_price
     for index in range(count):
         open_price = price
-        close_price = open_price * (
-            price_steps[index] if price_steps is not None else price_step
-        )
+        close_price = open_price * (price_steps[index] if price_steps is not None else price_step)
         price = close_price
         open_time = start + bar_delta * index
         close_time = open_time + bar_delta - timedelta(milliseconds=1)
@@ -226,9 +221,7 @@ def test_historical_dataset_rejects_bar_gap() -> None:
             bars_hash,
             dataset.manifest.instrument,
         ),
-        **dataset.manifest.model_dump(
-            exclude={"dataset_id", "bar_count", "bars_hash"}
-        ),
+        **dataset.manifest.model_dump(exclude={"dataset_id", "bar_count", "bars_hash"}),
         bar_count=len(bars),
         bars_hash=bars_hash,
     )
@@ -513,8 +506,7 @@ def _funding_archive(filename: str, rows: tuple[tuple[str, str, str], ...]) -> b
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
         body = "calc_time,funding_interval_hours,last_funding_rate\n" + "".join(
-            f"{timestamp},{interval},{rate}\n"
-            for timestamp, interval, rate in rows
+            f"{timestamp},{interval},{rate}\n" for timestamp, interval, rate in rows
         )
         archive.writestr(filename.removesuffix(".zip") + ".csv", body)
     return stream.getvalue()
@@ -646,6 +638,96 @@ def test_verified_funding_history_preserves_special_cashflows_and_interval_chang
     assert len(json.loads((target / "observations.json").read_text())[0]) == 6
 
 
+def test_verified_funding_history_preserves_an_absent_official_settlement() -> None:
+    start = datetime(2026, 6, 24, tzinfo=UTC)
+    end = start + timedelta(hours=12)
+    times = (start, start + timedelta(hours=8))
+    rates = ("-0.00000099", "0.00000827")
+    filename = "PAXGUSDT-fundingRate-2026-06.zip"
+    archive = _funding_archive(
+        filename,
+        tuple(
+            (str(int(at.timestamp() * 1000)), "4", rate)
+            for at, rate in zip(times, rates, strict=True)
+        ),
+    )
+    checksum = hashlib.sha256(archive).hexdigest()
+    rest_rows = [
+        {
+            "symbol": "PAXGUSDT",
+            "fundingTime": int(at.timestamp() * 1000),
+            "fundingRate": rate,
+            "markPrice": "" if index == 0 else "4093.8",
+            "rateType": "Regular",
+        }
+        for index, (at, rate) in enumerate(zip(times, rates, strict=True))
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "fapi.binance.com":
+            return httpx.Response(200, json=rest_rows)
+        if request.url.path.endswith(".CHECKSUM"):
+            return httpx.Response(200, text=f"{checksum}  {filename}\n")
+        return httpx.Response(200, content=archive)
+
+    dataset = asyncio.run(
+        fetch_binance_funding_history(
+            base_url="https://data.binance.vision",
+            verification_base_url="https://fapi.binance.com",
+            symbol="PAXGUSDT",
+            start=start,
+            end=end,
+            timeout_seconds=1,
+            clock=lambda: datetime(2026, 7, 1, tzinfo=UTC),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    assert dataset.manifest.schema_version == "historical-funding-rates-v2"
+    assert dataset.manifest.observation_count == 2
+    assert dataset.observations[0].mark_price is None
+    assert dataset.observations[1].mark_price == Decimal("4093.8")
+    assert dataset.observations[1].funding_time - dataset.observations[0].funding_time == timedelta(
+        hours=8
+    )
+
+
+def test_archive_only_funding_history_rejects_an_unverified_gap() -> None:
+    start = datetime(2026, 6, 24, tzinfo=UTC)
+    end = start + timedelta(hours=12)
+    filename = "PAXGUSDT-fundingRate-2026-06.zip"
+    archive = _funding_archive(
+        filename,
+        (
+            (str(int(start.timestamp() * 1000)), "4", "-0.00000099"),
+            (
+                str(int((start + timedelta(hours=8)).timestamp() * 1000)),
+                "4",
+                "0.00000827",
+            ),
+        ),
+    )
+    checksum = hashlib.sha256(archive).hexdigest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".CHECKSUM"):
+            return httpx.Response(200, text=f"{checksum}  {filename}\n")
+        return httpx.Response(200, content=archive)
+
+    with pytest.raises(ValueError, match="结算序列存在缺口"):
+        asyncio.run(
+            fetch_binance_funding_history(
+                base_url="https://data.binance.vision",
+                symbol="PAXGUSDT",
+                start=start,
+                end=end,
+                timeout_seconds=1,
+                clock=lambda: datetime(2026, 7, 1, tzinfo=UTC),
+                transport=httpx.MockTransport(handler),
+            )
+        )
+
+
 def test_funding_history_rejects_untrusted_source_and_checksum() -> None:
     start = datetime(2026, 7, 1, tzinfo=UTC)
     end = start + timedelta(hours=8)
@@ -730,6 +812,20 @@ def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) ->
     checksum = hashlib.sha256(archive).hexdigest()
 
     def funding_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "fapi.binance.com":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "symbol": "BTCUSDT",
+                        "fundingTime": int(timestamp),
+                        "fundingRate": rate,
+                        "markPrice": str(Decimal("100") + index),
+                        "rateType": "Regular",
+                    }
+                    for index, (timestamp, _, rate) in enumerate(funding_rows)
+                ],
+            )
         if request.url.path.endswith(".CHECKSUM"):
             return httpx.Response(200, text=f"{checksum}  {filename}\n")
         return httpx.Response(200, content=archive)
@@ -737,6 +833,7 @@ def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) ->
     funding_dataset = asyncio.run(
         fetch_binance_funding_history(
             base_url="https://data.binance.vision",
+            verification_base_url="https://fapi.binance.com",
             symbol="BTCUSDT",
             start=start,
             end=end,
@@ -775,38 +872,8 @@ def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) ->
                     ]
                 },
             )
-        if request.url.path == "/fapi/v1/fundingRate":
-            cursor = int(request.url.params["startTime"])
-            rows = [
-                {
-                    "symbol": "BTCUSDT",
-                    "fundingTime": int(timestamp) + index % 2,
-                    "fundingRate": rate,
-                    "markPrice": str(Decimal("100") + index),
-                }
-                for index, (timestamp, _, rate) in enumerate(funding_rows)
-                if int(timestamp) >= cursor
-            ]
-            return httpx.Response(200, json=rows)
-        if (
-            request.url.path == "/fapi/v1/markPriceKlines"
-            and request.url.params["interval"] == "8h"
-        ):
-            rows = []
-            for index in range(7):
-                open_ms = first_ms - 8 * 60 * 60 * 1000 + index * 8 * 60 * 60 * 1000
-                rows.append(
-                    [
-                        open_ms,
-                        "100",
-                        "102",
-                        "99",
-                        str(Decimal("100") + index),
-                        "0",
-                        open_ms + 8 * 60 * 60 * 1000 - 1,
-                    ]
-                )
-            return httpx.Response(200, json=rows)
+        if request.url.path == "/fapi/v1/fundingRate" or request.url.params.get("interval") == "8h":
+            raise AssertionError("carry 不得重复抓取已验证 funding 或 8h 结算价")
         rows = [
             [first_ms, "100", "102", "99", "101", "0", first_ms + 86_399_999],
             [
@@ -820,10 +887,7 @@ def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) ->
             ],
         ]
         if request.url.path == "/fapi/v1/premiumIndexKlines":
-            rows = [
-                [row[0], "-0.001", "0.002", "-0.003", "0.001", "0", row[6]]
-                for row in rows
-            ]
+            rows = [[row[0], "-0.001", "0.002", "-0.003", "0.001", "0", row[6]] for row in rows]
         return httpx.Response(200, json=rows)
 
     dataset = asyncio.run(
@@ -906,10 +970,7 @@ def test_hourly_carry_history_does_not_require_unrelated_funding() -> None:
             ],
         ]
         if request.url.path == "/fapi/v1/premiumIndexKlines":
-            rows = [
-                [row[0], "-0.001", "0.002", "-0.003", "0.001", "0", row[6]]
-                for row in rows
-            ]
+            rows = [[row[0], "-0.001", "0.002", "-0.003", "0.001", "0", row[6]] for row in rows]
         return httpx.Response(200, json=rows)
 
     dataset = asyncio.run(

@@ -137,9 +137,10 @@ class HistoricalBarWindow:
                 raise ValueError("历史 K 线窗口作用域与 Manifest 不一致")
             if bar.observed_at != bar.close_time:
                 raise ValueError("历史 K 线只能在收盘时刻之后可见")
-            if previous is not None and int(
-                (bar.open_time - previous.open_time).total_seconds() * 1000
-            ) != interval_ms:
+            if (
+                previous is not None
+                and int((bar.open_time - previous.open_time).total_seconds() * 1000) != interval_ms
+            ):
                 raise ValueError("历史 K 线窗口存在缺口")
             previous = bar
 
@@ -154,9 +155,10 @@ class HistoricalDatasetCatalog:
         target = self._root / dataset.manifest.dataset_id
         if target.exists():
             existing = self.load(dataset.manifest.dataset_id)
-            same_manifest_identity = existing.manifest.model_copy(
-                update={"collected_at": dataset.manifest.collected_at}
-            ) == dataset.manifest
+            same_manifest_identity = (
+                existing.manifest.model_copy(update={"collected_at": dataset.manifest.collected_at})
+                == dataset.manifest
+            )
             if not same_manifest_identity or existing.bars != dataset.bars:
                 raise ValueError("同一历史数据集 ID 的内容不一致")
             return target
@@ -227,9 +229,7 @@ class HistoricalDatasetCatalog:
         for raw in _iter_json_array(target / "bars.json"):
             if not isinstance(raw, list) or len(raw) != expected_fields:
                 raise ValueError(f"历史 K 线条目必须包含 {expected_fields} 个字段")
-            digest.update(
-                json.dumps(raw, ensure_ascii=False, separators=(",", ":")).encode()
-            )
+            digest.update(json.dumps(raw, ensure_ascii=False, separators=(",", ":")).encode())
             digest.update(b"\n")
             row_count += 1
             open_time = datetime.fromtimestamp(int(raw[0]) / 1000, tz=UTC)
@@ -334,9 +334,10 @@ class HistoricalEventDatasetCatalog:
         target = self._root / dataset.manifest.dataset_id
         if target.exists():
             existing = self.load(dataset.manifest.dataset_id)
-            same_manifest_identity = existing.manifest.model_copy(
-                update={"collected_at": dataset.manifest.collected_at}
-            ) == dataset.manifest
+            same_manifest_identity = (
+                existing.manifest.model_copy(update={"collected_at": dataset.manifest.collected_at})
+                == dataset.manifest
+            )
             if not same_manifest_identity or existing.events != dataset.events:
                 raise ValueError("同一历史事件数据集 ID 的内容不一致")
             return target
@@ -407,9 +408,7 @@ class HistoricalFundingDatasetManifest(FrozenModel):
     dataset_id: str
     symbol: str
     venue: Literal["BINANCE_USDM"] = "BINANCE_USDM"
-    source: Literal["binance-public-data-usdm-funding-rate"] = (
-        _BINANCE_FUNDING_ARCHIVE_SOURCE
-    )
+    source: Literal["binance-public-data-usdm-funding-rate"] = _BINANCE_FUNDING_ARCHIVE_SOURCE
     availability_lag_seconds: Literal[60] = 60
     collected_at: datetime
     requested_start: datetime
@@ -433,7 +432,8 @@ class HistoricalFundingDatasetManifest(FrozenModel):
         if not self.requested_start < self.requested_end <= self.collected_at:
             raise ValueError("历史资金费率请求窗口或冻结时间非法")
         if not (
-            self.requested_start < self.first_available_at
+            self.requested_start
+            < self.first_available_at
             <= self.last_available_at
             < self.requested_end + _BINANCE_FUNDING_AVAILABILITY_LAG
         ):
@@ -495,13 +495,11 @@ class HistoricalFundingDatasetCatalog:
         target = self._root / dataset.manifest.dataset_id
         if target.exists():
             existing = self.load(dataset.manifest.dataset_id)
-            same_manifest_identity = existing.manifest.model_copy(
-                update={"collected_at": dataset.manifest.collected_at}
-            ) == dataset.manifest
-            if (
-                not same_manifest_identity
-                or existing.observations != dataset.observations
-            ):
+            same_manifest_identity = (
+                existing.manifest.model_copy(update={"collected_at": dataset.manifest.collected_at})
+                == dataset.manifest
+            )
+            if not same_manifest_identity or existing.observations != dataset.observations:
                 raise ValueError("同一资金费率数据集 ID 的内容不一致")
             return target
 
@@ -613,10 +611,7 @@ async def fetch_binance_funding_history(
         tzinfo=UTC,
     )
     if end > current_month_started_at:
-        raise ValueError(
-            "Binance 月度资金费率归档不覆盖未完成月份；"
-            "end 必须不晚于当前 UTC 月初"
-        )
+        raise ValueError("Binance 月度资金费率归档不覆盖未完成月份；end 必须不晚于当前 UTC 月初")
     symbol = symbol.upper()
     if not symbol.isalnum():
         raise ValueError("历史资金费率 symbol 非法")
@@ -631,9 +626,7 @@ async def fetch_binance_funding_history(
     ) as client:
         for year, month in _months_covering(start, end):
             filename = f"{symbol}-fundingRate-{year:04d}-{month:02d}.zip"
-            archive_key = (
-                f"data/futures/um/monthly/fundingRate/{symbol}/{filename}"
-            )
+            archive_key = f"data/futures/um/monthly/fundingRate/{symbol}/{filename}"
             archive_response = await client.get(f"/{archive_key}")
             archive_response.raise_for_status()
             checksum_response = await client.get(f"/{archive_key}.CHECKSUM")
@@ -662,9 +655,7 @@ async def fetch_binance_funding_history(
                 )
             )
 
-    observations = tuple(
-        sorted(rows, key=lambda item: (item.available_at, item.funding_time))
-    )
+    observations = tuple(sorted(rows, key=lambda item: (item.available_at, item.funding_time)))
     if not observations:
         raise ValueError("指定区间没有 Binance 资金费率结算事实")
     verification_hash = None
@@ -968,9 +959,7 @@ def _parse_usdm_instrument(raw: Any, symbol: str) -> InstrumentSpec:
         raise ValueError("Binance USD-M exchangeInfo 缺少必要合约交易规则") from exc
 
 
-def _validate_bars(
-    bars: tuple[ClosedMarketBar, ...], manifest: HistoricalDatasetManifest
-) -> None:
+def _validate_bars(bars: tuple[ClosedMarketBar, ...], manifest: HistoricalDatasetManifest) -> None:
     if len(bars) != manifest.bar_count:
         raise ValueError("历史 K 线数量与 Manifest 不一致")
     if not bars:
@@ -986,9 +975,10 @@ def _validate_bars(
             raise ValueError("历史 K 线只能在收盘时刻之后可见")
         if previous is not None and bar.open_time <= previous.open_time:
             raise ValueError("历史 K 线必须按 open_time 严格递增且不重复")
-        if previous is not None and int(
-            (bar.open_time - previous.open_time).total_seconds() * 1000
-        ) != interval_ms:
+        if (
+            previous is not None
+            and int((bar.open_time - previous.open_time).total_seconds() * 1000) != interval_ms
+        ):
             raise ValueError("历史 K 线存在缺口；必须补齐或登记为新数据集后再评价")
         previous = bar
         if manifest.schema_version == "historical-bars-v2" and any(
@@ -1066,15 +1056,12 @@ def _validate_events(
     if len(events) != manifest.event_count:
         raise ValueError("历史事件数量与 Manifest 不一致")
     order = tuple((item.observed_at, item.evidence_id) for item in events)
-    if order != tuple(sorted(order)) or len({item.evidence_id for item in events}) != len(
-        events
-    ):
+    if order != tuple(sorted(order)) or len({item.evidence_id for item in events}) != len(events):
         raise ValueError("历史事件必须按 observed_at 排序且 evidence_id 唯一")
     if any(item.event_time > item.observed_at for item in events):
         raise ValueError("历史事件不能在发生前被观测")
     if any(
-        item.observed_at < manifest.requested_start
-        or item.observed_at >= manifest.requested_end
+        item.observed_at < manifest.requested_start or item.observed_at >= manifest.requested_end
         for item in events
     ):
         raise ValueError("历史事件包含请求窗口外的观测事实")
@@ -1092,9 +1079,7 @@ def _validate_funding_observations(
 ) -> None:
     if len(observations) != manifest.observation_count or not observations:
         raise ValueError("历史资金费率数量与 Manifest 不一致")
-    order = tuple(
-        (item.available_at, item.funding_time) for item in observations
-    )
+    order = tuple((item.available_at, item.funding_time) for item in observations)
     if order != tuple(sorted(order)):
         raise ValueError("历史资金费率必须按可见时间严格排序")
     if len({item.funding_time for item in observations}) != len(observations):
@@ -1105,31 +1090,37 @@ def _validate_funding_observations(
         item.funding_time < manifest.requested_start
         or item.funding_time >= manifest.requested_end
         or item.available_at
-        != item.funding_time
-        + timedelta(seconds=manifest.availability_lag_seconds)
+        != item.funding_time + timedelta(seconds=manifest.availability_lag_seconds)
         for item in observations
     ):
         raise ValueError("历史资金费率包含窗口外事实或可见延迟不一致")
     verified = manifest.schema_version == "historical-funding-rates-v2"
     if any(
-        verified != (item.mark_price is not None and item.rate_type is not None)
+        (verified and item.rate_type is None)
+        or (not verified and (item.mark_price is not None or item.rate_type is not None))
         for item in observations
     ):
         raise ValueError("历史资金费率明细与 Schema 验证级别不一致")
-    for previous, current in pairwise(observations):
-        if current.funding_time - previous.funding_time > timedelta(
-            hours=max(
-                previous.funding_interval_hours,
-                current.funding_interval_hours,
-            ),
-            minutes=1,
-        ):
-            raise ValueError("历史资金费率结算序列存在缺口")
-    if (
-        observations[0].funding_time - manifest.requested_start
-        > timedelta(hours=observations[0].funding_interval_hours, minutes=1)
-        or manifest.requested_end - observations[-1].funding_time
-        > timedelta(hours=observations[-1].funding_interval_hours, minutes=1)
+    # The advertised interval is not a promise that a settlement exists. Binance
+    # can omit a settlement while the contract is halted or funding is suspended.
+    # For v2, the archive and REST endpoint have already been compared as exact
+    # sets, so an absent timestamp is an authoritative absence and must not be
+    # interpolated into a cash flow. Archive-only v1 data cannot distinguish that
+    # fact from an incomplete source and therefore retains the continuity check.
+    if not verified:
+        for previous, current in pairwise(observations):
+            if current.funding_time - previous.funding_time > timedelta(
+                hours=max(
+                    previous.funding_interval_hours,
+                    current.funding_interval_hours,
+                ),
+                minutes=1,
+            ):
+                raise ValueError("历史资金费率结算序列存在缺口")
+    if observations[0].funding_time - manifest.requested_start > timedelta(
+        hours=observations[0].funding_interval_hours, minutes=1
+    ) or manifest.requested_end - observations[-1].funding_time > timedelta(
+        hours=observations[-1].funding_interval_hours, minutes=1
     ):
         raise ValueError("历史资金费率首尾没有覆盖完整请求窗口")
     if (
@@ -1188,18 +1179,20 @@ def _compact_funding(
         return values
     if schema_version != "historical-funding-rates-v2":
         raise ValueError("未知历史资金费率 Schema")
-    if observation.mark_price is None or observation.rate_type is None:
-        raise ValueError("v2 历史资金费率缺少 Mark Price 或 rate type")
-    return [*values, str(observation.mark_price), observation.rate_type.value]
+    if observation.rate_type is None:
+        raise ValueError("v2 历史资金费率缺少 rate type")
+    return [
+        *values,
+        None if observation.mark_price is None else str(observation.mark_price),
+        observation.rate_type.value,
+    ]
 
 
 def _funding_from_compact(
     row: Any,
     manifest: HistoricalFundingDatasetManifest,
 ) -> FundingRateObservation:
-    expected_length = (
-        4 if manifest.schema_version == "historical-funding-rates-v1" else 6
-    )
+    expected_length = 4 if manifest.schema_version == "historical-funding-rates-v1" else 6
     if not isinstance(row, list) or len(row) != expected_length:
         raise ValueError(f"历史资金费率条目必须包含 {expected_length} 个字段")
     return FundingRateObservation(
@@ -1208,7 +1201,7 @@ def _funding_from_compact(
         available_at=datetime.fromtimestamp(int(row[1]) / 1000, tz=UTC),
         funding_interval_hours=int(row[2]),
         funding_rate=Decimal(str(row[3])),
-        mark_price=(None if expected_length == 4 else Decimal(str(row[4]))),
+        mark_price=(None if expected_length == 4 or row[4] is None else Decimal(str(row[4]))),
         rate_type=(None if expected_length == 4 else FundingRateType(str(row[5]))),
     )
 
@@ -1330,7 +1323,7 @@ async def _verify_funding_observations(
             if len(page) < 1000:
                 break
 
-    details: dict[datetime, tuple[Decimal, Decimal, FundingRateType]] = {}
+    details: dict[datetime, tuple[Decimal, Decimal | None, FundingRateType]] = {}
     normalized: list[list[Any]] = []
     type_map = {
         "Regular": FundingRateType.REGULAR,
@@ -1345,16 +1338,17 @@ async def _verify_funding_observations(
                 tz=UTC,
             )
             funding_rate = Decimal(str(row["fundingRate"]))
-            mark_price = Decimal(str(row["markPrice"]))
+            raw_mark_price = str(row["markPrice"]).strip()
+            mark_price = Decimal(raw_mark_price) if raw_mark_price else None
             rate_type = type_map[str(row["rateType"])]
-            if mark_price <= 0 or funding_time in details:
+            if (mark_price is not None and mark_price <= 0) or funding_time in details:
                 raise ValueError("Binance Funding REST Mark Price 或时间身份非法")
             details[funding_time] = (funding_rate, mark_price, rate_type)
             normalized.append(
                 [
                     int(funding_time.timestamp() * 1000),
                     str(funding_rate),
-                    str(mark_price),
+                    None if mark_price is None else str(mark_price),
                     rate_type.value,
                 ]
             )

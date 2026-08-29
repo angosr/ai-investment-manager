@@ -1,0 +1,109 @@
+{
+  "schema_version": "reference-product-feasibility-v1",
+  "evaluated_at": "2026-08-29T00:10:18Z",
+  "scope": "事后揭示的静态多资产比较基线能否成为当前 Binance-only Reference 或资本政策",
+  "authority": "RETROSPECTIVE_REJECTION_ONLY",
+  "candidate_origin": {
+    "artifact": "evidence/quant-candidates/diversified-economic-trend-v1-result.json",
+    "artifact_sha256": "6fb45ec2aea3841a4641b6c560522d00a670c670673007a8255daac4f1be3703",
+    "status": "预登记趋势实验中的比较基线，不是 Reference 选择计划；结果揭示后不得把赢家事后晋升",
+    "economic_allocations": {
+      "BTC": "0.1666666666666666666666666667",
+      "PAXG": "0.1666666666666666666666666667",
+      "US_EQUITY": "0.1666666666666666666666666667",
+      "YIELDING_CASH_PROXY": "0.50"
+    },
+    "economic_metrics": {
+      "month_count": 56,
+      "annualized_return_fraction": "0.10705353298373144",
+      "annualized_excess_sharpe": "0.6092710805943121",
+      "maximum_drawdown_fraction": "0.19566522486006133",
+      "real_compound_return_fraction": "0.33663688443891737"
+    }
+  },
+  "mandate": {
+    "version": "provisional-total-portfolio-real-growth-v2",
+    "status": "PROVISIONAL",
+    "maximum_drawdown_fraction": "0.10"
+  },
+  "product_evidence": {
+    "BTCUSDT": {
+      "product": "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+      "verified_funding_dataset_id": "historical_funding_dataset_0f56499e1cb6dbc3b296",
+      "funding_manifest_sha256": "fe5d63f3681dcfb547a49038cdcd0f4d82a2dbccec643e95218e09c0dde616d3",
+      "funding_observations_sha256": "79eae0b38333c5e1e8d8ef05adc7c9d25ef789365e1e2ab905d6dd54b80dd9ab",
+      "funding_observation_count": 7212,
+      "funding_window": [
+        "2020-01-01T00:00:00Z",
+        "2026-08-01T00:00:00Z"
+      ],
+      "funding_rate_sum": "0.7808662099999798",
+      "simple_annualized_long_funding_cost_fraction": "0.11866502317500278",
+      "one_sixth_portfolio_annualized_drag_fraction": "0.019777503862500465",
+      "daily_basis_dataset_id": "historical_carry_dataset_ff50dce10205dfc0f265",
+      "daily_basis_manifest_sha256": "9d546b8db667ce2f5b1e6af1815decaa91ecfe89a84d6ff1f123795ec674149b",
+      "daily_basis_count": 2404,
+      "mean_close_basis_bps": "-1.67295020285001",
+      "p99_absolute_close_basis_bps": "14.569406285411812",
+      "maximum_absolute_close_basis_bps": "76.78850670210014"
+    },
+    "PAXGUSDT": {
+      "product": "BINANCE:USD_M_PERPETUAL:PAXGUSDT",
+      "carry_dataset_id": "historical_carry_dataset_eecfaac327c3e2e669db",
+      "carry_manifest_sha256": "7524cd9ee7b456495d52b1156e17cc3aae00158cefc98f98c5b92c7d0a72ce31",
+      "funding_dataset_id": "historical_funding_dataset_cb5ed70f5f7dfb0e2b64",
+      "funding_observation_count": 2921,
+      "funding_window": [
+        "2025-04-01T00:00:00Z",
+        "2026-08-01T00:00:00Z"
+      ],
+      "funding_rate_sum": "0.06382313000000102",
+      "simple_annualized_long_funding_cost_fraction": "0.04788373481399417",
+      "one_sixth_portfolio_annualized_drag_fraction": "0.007980622468999029",
+      "hourly_basis_count": 11688,
+      "mean_close_basis_bps": "-4.05006434584577",
+      "p99_absolute_close_basis_bps": "10.191102605231483",
+      "maximum_absolute_close_basis_bps": "24.21351931362503"
+    },
+    "SPYUSDT": {
+      "product": "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
+      "carry_dataset_id": "historical_carry_dataset_62a9f0fbe4bb14a64a6b",
+      "carry_manifest_sha256": "80719e5b912902db20a5955f85341f78fea0f4cc1702f61ba4a2aa21f1f08ed6",
+      "funding_dataset_id": "historical_funding_dataset_1c25243a3a047f99c753",
+      "funding_observation_count": 360,
+      "funding_window": [
+        "2026-04-06T00:00:00Z",
+        "2026-08-01T00:00:00Z"
+      ],
+      "funding_rate_sum": "-0.025969400000000004",
+      "observed_simple_annualized_long_funding_cashflow_fraction": "-0.08141908454935624",
+      "interpretation": "样本仅约 0.319 年且含特殊结算；负值表示样本内多头收到 funding，不能外推为长期收益或风险上界",
+      "daily_basis_count": 117,
+      "mean_close_basis_bps": "0.16236542859200095",
+      "p99_absolute_close_basis_bps": "23.84151909213483",
+      "maximum_absolute_close_basis_bps": "27.699944009987874"
+    },
+    "CASH": {
+      "economic_proxy": "同期一月期美国国库券总收益",
+      "current_binance_implementation": "零收益 USDT；尚无获准 defensive-yield 产品",
+      "supporting_artifact": "evidence/reference-selections/binance-defensive-yield-feasibility-2026-08-28.json",
+      "supporting_artifact_sha256": "129dee3b4ccb48f67020d40bc4a12675e6ce85aad1fea4e23c6d2ec44fbeb188"
+    }
+  },
+  "metric_semantics": {
+    "funding_sign": "正费率为多头支付，负费率为多头收取",
+    "simple_annualized_long_funding_cost": "请求窗口内 funding_rate 求和除以首末结算之间的年数；只用于显示产品现金流量级，不冒充复合收益",
+    "basis": "合约收盘价相对同期指数收盘价的 bps；不是可成交点差，也不授予产品资格"
+  },
+  "rejection_reasons": [
+    "POST_HOC_COMPARATOR_NOT_A_REGISTERED_REFERENCE_CANDIDATE",
+    "ECONOMIC_MAXIMUM_DRAWDOWN_EXCEEDS_MANDATE",
+    "YIELDING_CASH_PROXY_HAS_NO_ADMITTED_BINANCE_IMPLEMENTATION",
+    "PERPETUAL_FUNDING_MATERIALLY_DIFFERS_FROM_ECONOMIC_PROXY",
+    "SPY_PRODUCT_HISTORY_DOES_NOT_BOUND_LONG_TERM_FUNDING_OR_BASIS"
+  ],
+  "decision": "REJECTED_AS_REFERENCE_AND_CAPITAL_POLICY",
+  "permission": "NONE",
+  "runtime_change": "NONE",
+  "conclusion": "静态比较基线的经济最大回撤 19.57% 已超过当前 Mandate 的 10%，单凭这一项即不能成为 Reference；现金收益代理不可执行，BTC 与 PAXG 永续多头还分别带来约 11.87% 和 4.79% 的样本期简单年化 funding 成本，SPY 历史又过短。不得把其高于趋势候选的事后表现转成配置、Forecast、订单或生产代码。"
+}
