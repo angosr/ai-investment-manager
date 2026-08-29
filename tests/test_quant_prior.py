@@ -3,6 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from investment_manager.research.quant_prior import (
+    _expert_value,
     _mixture,
     _rolling_baselines,
     _Sample,
@@ -67,3 +68,14 @@ def test_quant_mixture_preserves_probability_contract() -> None:
 
     assert result == (Decimal("0.3"), Decimal("0.2"), Decimal("0.5"))
     assert sum(result, Decimal("0")) == 1
+
+
+def test_direction_experts_do_not_depend_on_har_coefficients() -> None:
+    sample = _sample(cutoff_day=0, outcome_day=3, phase=0, return_bps="0")
+
+    assert _expert_value(
+        "time_series_momentum", sample, har_coefficients=()
+    ) == Decimal("0")
+    assert _expert_value(
+        "standardized_reversal", sample, har_coefficients=()
+    ) == Decimal("0")

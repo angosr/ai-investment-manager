@@ -248,13 +248,11 @@ class _Expert:
     har_coefficients: tuple[Decimal, ...] = ()
 
     def distribution(self, sample: _Sample) -> tuple[Decimal, ...]:
-        value = {
-            "time_series_momentum": sample.trend,
-            "standardized_reversal": sample.reversal,
-            "har_realized_volatility": _har_prediction(
-                self.har_coefficients, sample.har_inputs
-            ),
-        }[self.expert_id]
+        value = _expert_value(
+            self.expert_id,
+            sample,
+            har_coefficients=self.har_coefficients,
+        )
         return self.probabilities[bisect_right(self.boundaries, value)]
 
 
@@ -367,11 +365,15 @@ def _evaluate_target(
     global_distribution = _distribution(fit, boundaries, len(bucket_ids))
     har_coefficients = _fit_har(fit)
     expert_values = {
-        "time_series_momentum": tuple(item.trend for item in fit),
-        "standardized_reversal": tuple(item.reversal for item in fit),
-        "har_realized_volatility": tuple(
-            _har_prediction(har_coefficients, item.har_inputs) for item in fit
-        ),
+        expert_id: tuple(
+            _expert_value(expert_id, item, har_coefficients=har_coefficients)
+            for item in fit
+        )
+        for expert_id in (
+            "time_series_momentum",
+            "standardized_reversal",
+            "har_realized_volatility",
+        )
     }
     experts: list[_Expert] = []
     expert_results: list[ExpertFit] = []
@@ -656,6 +658,21 @@ def _har_prediction(
     )
 
 
+def _expert_value(
+    expert_id: str,
+    sample: _Sample,
+    *,
+    har_coefficients: tuple[Decimal, ...],
+) -> Decimal:
+    if expert_id == "time_series_momentum":
+        return sample.trend
+    if expert_id == "standardized_reversal":
+        return sample.reversal
+    if expert_id == "har_realized_volatility":
+        return _har_prediction(har_coefficients, sample.har_inputs)
+    raise ValueError(f"未知 Quant 专家: {expert_id}")
+
+
 def _state_distributions(
     samples: tuple[_Sample, ...],
     *,
@@ -668,13 +685,11 @@ def _state_distributions(
 ) -> tuple[tuple[Decimal, ...], ...]:
     states: list[list[int]] = [[], [], []]
     for sample in samples:
-        value = {
-            "time_series_momentum": sample.trend,
-            "standardized_reversal": sample.reversal,
-            "har_realized_volatility": _har_prediction(
-                har_coefficients, sample.har_inputs
-            ),
-        }[expert_id]
+        value = _expert_value(
+            expert_id,
+            sample,
+            har_coefficients=har_coefficients,
+        )
         states[bisect_right(state_boundaries, value)].append(
             bisect_right(outcome_boundaries, sample.return_bps)
         )
