@@ -99,10 +99,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         if item.immediate_review_eligible
     } == {"fed-speeches", "fed-testimony"}
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v54"
+    assert config.decision_state.version == "portfolio-state-v55"
     assert config.decision_state.official_fact_policy.version == "official-fact-v21"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v57"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v58"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000

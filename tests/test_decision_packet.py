@@ -776,16 +776,15 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
     assert refrozen.intelligence_events[0].directly_triggered
     assert refrozen.facts[0].directly_triggered
     assert len(refrozen.facts) < len(inherited.facts)
-    unique_baseline_size = len(canonical_json(decision_packet_analysis_projection(refrozen)))
-    with pytest.raises(
-        DecisionPacketCapacityError,
-        match="final verified projection exceeds",
-    ):
-        replace_packet_previous_context(
-            refrozen,
-            previous,
-            maximum_analysis_characters=unique_baseline_size - 1,
-        )
+    assert set(refrozen.omitted_fact_revision_ids) > set(inherited.omitted_fact_revision_ids)
+    minimum = replace_packet_previous_context(
+        refrozen,
+        previous,
+        maximum_analysis_characters=2_000,
+    )
+    assert minimum.previous_context is not None
+    assert minimum.intelligence_events[0].directly_triggered
+    assert minimum.facts[0].directly_triggered
 
     with pytest.raises(
         DecisionPacketCapacityError,

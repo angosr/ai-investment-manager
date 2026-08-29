@@ -1177,6 +1177,7 @@ def _trim_one_packet_input_for_capacity(
     selected_intelligence: list[PacketIntelligenceEvent],
     omitted_facts: set[str],
     omitted_intelligence: set[str],
+    previous_context_available: bool,
 ) -> bool:
     """Remove the lowest-value non-direct input using one canonical order."""
 
@@ -1219,11 +1220,28 @@ def _trim_one_packet_input_for_capacity(
         removed = selected_facts.pop(removable_redundant_state)
         omitted_facts.add(removed.revision_id)
         return True
-    # A previous WorldModel is a derived hypothesis, not a current observation.
-    # Never evict the last representative of a causal channel merely because a
-    # previous model exists.  If the minimum current baseline cannot fit after
-    # redundant state and non-direct background have been removed, the Release
-    # capacity contract is invalid and must fail deterministically.
+    # A verified previous WorldModel already carries the last structural
+    # baseline.  Only in that case may the final projection remove the
+    # lowest-ranked non-triggering continuous snapshot after every cheaper
+    # omission has been exhausted.  Direct evidence and durable policy state
+    # remain protected; the omitted revision stays in the immutable Packet.
+    # An initial WorldModel has no inherited baseline and must fail instead of
+    # silently losing the last representative of a causal channel.
+    removable_background_state = next(
+        (
+            index
+            for index in range(len(selected_facts) - 1, -1, -1)
+            if previous_context_available
+            and not selected_facts[index].directly_triggered
+            and selected_facts[index].fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
+            and not _is_durable_policy_state(selected_facts[index])
+        ),
+        None,
+    )
+    if removable_background_state is not None:
+        removed = selected_facts.pop(removable_background_state)
+        omitted_facts.add(removed.revision_id)
+        return True
     return False
 
 
@@ -1303,6 +1321,7 @@ def replace_packet_previous_context(
             selected_intelligence=selected_intelligence,
             omitted_facts=omitted_facts,
             omitted_intelligence=omitted_intelligence,
+            previous_context_available=True,
         ):
             continue
         raise DecisionPacketCapacityError(
@@ -1485,6 +1504,7 @@ class DecisionPacketBuilder:
                 selected_intelligence=selected_intelligence,
                 omitted_facts=omitted_facts,
                 omitted_intelligence=omitted_intelligence,
+                previous_context_available=previous_context is not None,
             ):
                 continue
             raise DecisionPacketCapacityError(
