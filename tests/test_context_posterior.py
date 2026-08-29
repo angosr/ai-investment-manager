@@ -112,7 +112,6 @@ from investment_manager.state.decision.packet import (
     PacketFact,
     PacketPortfolioState,
     PacketReviewRequest,
-    RequiredView,
 )
 from investment_manager.state.models import FactDecisionMateriality, FactRevisionStatus
 
@@ -134,7 +133,6 @@ def _packet() -> DecisionPacket:
         question="更新同一截止的组合世界认知。",
         trigger_ids=(review.review_id,),
         mandate_exposures=(MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),),
-        required_views=(RequiredView(asset="BTC", horizon_minutes=4320),),
         portfolio=PacketPortfolioState(
             quote_balance=Decimal("10000"),
             equity=Decimal("10000"),

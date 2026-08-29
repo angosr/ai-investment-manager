@@ -197,7 +197,6 @@ def test_preparation_exposes_closed_reference_and_degrades_missing_schedule(
             ObservationAsset(
                 asset="PAXG",
                 market_symbol="PAXGUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         observation_references=(policy,),
@@ -264,7 +263,6 @@ def test_economic_reference_round_trips_into_model_visible_packet(
             ObservationAsset(
                 asset="PAXG",
                 market_symbol="PAXGUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         observation_references=(policy,),
@@ -278,7 +276,7 @@ def test_economic_reference_round_trips_into_model_visible_packet(
         engine,
         DecisionPacketPolicy(
             version="decision-packet-economic-reference-v1",
-            schema_version="decision-packet-v21",
+            schema_version="decision-packet-v22",
         ),
     ).assemble(
         mandate=mandate,

@@ -79,7 +79,7 @@ function AssessmentBody({
               组合目标 · {exposure.asset} / {exposure.economic_exposure}
             </span>
           ))}
-          {snapshot.required_views.map((view) => (
+          {(snapshot.required_views ?? []).map((view) => (
             <span className={`${styles.flag} ${styles.warn}`} key={`${view.asset}-${view.horizon_minutes}`}>
               只读观察 · {view.asset} / {view.horizon_minutes} 分钟
             </span>

@@ -106,8 +106,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v57"
     assert config.decision_state.official_fact_policy.version == "official-fact-v21"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v61"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v21"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v62"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v22"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
@@ -151,7 +151,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BTCUSDT",
         "ETHUSDT",
     )
-    assert config.assessment.version == "context-assessment-v61"
+    assert config.assessment.version == "context-assessment-v62"
     assert config.outcome_evaluation.version == "typed-outcome-settlement-v60"
     assert config.outcome_evaluation.forecast_prior.enabled
     assert config.outcome_evaluation.forecast_prior.artifact_id == (
@@ -160,7 +160,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v39"
     assert config.trigger.debounce_seconds == 300
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v15"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v16"
     assert tuple(
         (item.target_asset, item.reference_instrument_key)
         for item in config.assessment.mandate.observation_references

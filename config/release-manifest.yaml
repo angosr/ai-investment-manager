@@ -17,7 +17,7 @@ component_versions:
   - [information, information-intake-v50]
   - [pipeline, off-pipeline-v8]
   - [codex_runtime, codex-runtime-v11]
-  - [assessment, context-assessment-v61]
+  - [assessment, context-assessment-v62]
   - [codex_accounts, local-directory-account-registry-v2]
   - [binance_testnet, binance-spot-testnet-v1]
   - [governance, governance-cycle-v4]

@@ -35,7 +35,7 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "world-model-input-v8"
+ASSESS_INPUT_VERSION = "world-model-input-v9"
 ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v10"
 
 
@@ -83,9 +83,7 @@ def assess_behavior_hash(
         mandate_exposures=tuple(
             (item.economic_exposure, item.asset) for item in packet.mandate_exposures
         ),
-        observation_windows=tuple(
-            (item.asset, item.horizon_minutes) for item in packet.required_views
-        ),
+        observation_assets=tuple((item.asset, item.market_symbol) for item in packet.asset_states),
     )
 
 
@@ -101,10 +99,8 @@ def configured_assess_behavior_hash(config: AppConfig) -> str:
         mandate_exposures=tuple(
             (item.economic_exposure, item.asset) for item in mandate.mandate_exposures
         ),
-        observation_windows=tuple(
-            (asset.asset, horizon)
-            for asset in mandate.observation_assets
-            for horizon in asset.horizons_minutes
+        observation_assets=tuple(
+            (asset.asset, asset.market_symbol) for asset in mandate.observation_assets
         ),
     )
 
@@ -116,7 +112,7 @@ def _assess_behavior_hash(
     packet_policy_version: str,
     mandate_version: str,
     mandate_exposures: tuple[tuple[str, str], ...],
-    observation_windows: tuple[tuple[str, int], ...],
+    observation_assets: tuple[tuple[str, str], ...],
 ) -> str:
     return content_hash(
         {
@@ -129,7 +125,7 @@ def _assess_behavior_hash(
             "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
             "mandate_version": mandate_version,
             "mandate_exposures": mandate_exposures,
-            "observation_windows": observation_windows,
+            "observation_assets": observation_assets,
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,
             "expected_cli_version": runtime.expected_cli_version,

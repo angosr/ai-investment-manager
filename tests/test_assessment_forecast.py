@@ -49,7 +49,6 @@ from investment_manager.state.decision.packet import (
     PacketAssetState,
     PacketDelta,
     PacketPortfolioState,
-    RequiredView,
 )
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -67,7 +66,6 @@ def _packet() -> DecisionPacket:
         question="Assess the portfolio context.",
         trigger_ids=("delta-1",),
         mandate_exposures=(MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),),
-        required_views=(RequiredView(asset="BTC", horizon_minutes=240),),
         portfolio=PacketPortfolioState(
             quote_balance=Decimal("10000"),
             equity=Decimal("10000"),

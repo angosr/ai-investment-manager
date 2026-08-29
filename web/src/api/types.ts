@@ -403,7 +403,7 @@ export interface AssessmentInputSnapshot {
   as_of: string;
   question: string;
   mandate_exposures: { economic_exposure: string; asset: string }[];
-  required_views: { asset: string; horizon_minutes: number }[];
+  required_views?: { asset: string; horizon_minutes: number }[];
   asset_states: {
     asset: string;
     market_symbol: string;

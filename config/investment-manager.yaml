@@ -118,8 +118,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v61
-    schema_version: decision-packet-v21
+    version: decision-packet-policy-v62
+    schema_version: decision-packet-v22
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
     maximum_facts: 20
@@ -555,11 +555,11 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v61
+  version: context-assessment-v62
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
-    version: primary-portfolio-mandate-v15
+    version: primary-portfolio-mandate-v16
     analysis_scope: primary-portfolio
     question: 以点时证据维护组合级可证伪世界模型，解释外生事件经利率、美元、流动性、资金行为与市场结构传导至可交易资产的主路径和竞争路径；不为没有独立盈利证据的候选制造资本结论。
     mandate_exposures:
@@ -569,13 +569,10 @@ assessment:
     observation_assets:
       - asset: BTC
         market_symbol: BTCUSDT
-        horizons_minutes: [60, 240]
       - asset: ETH
         market_symbol: ETHUSDT
-        horizons_minutes: [60, 240]
       - asset: PAXG
         market_symbol: PAXGUSDT
-        horizons_minutes: [60, 240]
     # 只观察的同经济底层参照随 State 点时冻结；不能成为预测目标、资本候选或订单。
     observation_references:
       - target_asset: PAXG

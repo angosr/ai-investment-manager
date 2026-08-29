@@ -286,7 +286,6 @@ def test_fact_state_projector_records_frozen_evidence_and_fact_revision(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("US_MONETARY_POLICY",),
@@ -369,7 +368,6 @@ def test_packet_preparation_runs_only_for_material_canonical_fact_change(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("US_MONETARY_POLICY",),
@@ -564,7 +562,6 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("MARKET_VOLATILITY",),
@@ -671,7 +668,6 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("US_MONETARY_POLICY",),
@@ -776,7 +772,6 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("EXTERNAL_INFORMATION",),
@@ -859,7 +854,6 @@ def test_projection_version_baseline_does_not_swallow_explicit_material_event(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("EXTERNAL_INFORMATION",),
@@ -1006,7 +1000,6 @@ def test_explicit_review_always_freezes_its_bound_event(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("EXTERNAL_INFORMATION",),
@@ -1091,7 +1084,6 @@ def test_explicit_review_receives_recent_background_intelligence(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("EXTERNAL_INFORMATION",),
@@ -1182,7 +1174,6 @@ def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("EXTERNAL_INFORMATION",),
@@ -1263,7 +1254,6 @@ def test_direct_high_impact_aggregator_lead_is_visible_but_not_directional(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("EXTERNAL_INFORMATION",),
@@ -1335,7 +1325,6 @@ def test_packet_preparation_promotes_only_explicit_market_shock(
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("MARKET_VOLATILITY",),

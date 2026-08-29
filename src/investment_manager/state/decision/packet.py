@@ -582,15 +582,6 @@ class MandateExposure(FrozenModel):
 class ObservationAsset(FrozenModel):
     asset: str = Field(min_length=1)
     market_symbol: str = Field(min_length=1)
-    horizons_minutes: tuple[int, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def horizons_must_be_positive_unique_and_sorted(self):
-        if any(value <= 0 for value in self.horizons_minutes):
-            raise ValueError("分析时域必须为正数")
-        if tuple(sorted(set(self.horizons_minutes))) != self.horizons_minutes:
-            raise ValueError("分析时域必须唯一且排序")
-        return self
 
 
 class AnalysisMandate(FrozenModel):
@@ -1122,7 +1113,12 @@ class DecisionPacket(FrozenModel):
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     # v19 历史快照没有该字段；v20 起它是 Capital 可投资经济暴露的唯一模型输入。
     mandate_exposures: tuple[MandateExposure, ...] = ()
-    required_views: tuple[RequiredView, ...] = Field(min_length=1)
+    # v21 及更早的不可变快照曾把 FactDelta 时域误投影成资产视图；当前
+    # packet 不再生成该字段，但仍可准确读取历史 AI 输入。
+    required_views: tuple[RequiredView, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
     # Read-only historical field. Current WorldModel packets do not carry
     # portfolio state; capital truth belongs exclusively to Portfolio.
     portfolio: PacketPortfolioState | None = None
@@ -1189,16 +1185,19 @@ class DecisionPacket(FrozenModel):
         asset_keys = tuple(item.asset for item in self.asset_states)
         if tuple(sorted(set(asset_keys))) != asset_keys:
             raise ValueError("DecisionPacket asset_states 必须按资产唯一且排序")
-        if set(asset_keys) != {item.asset for item in self.required_views}:
-            raise ValueError("DecisionPacket asset_states 与 required_views 不一致")
+        if schema_generation is not None and schema_generation <= 21:
+            if required_view_keys and set(asset_keys) != {
+                item.asset for item in self.required_views
+            }:
+                raise ValueError("历史 DecisionPacket asset_states 与 required_views 不一致")
+        elif required_view_keys:
+            raise ValueError("当前 DecisionPacket 不得把 FactDelta 时域伪装成资产视图")
         derivative_keys = tuple(item.asset for item in self.derivative_states)
         if tuple(sorted(set(derivative_keys))) != derivative_keys:
             raise ValueError("DecisionPacket derivative_states 必须按资产唯一且排序")
         if self.derivative_states and set(derivative_keys) != set(asset_keys):
             raise ValueError("DecisionPacket derivative_states 与 asset_states 不一致")
-        reference_keys = tuple(
-            item.target_asset for item in self.economic_reference_states
-        )
+        reference_keys = tuple(item.target_asset for item in self.economic_reference_states)
         if tuple(sorted(set(reference_keys))) != reference_keys:
             raise ValueError("DecisionPacket economic_reference_states 必须按资产唯一排序")
         if not set(reference_keys).issubset(asset_keys):
@@ -1538,11 +1537,6 @@ class DecisionPacketBuilder:
             PacketEconomicReferenceState.from_snapshot(item)
             for item in sorted(economic_references, key=lambda value: value.target_asset)
         )
-        required_views = tuple(
-            RequiredView(asset=item.asset, horizon_minutes=horizon)
-            for item in mandate.observation_assets
-            for horizon in item.horizons_minutes
-        )
         trigger_ids = (
             *(delta.delta_id for delta in ordered_deltas),
             *(review.review_id for review in ordered_reviews),
@@ -1557,7 +1551,6 @@ class DecisionPacketBuilder:
             "question": mandate.question,
             "trigger_ids": trigger_ids,
             "mandate_exposures": mandate.mandate_exposures,
-            "required_views": required_views,
             "portfolio": (self._portfolio_state(account) if account is not None else None),
             "asset_states": asset_states,
             "derivative_states": derivative_states,
@@ -1742,17 +1735,14 @@ class DecisionPacketBuilder:
         reference_assets = tuple(item.target_asset for item in economic_references)
         if tuple(sorted(set(reference_assets))) != reference_assets:
             raise ValueError("EconomicReferenceSnapshot 必须按目标资产唯一排序")
-        configured_references = {
-            item.target_asset: item for item in mandate.observation_references
-        }
+        configured_references = {item.target_asset: item for item in mandate.observation_references}
         if not set(reference_assets).issubset(configured_references):
             raise ValueError("EconomicReferenceSnapshot 不属于 Mandate reference")
         for reference in economic_references:
             policy = configured_references[reference.target_asset]
             if (
                 reference.as_of != state.as_of
-                or reference.reference_instrument.key
-                != policy.reference_instrument_key
+                or reference.reference_instrument.key != policy.reference_instrument_key
                 or reference.target_price_per_reference_price
                 != policy.target_price_per_reference_price
             ):

@@ -108,12 +108,10 @@ def _mandate() -> AnalysisMandate:
             ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
-                horizons_minutes=(60, 240),
             ),
             ObservationAsset(
                 asset="ETH",
                 market_symbol="ETHUSDT",
-                horizons_minutes=(60, 240),
             ),
         ),
         required_risk_factors=("REGULATION",),
@@ -394,14 +392,10 @@ def test_packet_is_one_multi_asset_high_density_projection(app_config, replay_in
     _, packet = _packet(app_config, replay_input)
 
     assert tuple(item.asset for item in packet.asset_states) == ("BTC", "ETH")
-    assert tuple((item.asset, item.horizon_minutes) for item in packet.required_views) == (
-        ("BTC", 60),
-        ("BTC", 240),
-        ("ETH", 60),
-        ("ETH", 240),
-    )
+    assert packet.required_views == ()
     assert packet.trigger_ids == ("delta-1", "delta-2")
     encoded = canonical_json(packet)
+    assert '"required_views"' not in encoded
     assert '"bars"' not in encoded
     assert "<b>" not in encoded
     assert len(encoded) < 12_000
@@ -613,7 +607,6 @@ def test_direct_fact_cannot_be_silently_truncated(app_config, replay_input) -> N
                     ObservationAsset(
                         asset="BTC",
                         market_symbol="BTCUSDT",
-                        horizons_minutes=(60,),
                     ),
                 ),
                 required_risk_factors=("REGULATION",),
@@ -694,7 +687,6 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
                 ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
-                    horizons_minutes=(60,),
                 ),
             ),
             required_risk_factors=("REGULATION",),
@@ -827,7 +819,6 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
                     ObservationAsset(
                         asset="BTC",
                         market_symbol="BTCUSDT",
-                        horizons_minutes=(60,),
                     ),
                 ),
                 required_risk_factors=("REGULATION",),
@@ -936,7 +927,6 @@ def test_packet_omits_temporally_distant_background_facts_but_keeps_direct_fact(
                 ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
-                    horizons_minutes=(60,),
                 ),
             ),
             required_risk_factors=("REGULATION",),
@@ -998,7 +988,6 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
                 ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
-                    horizons_minutes=(60,),
                 ),
             ),
             required_risk_factors=("REGULATION",),
@@ -1132,7 +1121,6 @@ def test_compact_state_refills_capacity_rejected_by_verbose_fact_budget(
                 ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
-                    horizons_minutes=(60,),
                 ),
             ),
             required_risk_factors=(
@@ -1274,7 +1262,6 @@ def test_packet_keeps_treasury_calendar_context_beyond_event_window(
                 ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
-                    horizons_minutes=(60,),
                 ),
             ),
             required_risk_factors=("REGULATION",),
@@ -1383,7 +1370,6 @@ def test_packet_preserves_transmission_evidence_before_repeating_calendar_rows(
                 ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
-                    horizons_minutes=(60,),
                 ),
             ),
             required_risk_factors=("REGULATION",),
@@ -1511,7 +1497,6 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
                 ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
-                    horizons_minutes=(60,),
                 ),
             ),
             required_risk_factors=(
@@ -1967,6 +1952,7 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     assert "联合因果解释" in prompt
     assert "同一因果骨架" in prompt
     assert "上一轮每个机制必须由本轮证据明确延续或退休" in prompt
+    assert '"required_views"' not in prompt
     assert len("\n".join(ASSESS_INSTRUCTIONS)) < 1_000
     assert "decision_packet_json=" in prompt
 
