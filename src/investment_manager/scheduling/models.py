@@ -112,6 +112,10 @@ class AnalysisTriggerEvent(FrozenModel):
     dedup_key: str
     evidence_ids: tuple[str, ...] = Field(default=(), max_length=100)
     affected_symbols: tuple[str, ...] = Field(default=(), max_length=100)
+    material_forecast_eligible: bool = Field(
+        default=False,
+        exclude_if=lambda value: value is False,
+    )
     review_reason: str | None = Field(default=None, min_length=1, max_length=500)
     expires_at: datetime | None = None
     plan_revision: int | None = Field(default=None, ge=1)
@@ -143,10 +147,14 @@ class AnalysisTriggerEvent(FrozenModel):
             raise ValueError("触发 evidence_ids 不得重复")
         if tuple(sorted(set(self.affected_symbols))) != self.affected_symbols:
             raise ValueError("触发 affected_symbols 必须唯一且排序")
-        if (
-            self.trigger_type != AnalysisTriggerType.AGENT_WAKEUP
-            and self.review_reason is not None
-        ):
+        if self.material_forecast_eligible and not self.evidence_ids:
+            raise ValueError("材料 Forecast 触发必须绑定 Evidence")
+        if self.material_forecast_eligible and self.trigger_type not in {
+            AnalysisTriggerType.CANONICAL_FACT_REVISED,
+            AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        }:
+            raise ValueError("只有合格事实或信息事件可以形成材料 Forecast")
+        if self.trigger_type != AnalysisTriggerType.AGENT_WAKEUP and self.review_reason is not None:
             raise ValueError("只有 AGENT_WAKEUP 可以包含 review_reason")
         return self
 
@@ -162,13 +170,12 @@ def build_trigger_event(
     dedup_key: str,
     evidence_ids: tuple[str, ...] = (),
     affected_symbols: tuple[str, ...] = (),
+    material_forecast_eligible: bool = False,
     review_reason: str | None = None,
     expires_at: datetime | None = None,
     plan_revision: int | None = None,
 ) -> AnalysisTriggerEvent:
-    if (trigger_type == AnalysisTriggerType.AGENT_WAKEUP) != (
-        review_reason is not None
-    ):
+    if (trigger_type == AnalysisTriggerType.AGENT_WAKEUP) != (review_reason is not None):
         raise ValueError("新 AGENT_WAKEUP 必须且只能携带 review_reason")
     return AnalysisTriggerEvent(
         trigger_id=stable_id(
@@ -187,6 +194,7 @@ def build_trigger_event(
         dedup_key=dedup_key,
         evidence_ids=tuple(sorted(evidence_ids)),
         affected_symbols=tuple(sorted(set(affected_symbols))),
+        material_forecast_eligible=material_forecast_eligible,
         review_reason=review_reason,
         expires_at=expires_at,
         plan_revision=plan_revision,
@@ -247,11 +255,7 @@ def _retained_review_wakeups(
 ) -> tuple[ScheduledWakeup, ...]:
     """Carry only future review intent; evidence arrival owns its own trigger."""
 
-    return tuple(
-        item
-        for item in wakeups
-        if item.expires_at > updated_at and not item.evidence_ids
-    )
+    return tuple(item for item in wakeups if item.expires_at > updated_at and not item.evidence_ids)
 
 
 class TriggerPlanOrigin(StrEnum):
@@ -528,9 +532,7 @@ class TriggerTiming:
     reconsider_at: datetime
 
 
-def trigger_plan_accepts(
-    plan: Mapping[str, Any], trigger: Mapping[str, Any]
-) -> bool:
+def trigger_plan_accepts(plan: Mapping[str, Any], trigger: Mapping[str, Any]) -> bool:
     trigger_type = trigger.get("trigger_type")
     if trigger_type == AnalysisTriggerType.AGENT_WAKEUP.value:
         return True
@@ -585,24 +587,17 @@ def trigger_reconsideration(
     if not pending:
         raise ValueError("触发重算至少需要一个待处理事件")
     last = require_utc(last_analysis_at) if last_analysis_at is not None else None
-    retry_at = (
-        require_utc(input_retry_not_before)
-        if input_retry_not_before is not None
-        else None
-    )
+    retry_at = require_utc(input_retry_not_before) if input_retry_not_before is not None else None
     earliest = current
     if retry_at is not None:
         earliest = max(earliest, retry_at)
     if int(pending[0].get("priority", 0)) < 100:
         first_seen = min(_trigger_payload_time(item["observed_at"]) for item in pending)
-        coalesce = max(
-            trigger_rule_value(plan, item, "coalesce_seconds") for item in pending
-        )
+        coalesce = max(trigger_rule_value(plan, item, "coalesce_seconds") for item in pending)
         earliest = max(earliest, first_seen + timedelta(seconds=coalesce))
         if last is not None:
             cooldown = max(
-                trigger_rule_value(plan, item, "ordinary_cooldown_seconds")
-                for item in pending
+                trigger_rule_value(plan, item, "ordinary_cooldown_seconds") for item in pending
             )
             earliest = max(earliest, last + timedelta(seconds=cooldown))
     if wake_at_expiry:

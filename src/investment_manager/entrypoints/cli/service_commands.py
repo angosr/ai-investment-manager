@@ -438,14 +438,14 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         for feed in policy.official_publication_feeds
     )
     sources.extend(publication_sources)
-    if policy.newsnow_sources:
+    if policy.newsnow_event_feeds:
         sources.append(
             NewsNowSource(
                 HttpxNewsNowTransport(
                     policy.newsnow_base_url,
                     timeout_seconds=policy.request_timeout_seconds,
                 ),
-                sources=policy.newsnow_sources,
+                feeds=policy.newsnow_event_feeds,
                 maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
             )
         )

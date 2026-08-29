@@ -33,11 +33,13 @@ from investment_manager.information.official.document import (
 )
 from investment_manager.information.official.publications import OfficialPublicationSource
 from investment_manager.information.policy import (
+    NewsNowEventFeed,
     OfficialEventFeed,
     OfficialPublicationFeed,
 )
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
+from investment_manager.scheduling.models import AnalysisTriggerEvent
 from investment_manager.scheduling.tables import analysis_trigger_events
 from investment_manager.schema import create_schema
 
@@ -171,7 +173,13 @@ def test_newsnow_fast_source_parses_millisecond_and_iso_timestamps() -> None:
     )
     source = NewsNowSource(
         transport,
-        sources=("mktnews-flash", "fastbull-express"),
+        feeds=(
+            NewsNowEventFeed(
+                stream_id="mktnews-flash",
+                immediate_review_eligible=True,
+            ),
+            NewsNowEventFeed(stream_id="fastbull-express"),
+        ),
         maximum_age_seconds=300,
         clock=lambda: observed_at,
     )
@@ -185,7 +193,9 @@ def test_newsnow_fast_source_parses_millisecond_and_iso_timestamps() -> None:
     ]
     assert {item.acquisition_route for item in items} == {"newsnow-fast-v1"}
     assert items[0].event_time == datetime(2026, 8, 18, 23, 14, 8, tzinfo=UTC)
-    assert items[0].body == "Bitcoin ETF inflow accelerates"
+    assert items[0].body == "Institutional Bitcoin demand rises."
+    assert items[0].immediate_review_eligible
+    assert not items[1].immediate_review_eligible
     assert items[1].event_time == datetime.fromtimestamp(1787094843, tz=UTC)
     assert [item.rank for item in items] == [1, 1]
 
@@ -209,7 +219,7 @@ def test_newsnow_bounds_oversized_external_text_without_losing_the_item() -> Non
                 }
             }
         ),
-        sources=("mktnews-flash",),
+        feeds=(NewsNowEventFeed(stream_id="mktnews-flash"),),
         maximum_age_seconds=300,
         clock=lambda: observed_at,
     )
@@ -240,7 +250,7 @@ def test_newsnow_fast_source_rejects_future_event_time() -> None:
                 }
             }
         ),
-        sources=("mktnews-flash",),
+        feeds=(NewsNowEventFeed(stream_id="mktnews-flash"),),
         maximum_age_seconds=300,
         clock=lambda: observed_at,
     )
@@ -272,7 +282,7 @@ def test_newsnow_fast_source_skips_items_older_than_trigger_window() -> None:
                 }
             }
         ),
-        sources=("mktnews-flash",),
+        feeds=(NewsNowEventFeed(stream_id="mktnews-flash"),),
         maximum_age_seconds=300,
         clock=lambda: observed_at,
     )
@@ -557,28 +567,88 @@ def test_official_macro_release_has_ai_trigger_priority() -> None:
 
     assert event is not None
     assert event.symbols == ("BTCUSDT", "ETHUSDT")
-    assert event.trigger_priority == 85
+    assert event.trigger_priority == 100
 
 
-def test_ranked_aggregator_lead_keeps_attention_without_immediate_review() -> None:
+def test_ranked_aggregator_lead_can_wake_review_without_directional_evidence() -> None:
     observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
     event = EventNormalizer(version="aggregator-attention-test-v1").normalize(
         RawIntelligenceItem(
-            source_item_id="hormuz-corridor",
+            source_item_id="shipping-corridor",
             source="aggregator:market-wire",
             acquisition_route="aggregator-feed-v1",
             event_time=observed_at,
             observed_at=observed_at,
-            title="霍尔木兹海峡将开放临时航道",
+            title="国际航运通道因武装冲突临时关闭",
             source_reliability=Decimal("0.60"),
             rank=1,
+            immediate_review_eligible=True,
         )
     )
 
     assert event is not None
     assert event.attention_priority == Decimal("0.8415")
-    assert event.trigger_priority == 0
+    assert event.trigger_priority == 99
+    assert not event.directional_support_eligible
     assert event.source_reliability == Decimal("0.60")
+
+
+def test_event_store_freezes_review_and_material_forecast_eligibility_separately() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlEventStore(
+        engine,
+        pipeline_id="eligibility-boundary-v1",
+        analysis_owner_symbol="BTCUSDT",
+    )
+    normalizer = EventNormalizer(
+        version="eligibility-boundary-v1",
+        universe=("BTCUSDT", "ETHUSDT"),
+    )
+    weak = normalizer.normalize(
+        RawIntelligenceItem(
+            source_item_id="weak-shipping-lead",
+            source="aggregate:market-flash",
+            event_time=observed_at,
+            observed_at=observed_at,
+            title="国际航运因武装冲突中断",
+            rank=1,
+            immediate_review_eligible=True,
+        )
+    )
+    qualified = normalizer.normalize(
+        RawIntelligenceItem(
+            source_item_id="official-policy-release",
+            source="official:central-bank",
+            event_time=observed_at + timedelta(seconds=1),
+            observed_at=observed_at + timedelta(seconds=1),
+            title="Central bank monetary policy statement",
+            rank=0,
+            immediate_review_eligible=True,
+            directional_support_eligible=True,
+        )
+    )
+    assert weak is not None and qualified is not None
+
+    assert store.put(weak)
+    assert store.put(qualified)
+    with engine.connect() as connection:
+        payloads = tuple(
+            connection.execute(
+                select(analysis_trigger_events.c.payload).order_by(
+                    analysis_trigger_events.c.observed_at
+                )
+            ).scalars()
+        )
+    weak_trigger, qualified_trigger = (
+        AnalysisTriggerEvent.model_validate(item) for item in payloads
+    )
+
+    assert weak_trigger.priority == 99
+    assert not weak_trigger.material_forecast_eligible
+    assert qualified_trigger.priority == 100
+    assert qualified_trigger.material_forecast_eligible
 
 
 def test_legacy_intelligence_impact_loads_as_non_triggering_attention_priority() -> None:
@@ -1134,8 +1204,8 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
         )
     )
     assert general is not None
-    assert general.relevance == Decimal("0.50")
-    assert general.attention_priority == Decimal("0.495")
+    assert general.relevance == Decimal("0.85")
+    assert general.attention_priority == Decimal("0.8415")
 
     dollar_index = EventNormalizer(universe=("BTCUSDT", "ETHUSDT")).normalize(
         RawIntelligenceItem(
@@ -1148,7 +1218,7 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
         )
     )
     assert dollar_index is not None
-    assert dollar_index.relevance == Decimal("0.50")
+    assert dollar_index.relevance == Decimal("0.85")
 
 
 def test_dollar_denominated_unrelated_news_does_not_route_to_crypto() -> None:
@@ -1276,23 +1346,23 @@ def test_normalizer_keeps_broad_macro_context_without_immediate_review() -> None
             rank=1,
         )
         event = normalizer.normalize(item)
-        assert event is not None and event.relevance == Decimal("0.50")
+        assert event is not None and event.relevance == Decimal("0.85")
 
 
-def test_normalizer_prioritizes_crypto_context_or_specific_macro_shock_for_discovery() -> None:
+def test_normalizer_uses_one_relevance_level_for_cross_asset_discovery() -> None:
     observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
     normalizer = EventNormalizer(
         version="trendradar-collector-v8",
         universe=("BTCUSDT", "ETHUSDT"),
     )
     cases = (
-        ("A major crypto exchange halts withdrawals", Decimal("0.85")),
-        ("CFTC Innovation Advisory Committee publishes its agenda", Decimal("0.85")),
-        ("Federal Reserve rate decision raises rates", Decimal("0.85")),
-        ("非农就业数据大幅低于预期", Decimal("0.85")),
-        ("霍尔木兹海峡航运中断", Decimal("0.85")),
+        "A major crypto exchange halts withdrawals",
+        "Central bank monetary policy guidance changed",
+        "Federal Reserve rate decision raises rates",
+        "非农就业数据大幅低于预期",
+        "国际航运因武装冲突中断",
     )
-    for index, (title, expected_relevance) in enumerate(cases):
+    for index, title in enumerate(cases):
         event = normalizer.normalize(
             RawIntelligenceItem(
                 source_item_id=f"specific-shock-{index}",
@@ -1305,7 +1375,7 @@ def test_normalizer_prioritizes_crypto_context_or_specific_macro_shock_for_disco
         )
         assert event is not None
         assert event.symbols == ("BTCUSDT", "ETHUSDT")
-        assert event.relevance == expected_relevance
+        assert event.relevance == Decimal("0.85")
         assert event.attention_priority == Decimal("0.8415")
         assert not event.immediate_review_eligible
         assert event.trigger_priority == 0

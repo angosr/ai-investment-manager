@@ -118,7 +118,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v59
+    version: decision-packet-policy-v60
     schema_version: decision-packet-v21
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -299,10 +299,11 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v37
+  version: analysis-trigger-v38
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
-  debounce_seconds: 120
+  # 聚合弱线索合并五分钟；官方直达事件以 priority=100 绕过等待。
+  debounce_seconds: 300
   minimum_intelligence_review_priority: "0.80"
   volatility_jump_threshold: "0.01"
   volatility_window_seconds: 600
@@ -414,12 +415,15 @@ shadow:
   analysis_deadline_seconds: 900
 
 information:
-  version: information-intake-v47
-  normalizer_version: trendradar-collector-v12
+  version: information-intake-v48
+  normalizer_version: trendradar-collector-v13
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
-  # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。
-  newsnow_sources: [mktnews-flash, fastbull-express]
+  # 两条源都永久保存；只让一条稳定快速流唤醒认知，避免同一快讯复制 AI 调用。
+  newsnow_event_feeds:
+    - stream_id: mktnews-flash
+      immediate_review_eligible: true
+    - stream_id: fastbull-express
   source_timezone: Asia/Shanghai
   platforms: []
   read_limit: 100

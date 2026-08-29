@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -73,10 +74,7 @@ class SourcePollRecord(FrozenModel):
     def outcome_must_be_consistent(self):
         if self.completed_at < self.started_at:
             raise ValueError("来源轮询完成时间不能早于开始时间")
-        if (
-            self.poll_fresh_until is not None
-            and self.poll_fresh_until <= self.completed_at
-        ):
+        if self.poll_fresh_until is not None and self.poll_fresh_until <= self.completed_at:
             raise ValueError("来源轮询新鲜期必须晚于完成时间")
         if (
             self.latest_publication_at is not None
@@ -198,8 +196,11 @@ class IntelligenceEvent(FrozenModel):
 
     @property
     def trigger_priority(self) -> int:
-        """Only a qualified lead may turn discovery rank into scheduling priority."""
+        """Rank an already-qualified wake-up without turning rank into evidence."""
 
         if not self.immediate_review_eligible:
             return 0
-        return int(self.attention_priority * 100)
+        if self.relevance == 0:
+            return 0
+        rank_component = min(Decimal("1"), self.attention_priority / self.relevance)
+        return int(rank_component * 100)

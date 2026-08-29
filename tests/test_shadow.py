@@ -329,6 +329,7 @@ def test_qualified_information_event_creates_separate_material_forecast_panel(
         priority=85,
         dedup_key="qualified-official-event",
         evidence_ids=(evidence_id,),
+        material_forecast_eligible=True,
     )
     producer = RecordingForecastProducer()
     batch = build_trigger_batch(
@@ -349,6 +350,101 @@ def test_qualified_information_event_creates_separate_material_forecast_panel(
     assert material_cause is not None
     assert material_cause.origin.value == "MATERIAL_STATE"
     assert material_cause.trigger_refs == (evidence_id,)
+
+
+def test_weak_information_review_does_not_create_material_forecast_panel(
+    app_config,
+) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    evidence_id = "w" * 64
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=99,
+        dedup_key="unverified-fast-lead",
+        evidence_ids=(evidence_id,),
+    )
+    producer = RecordingForecastProducer()
+
+    TriggerDispatchBuilder(
+        config=config,
+        program_forecast_producers=(producer,),
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert producer.calls == [(NOW, None)]
+
+
+def test_mixed_information_batch_binds_only_qualified_material_evidence(
+    app_config,
+) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    weak_evidence_id = "w" * 64
+    qualified_evidence_id = "q" * 64
+    triggers = (
+        build_trigger_event(
+            trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+            symbol=plan.symbol,
+            pipeline_id=plan.pipeline_id,
+            occurred_at=NOW,
+            observed_at=NOW,
+            priority=99,
+            dedup_key="weak-lead",
+            evidence_ids=(weak_evidence_id,),
+        ),
+        build_trigger_event(
+            trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+            symbol=plan.symbol,
+            pipeline_id=plan.pipeline_id,
+            occurred_at=NOW,
+            observed_at=NOW,
+            priority=100,
+            dedup_key="qualified-release",
+            evidence_ids=(qualified_evidence_id,),
+            material_forecast_eligible=True,
+        ),
+    )
+    producer = RecordingForecastProducer()
+
+    TriggerDispatchBuilder(
+        config=config,
+        program_forecast_producers=(producer,),
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=triggers,
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert len(producer.calls) == 2
+    material_cause = producer.calls[1][1]
+    assert material_cause is not None
+    assert material_cause.trigger_refs == (qualified_evidence_id,)
 
 
 def test_evidence_free_agent_review_does_not_create_material_forecast_panel(

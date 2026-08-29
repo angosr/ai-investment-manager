@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-capital-shadow-v88"
+    assert config.pipeline.version == "world-capital-shadow-v89"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -83,8 +83,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
     )
     assert config.capital.decision.version == "portfolio-net-edge-v17"
-    assert config.information.version == "information-intake-v47"
-    assert config.information.normalizer_version == "trendradar-collector-v12"
+    assert config.information.version == "information-intake-v48"
+    assert tuple(
+        (item.stream_id, item.immediate_review_eligible)
+        for item in config.information.newsnow_event_feeds
+    ) == (("mktnews-flash", True), ("fastbull-express", False))
+    assert config.information.normalizer_version == "trendradar-collector-v13"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.economic_release_actual_poll_seconds == 15
     assert config.information.economic_release_actual_deadline_seconds == 900
@@ -102,7 +106,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v56"
     assert config.decision_state.official_fact_policy.version == "official-fact-v21"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v59"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v60"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v21"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
@@ -154,7 +158,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "forecast_baseline_7edf2cf090b47cdad2e5"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v37"
+    assert config.trigger.version == "analysis-trigger-v38"
+    assert config.trigger.debounce_seconds == 300
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v15"
     assert tuple(
         (item.target_asset, item.reference_instrument_key)
@@ -376,9 +381,9 @@ def test_economic_reference_cannot_escape_observation_boundary(
 ) -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
-    payload["assessment"]["mandate"]["observation_references"][0][
-        "reference_instrument_key"
-    ] = reference_key
+    payload["assessment"]["mandate"]["observation_references"][0]["reference_instrument_key"] = (
+        reference_key
+    )
 
     with pytest.raises(ValidationError, match=message):
         AppConfig.model_validate(payload)

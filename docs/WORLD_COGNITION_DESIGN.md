@@ -51,9 +51,13 @@ WorldModel 不能直接输出仓位或订单。中性先验是长期风险溢价
 
 同一 Evidence 明确分开“审计正文”和“模型投影”：正文按页面语义段落与固定存储安全上限保存，永久账本不因 Prompt 容量而只剩开头；模型投影只从该正文和同条 RSS 的官方摘要中抽取原句，按来源摘要、已宣布或拟实施行动、数量声明、标题相关性和来源顺序确定性排序。它不概括、不补因果、不引用第二来源，也不建立摘要服务、摘要表或额外 AI 调用；投影算法、上限或字段变化必须进入 Information、Packet 和下游生产行为的新版本。DecisionPacket 使用这份投影而不是机械截取正文前若干字符，网页输入快照仍显示模型实际所见；完整正文继续由同一 Evidence 引用追溯。若抽取句不在冻结正文或该条官方摘要内，发布验收必须失败。
 
-事件发现只有一条两阶段路径。第一阶段是与真假无关的注意力裁决：聚合源榜单位置、标题匹配和抓取顺序只能形成 `attention_priority`，表示采集和有限面板中先看哪条线索；它们不是现实影响强度、发生概率或方向证据，不能以 `impact` 的含义暴露给 WorldModel。第二阶段才分别裁决证据与时延：`directional_support_eligible` 说明来源事实能否支持因果链，`immediate_review_eligible` 说明是否允许事件到达后立即调用 WorldModel，两者互不蕴含，也不得从注意力分数、关键词、标题长度、来源 rank 或来源可靠度单独推导。
+事件发现只有一条三项正交裁决。`attention_priority` 只决定采集后在有界面板中先看哪条线索；榜单位置、标题匹配和抓取顺序可以参与这个排序，但它们不是现实影响强度、发生概率或方向证据，不能以 `impact` 的含义暴露给 WorldModel。`immediate_review_eligible` 只回答该来源合同是否允许一条新线索唤醒 WorldModel；来源榜单 rank 只能在已经获得该资格的来源内决定调度先后，不能反向授予资格。`directional_support_eligible` 再回答该条 Evidence 能否支持因果链。三者互不蕴含，也不得由标题长度、某个热点词或来源可靠度临时互相推导。
 
-立即复核资格只能来自来源合同提供的可验证结构化事件类别与重要性元数据，或事前冻结、可点时回放并独立评价的分类行为。没有这种合同的聚合快讯仍永久保存、去重并进入下一次自然认知窗口，但不得逐条调用 AI；当前 TrendRadar/NewsNow 聚合输入属于这一类。官方发布终态、程序化市场冲击和主 Agent 请求使用各自的直接触发合同，不依赖新闻资格；日历到期本身只启动或加速数据获取，不能在官方内容尚不可见时调用 AI。证据不足的线索只能作为待验证输入和竞争解释，不能单独支持方向、形成材料 Delta/事件 Forecast，或持久化为现役机制引用。三项语义复用同一 Intelligence Event 和同一信息面板，不再建设“新闻分析器”或第二事实库。
+Scheduling 还必须在不可变 Trigger 中保存第四项下游边界 `material_forecast_eligible`：它只表示本次触发是否已经通过冻结的材料状态政策，可以形成事件 Forecast 槽。普通聚合线索即使获准立即复核也保持为 `false`；只有符合来源、时点、证据和材料性合同的官方事件或 Canonical Delta 才能为 `true`。TriggerCoordinator 只能用该机器字段建立材料槽，不能根据 `INTELLIGENCE_INSERTED` 类型、AI 是否改变观点、新闻方向或事后行情猜测材料性。这样一次低等级复核可以及时更新认知，却不会伪装成独立 Alpha 样本或获得资本权限；同批同时含有强弱 Evidence 时，材料槽只绑定强 Evidence 身份。
+
+立即复核资格来自事前冻结的来源合同或可点时回放并独立评价的分类行为。专门的实时市场快讯流可以作为高召回线索合同：前提是来源身份、事件时间、稳定条目身份和完整可见正文可重放，并且调用频率由唯一 TriggerPlan 合并和限速；这项资格不提高证据等级。当前只允许一条具备上述合同的 NewsNow 快速流唤醒认知，其他聚合流继续作为背景和交叉核验，避免同一消息经多个聚合器复制调用。官方发布终态、程序化市场冲击和主 Agent 请求使用各自的直接触发合同；日历到期本身只启动或加速数据获取，不能在官方内容尚不可见时调用 AI。低等级线索必须在本次面板中明确为不可单独支持方向，不得形成材料 Delta/事件 Forecast 或持久化为现役机制引用；后续一手确认或独立市场状态属于新的 Evidence/Delta，不回写原线索。
+
+这个边界不是保守偏好，而是对现实反应与纠错风险的共同约束。[Federal Reserve 2026 年对央行沟通的分钟级研究](https://www.federalreserve.gov/econres/feds/files/2026029pap.pdf)显示声明、发布会、讲话和证词会快速重定价，而且后续沟通可能反转前一阶段反应；[Federal Reserve 2023 年对官方沟通、新闻和社交文本的比较](https://www.federalreserve.gov/econres/feds/files/2023036pap.pdf)发现新闻解释含有增量信息但有时与央行原意显著分歧；[SEC/FBI 对 2024 年虚假 ETF 公告的调查记录](https://www.sec.gov/files/xhack_fbi-article.pdf)则记录了错误信息推高 BTC、纠正后反向下跌。系统因此必须快速看到弱线索，同时禁止把“市场可能正在交易它”误写成“它已经是真实且有方向的事实”。四项裁决仍复用同一 Intelligence Event、Trigger 和信息面板，不建设新闻分析器、第二事实库或第二 Forecast 链。
 
 ### 3.2 覆盖按因果能力组织
 
@@ -201,13 +205,13 @@ WorldModel 面向整个 mandate。低概率但可能造成重大损失的机制�
 
 ## 5. 更新、引用与过时
 
-WorldModel 在以下情况更新：出现材料事实修订或意外事件；活跃机制的验证点到期；固定低频状态复核；主 Agent 立即或未来安排复核。普通行情刷新和 heartbeat 不自动调用 AI，程序化风控也不等待 WorldModel。
+WorldModel 在以下情况更新：出现材料事实修订或意外事件；获得来源合同资格的高召回弱线索进入；活跃机制的验证点到期；固定低频状态复核；主 Agent 立即或未来安排复核。弱线索更新认知但不形成材料 Forecast；普通行情刷新和 heartbeat 不自动调用 AI，程序化风控也不等待 WorldModel。
 
 更新频率不是认知质量指标。机制测试由程序先结算，`SUPPORTED` 或 `CONTRADICTED` 只说明上一轮可观察后果与后来事实的关系，不能证明该机制改善了收益预测，更不能授予资本。Prompt、输入投影、模型、推理强度或输出契约发生实质变化时会形成新的认知行为；除非点时失败证据已经定位到这些行为本身，否则不得在前一行为尚未积累可解释的前向结果时连续换版。工程修复、安全修复和数据真实性修复可以立即发布，但不能把旧行为的预测成绩继承给新行为。
 
 认知维护和 Alpha 研究是两项相邻但不同的工作。WorldModel 可以因为新事实而持续维护；只有与冻结程序先验共享同一槽、同一 Outcome 的数值 Forecast 才评价投资增量。没有合格程序先验时，世界认知继续服务因果覆盖、事件响应和风险解释，但不得为了“积累 AI 样本”恢复已经失败的方向预测器，也不得靠增加机制、调用或文字深度替代一项新的独立收益假设。研究吞吐以得到可否证结论并删除失败复杂度为准，不以 WorldModel 数量、测试数量或 Codex 调用数量为准。
 
-WorldModel 更新时钟与 Forecast 槽时钟是两个领域概念，但共用唯一 TriggerCoordinator：前者来自材料变化和显式复核计划；后者来自合同 cadence，或冻结的材料状态触发政策。事件槽不是新闻到来就任意插入一次 AI，而是由点时 `State/Delta` 和 producer behavior 确定性地产生。每个槽在生产前冻结唯一来源、实际 delta 引用、Outcome、截止和失败处理；固定 cadence 与材料事件分别形成独立义务，时间接近也不得合并。触发政策不判断多空，也不读取账户；Heartbeat 只恢复已登记任务、遗漏终态、账户和风险复核，不能制造新样本。
+WorldModel 更新时钟与 Forecast 槽时钟是两个领域概念，但共用唯一 TriggerCoordinator：前者来自材料变化、合格弱线索和显式复核计划；后者只来自合同 cadence，或 Trigger 已冻结 `material_forecast_eligible=true` 的材料状态变化。事件到来可以只唤醒认知，不能仅因类型是新闻就插入 Forecast。每个正式槽在生产前冻结唯一来源、实际 Evidence/Delta 引用、Outcome、截止和失败处理；固定 cadence 与材料事件分别形成独立义务，时间接近也不得合并。触发政策不判断多空，也不读取账户；Heartbeat 只恢复已登记任务、遗漏终态、账户和风险复核，不能制造新样本。
 
 固定 cadence 的槽身份锚定在合同绝对时点，不随实际唤醒相位漂移。运行恢复必须从行为首次激活点继续枚举全部到期边界：仍在完成期限内的最近槽正常生成，已经超时的每个槽分别留下 `NO_ESTIMATE`。行为等价的 Release 复用原 ProducerBinding 激活时点；不得把新 Manifest 时间误当成新行为激活，也不得只取“当前最近槽”而让跨多个边界的停机区间从覆盖率中消失。联合 prior 的全部目标和同槽 posterior 由 mandate owner 一次编排；首个所有者批次只登记两者冻结身份而不制造未到期义务，其他 symbol 的 heartbeat 不竞争创建半个组合槽。
 
@@ -308,7 +312,7 @@ Posterior 的模型可见输入只保留三个逻辑块且各出现一次：同�
 
 同槽不等于把 Codex 串在行情采集、风险或结算关键路径上，但 WorldModel 与 posterior 之间必须存在真实的数据依赖，不能在同一触发批次里并行读取上一份认知。正式槽先以槽边界作为唯一 `information_cutoff_at`，冻结 Quant prior 和一份世界更新 Packet；Assessment worker 先基于该 Packet 形成新的 WorldModel，成功后才允许同一耐久 Workflow 把它与 prior 组合为 posterior 输入。WorldModel 可以在截止后完成，因为它只读取截止时已经冻结的 Packet；其生成延迟进入 Forecast 的 `available_at` 和实际入场价格，且全部工作必须在同一完成期限内结束。不得用一份更早但尚未到 AI 自定 `next_review_at` 的 WorldModel 代替本槽更新，也不得让截止后到达的事实进入本槽。
 
-这条顺序链仍只增加一类耐久任务，不增加另一套结果系统：槽前置步骤先登记同槽 Quant 终态对应的研究 ProducerBinding 和 obligation，再冻结世界更新 Packet、posterior Prompt/Schema 与截止时间；同一 Assessment worker 依次完成世界更新与 posterior，并把新 WorldModel、成功 Forecast 或明确 `NO_ESTIMATE` 写回既有公共账本。Packet 无法构建、第一步失败或超时、第二步失败或超时都必须闭合已经登记的 posterior obligation，不能留下永久等待；重试复用已经持久化的权威 Assessment 或 Forecast，不能重复调用成功阶段。普通材料事件仍只更新 WorldModel；若它晚于正式槽截止，即使与 cadence heartbeat 被合并进同一触发批次，也必须形成截止后的独立世界更新，不能污染正式槽。Quant 缺少某个目标时，准备器立即为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。
+这条顺序链仍只增加一类耐久任务，不增加另一套结果系统：槽前置步骤先登记同槽 Quant 终态对应的研究 ProducerBinding 和 obligation，再冻结世界更新 Packet、posterior Prompt/Schema 与截止时间；同一 Assessment worker 依次完成世界更新与 posterior，并把新 WorldModel、成功 Forecast 或明确 `NO_ESTIMATE` 写回既有公共账本。Packet 无法构建、第一步失败或超时、第二步失败或超时都必须闭合已经登记的 posterior obligation，不能留下永久等待；重试复用已经持久化的权威 Assessment 或 Forecast，不能重复调用成功阶段。认知-only 弱线索只更新 WorldModel；若它晚于正式槽截止，即使与 cadence heartbeat 被合并进同一触发批次，也必须形成截止后的独立世界更新，不能污染正式槽。Quant 缺少某个目标时，准备器立即为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。
 
 ForecastContract 是来源无关的公共问题，但槽义务属于具体 producer behavior。行为覆盖率只用事前分配给该行为的到期槽作分母，并把 Forecast 与 `NO_ESTIMATE` 都计作终态；换模型、Prompt 或输入行为后，旧行为槽不能稀释新行为，也不能因切换而从原行为漏报中消失。
 
@@ -344,7 +348,7 @@ Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和�
 
 当前 Shadow 只运行新的 72h prior/posterior 研究行为。已退役 posterior 与 4h Quant 的生产配置、运行器、训练命令、专属 Dashboard 解析和在线研究轮询均已删除；不可变数据库事实、迁移与证据制品保留。4h Quant 即使在最强条件 cell 也无法覆盖确定性的往返手续费下界，继续在线积累 proper score 不会产生资本价值。现役透明 prior 只承担点时可重建、无泄漏的来源无关对照，不自动取得资本 Alpha。首个 24 小时结构性资金流候选已按冻结的两日可用滞后验证：ETF 净流入强度与稳定币七日供给变化的等权分数在总体 RPS、MAE、相关性及跨相位稳定性上失败，blind 未读取，因此该主动模型被删除，不能替换简单 prior。随后组合级低频趋势候选虽然降低了静态组合回撤并在四个阶段中的三个胜过现金，但成本后年化收益和超额 Sharpe 均落后于更简单的静态同权基线，因此也被拒绝；不得借较低回撤之名搜索相邻窗口、权重或阶段边界。失败候选不产生 Forecast、AI 调用或运行机制；新的 WorldModel 假设可相对简单 prior 取得真实前瞻评价，但只有其 posterior 的预测增量继续转化为费用后资本增量时才获得资本权限。现役行为只允许一次组合调用、独立 Outcome 和费用后逻辑账户，不增加 Agent、摘要层或资本链。
 
-当前 WorldModel 的现役机制主要落在 12～72 小时，已退役 4 小时合同与其经济持续期不匹配。现役候选只登记一个 72 小时终点：BTC 与 PAXG 使用截止前可见的现货收益形成各自滚动无条件 prior，WorldModel posterior 只能依据当前机制中至少一项非市场结构事实调整同一分布。该实验是世界认知组件评价，不是完整总组合或 Reference 的替代；SPY 在缺少足够长且独立的经济 Outcome 与合格产品映射前不进入本候选。bucket、滚动更新、点时 Outcome 和成本映射均已冻结；固定 cadence 的 Codex Alpha 从 2026-08-30 00:00 UTC 的首个未来槽开始计算。现役行为同时为通过既有 Scheduling 来源资格与材料等级裁决的官方事件、Canonical Fact 和主 Agent 显式复核登记独立材料槽；市场价格冲击只更新认知，不凭自身冒充外生材料 Forecast。材料槽从该触发行为正式发布后前瞻登记，绝不为沃什讲话等结果已经可见的历史事件补跑。更密调用不增加 cadence 独立样本，重叠材料结果按事件簇评价。
+当前 WorldModel 的现役机制主要落在 12～72 小时，已退役 4 小时合同与其经济持续期不匹配。现役候选只登记一个 72 小时终点：BTC 与 PAXG 使用截止前可见的现货收益形成各自滚动无条件 prior，WorldModel posterior 只能依据当前机制中至少一项非市场结构事实调整同一分布。该实验是世界认知组件评价，不是完整总组合或 Reference 的替代；SPY 在缺少足够长且独立的经济 Outcome 与合格产品映射前不进入本候选。bucket、滚动更新、点时 Outcome 和成本映射均已冻结；固定 cadence 的 Codex Alpha 从 2026-08-30 00:00 UTC 的首个未来槽开始计算。现役行为只为 Trigger 已显式冻结材料资格的官方事件和 Canonical Fact 登记独立材料槽；聚合弱线索、市场价格冲击、机制到期和主 Agent 普通复核只更新认知，不凭触发身份冒充外生材料 Forecast。材料槽从该触发行为正式发布后前瞻登记，绝不为结果已经可见的历史事件补跑。更密调用不增加 cadence 独立样本，重叠材料结果按事件簇评价。
 
 产品表达与资本规则由 [`ARCHITECTURE.md` 第 4.3.4 节](ARCHITECTURE.md#434-现役研究资本对照与模拟账户)唯一规定，本文件不复制第二套产品准入或仓位规则。世界认知评价只消费每份 Forecast 的 proper score、校准、方向、覆盖和同槽“读取 WorldModel / 不读取 WorldModel”配对差异；Product residual 只评价标的到产品的映射；Capital choice 先把产品结果重锚到真实决策时点，再用当时冻结的完整未来成本按经济暴露识别捕获、错误入场与错过机会；正式执行损耗由账户 evaluator 归因。未被正式账户选择的产品投影和两条研究逻辑账户照常结算，因此不需要靠随机 Venue 订单取得方向、产品或费用后反馈，也不能用正式账户没有订单回避方向判断失败。
 

@@ -34,6 +34,8 @@ _SCHEDULED_FACT_TYPES = {
     FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
 }
+
+
 class CanonicalFactTriggerPublisher:
     """Idempotently publish recent material fact revisions into Scheduling."""
 
@@ -125,6 +127,7 @@ class CanonicalFactTriggerPublisher:
                     affected_symbols=(
                         directly_affected_symbols if self._analysis_owner_symbol is not None else ()
                     ),
+                    material_forecast_eligible=True,
                     expires_at=fact.observed_at + timedelta(seconds=self._trigger_expiry_seconds),
                 )
                 self._triggers.record_trigger(trigger)

@@ -52,6 +52,20 @@ class OfficialEventFeed(StrictConfig):
         return value
 
 
+class NewsNowEventFeed(StrictConfig):
+    """One replayable aggregate lead feed and its cognition-only wake-up contract."""
+
+    stream_id: str
+    immediate_review_eligible: bool = False
+
+    @field_validator("stream_id")
+    @classmethod
+    def stream_id_must_be_safe(cls, value: str) -> str:
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", value) is None:
+            raise ValueError("NewsNow source id 非法")
+        return value
+
+
 class OfficialPublicationFeed(StrictConfig):
     """Pinned first-party HTML publication index with a bounded entry route."""
 
@@ -114,9 +128,7 @@ class CoverageSourceContract(StrictConfig):
 
     @field_validator("capabilities")
     @classmethod
-    def capabilities_must_be_unique_and_sorted(
-        cls, values: tuple[str, ...]
-    ) -> tuple[str, ...]:
+    def capabilities_must_be_unique_and_sorted(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         if tuple(sorted(set(values))) != values:
             raise ValueError("coverage source capability 必须唯一且排序")
         if any(re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None for item in values):
@@ -146,33 +158,25 @@ class CoverageRequirement(StrictConfig):
     ) -> tuple[str, ...]:
         if tuple(sorted(set(values))) != values:
             raise ValueError("coverage required capability 必须唯一且排序")
-        if any(
-            re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None
-            for item in values
-        ):
+        if any(re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None for item in values):
             raise ValueError("coverage required capability id 非法")
         return values
 
     @model_validator(mode="after")
     def capability_contract_must_match_domain(self):
-        provided = {
-            capability
-            for source in self.sources
-            for capability in source.capabilities
-        }
+        provided = {capability for source in self.sources for capability in source.capabilities}
         unknown = tuple(sorted(provided - set(self.required_capabilities)))
         if unknown:
-            raise ValueError(
-                "coverage source capability 不属于领域需求: " + ", ".join(unknown)
-            )
+            raise ValueError("coverage source capability 不属于领域需求: " + ", ".join(unknown))
         return self
+
 
 class InformationPolicy(StrictConfig):
     version: str
     normalizer_version: str
     trendradar_mcp_url: str = "http://127.0.0.1:3333/mcp"
     newsnow_base_url: str = "http://127.0.0.1:4444"
-    newsnow_sources: tuple[str, ...] = ()
+    newsnow_event_feeds: tuple[NewsNowEventFeed, ...] = ()
     source_timezone: str = "Asia/Shanghai"
     platforms: tuple[str, ...] = ()
     read_limit: int = Field(default=100, ge=1, le=1000)
@@ -270,11 +274,13 @@ class InformationPolicy(StrictConfig):
             raise ValueError("NewsNow 必须是显式回环地址")
         return value.rstrip("/")
 
-    @field_validator("newsnow_sources")
+    @field_validator("newsnow_event_feeds")
     @classmethod
-    def newsnow_sources_must_be_unique_and_safe(cls, sources: tuple[str, ...]) -> tuple[str, ...]:
-        if len(sources) != len(set(sources)):
+    def newsnow_event_feeds_must_be_unique(
+        cls,
+        feeds: tuple[NewsNowEventFeed, ...],
+    ) -> tuple[NewsNowEventFeed, ...]:
+        source_ids = tuple(item.stream_id for item in feeds)
+        if len(source_ids) != len(set(source_ids)):
             raise ValueError("NewsNow source id 不得重复")
-        if any(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", item) is None for item in sources):
-            raise ValueError("NewsNow source id 非法")
-        return sources
+        return feeds

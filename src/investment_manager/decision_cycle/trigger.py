@@ -105,13 +105,8 @@ def _material_forecast_cause(batch: TriggerBatch) -> ForecastSlotCause | None:
     but neither is an external information surprise by itself.
     """
 
-    eligible_types = {
-        AnalysisTriggerType.CANONICAL_FACT_REVISED,
-        AnalysisTriggerType.INTELLIGENCE_INSERTED,
-        AnalysisTriggerType.AGENT_WAKEUP,
-    }
     eligible = tuple(
-        item for item in batch.triggers if item.trigger_type in eligible_types and item.evidence_ids
+        item for item in batch.triggers if item.material_forecast_eligible and item.evidence_ids
     )
     if not eligible:
         return None

@@ -95,6 +95,9 @@ class SqlEventStore:
                         affected_symbols=(
                             event.symbols if self._analysis_owner_symbol is not None else ()
                         ),
+                        material_forecast_eligible=(
+                            event.immediate_review_eligible and event.directional_support_eligible
+                        ),
                         expires_at=event.observed_at
                         + timedelta(seconds=self._trigger_expiry_seconds),
                     )

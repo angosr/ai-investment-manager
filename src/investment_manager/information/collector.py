@@ -35,7 +35,7 @@ from investment_manager.information.official.document import (
     build_official_decision_excerpt,
     parse_official_html_document,
 )
-from investment_manager.information.policy import OfficialEventFeed
+from investment_manager.information.policy import NewsNowEventFeed, OfficialEventFeed
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -219,25 +219,25 @@ class NewsNowSource:
         self,
         transport: NewsNowTransport,
         *,
-        sources: tuple[str, ...],
+        feeds: tuple[NewsNowEventFeed, ...],
         maximum_age_seconds: int,
         clock=lambda: datetime.now(UTC),
     ) -> None:
-        if not sources or len(sources) != len(set(sources)):
-            raise ValueError("NewsNow sources 必须非空且不重复")
-        if any(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", item) is None for item in sources):
-            raise ValueError("NewsNow source id 非法")
+        source_ids = tuple(item.stream_id for item in feeds)
+        if not feeds or len(source_ids) != len(set(source_ids)):
+            raise ValueError("NewsNow feeds 必须非空且不重复")
         if maximum_age_seconds < 1:
             raise ValueError("NewsNow 快速源最大事件年龄必须为正数")
         self._transport = transport
-        self._sources = sources
+        self._feeds = feeds
         self._maximum_age = timedelta(seconds=maximum_age_seconds)
         self._clock = clock
 
     def read(self, *, observed_at: datetime) -> tuple[RawIntelligenceItem, ...]:
         requested_at = require_utc(observed_at)
         items: list[RawIntelligenceItem] = []
-        for source_id in self._sources:
+        for feed in self._feeds:
+            source_id = feed.stream_id
             response = self._transport.fetch(source_id)
             actual_observed_at = max(requested_at, require_utc(self._clock()))
             if not isinstance(response, dict):
@@ -276,11 +276,16 @@ class NewsNowSource:
                         observed_at=actual_observed_at,
                         title=title,
                         body=_bounded_external_text(
-                            original_title,
+                            (
+                                raw.get("extra", {}).get("hover", original_title)
+                                if isinstance(raw.get("extra"), dict)
+                                else original_title
+                            ),
                             maximum_length=20_000,
                         ),
                         url=_bounded_external_url(raw.get("url") or raw.get("mobileUrl")),
                         rank=rank,
+                        immediate_review_eligible=(feed.immediate_review_eligible),
                     )
                 )
         return tuple(items)
@@ -442,9 +447,7 @@ class OfficialRssSource:
                     url=url,
                     source_reliability=Decimal("1"),
                     rank=0,
-                    immediate_review_eligible=(
-                        self._feed.immediate_review_eligible
-                    ),
+                    immediate_review_eligible=(self._feed.immediate_review_eligible),
                     directional_support_eligible=True,
                 )
             )
@@ -548,34 +551,41 @@ class EventNormalizer:
         "ETH": ("ethereum", "ether", "以太坊"),
     }
     _cross_asset_keywords: ClassVar[tuple[str, ...]] = (
+        "central bank",
         "federal reserve",
         "fed ",
         "cpi",
         "dollar index",
         "dxy",
         "inflation",
-        "24-hour trading",
-        "24/7 trading",
         "employment situation",
+        "fiscal",
         "gross domestic product",
         "gdp",
+        "government bond",
         "personal consumption expenditures",
         "personal income",
         "monetary policy",
         "policy rate",
         "balance sheet",
-        "innovation advisory committee",
         "pce",
         "payroll",
         "producer price index",
-        "prediction market",
         "ppi",
         "unemployment rate",
         "interest rate",
+        "treasury yield",
+        "bond yield",
+        "sovereign debt",
+        "government debt",
+        "blockade",
         "tariff",
         "sanction",
         "oil",
-        "hormuz",
+        "shipping",
+        "armed conflict",
+        "ceasefire",
+        "央行",
         "美联储",
         "利率",
         "降息",
@@ -584,12 +594,19 @@ class EventNormalizer:
         "非农",
         "美元指数",
         "流动性",
+        "财政",
+        "国债",
+        "收益率",
+        "债务",
+        "封锁",
         "关税",
         "制裁",
         "监管",
         "原油",
         "石油",
-        "霍尔木兹",
+        "航运",
+        "武装冲突",
+        "停火",
     )
     _crypto_context_keywords: ClassVar[tuple[str, ...]] = (
         "crypto",
@@ -605,41 +622,6 @@ class EventNormalizer:
         "区块链",
         "稳定币",
         "加密交易所",
-    )
-    # These terms only rank bounded discovery candidates.  They never authorize
-    # an AI wake-up or promote an unverified lead into directional evidence.
-    _priority_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
-        "cpi",
-        "consumer price index",
-        "24-hour trading",
-        "24/7 trading",
-        "employment situation",
-        "gross domestic product",
-        "gdp",
-        "personal consumption expenditures",
-        "personal income",
-        "monetary policy",
-        "policy rate",
-        "balance sheet",
-        "innovation advisory committee",
-        "pce",
-        "payroll",
-        "producer price index",
-        "prediction market",
-        "ppi",
-        "unemployment rate",
-        "rate decision",
-        "rate cut",
-        "rate hike",
-        "nonfarm payroll",
-        "nfp",
-        "hormuz",
-        "利率决议",
-        "降息",
-        "加息",
-        "非农",
-        "居民消费价格",
-        "霍尔木兹",
     )
 
     def __init__(
@@ -671,18 +653,10 @@ class EventNormalizer:
         )
         relevance = Decimal("1")
         if not symbols:
-            if self._has_crypto_context(text):
-                symbols = self._universe
-                relevance = Decimal("0.85")
-            else:
-                if not self._has_cross_asset_relevance(text):
-                    return None
-                symbols = self._universe
-                relevance = (
-                    Decimal("0.85")
-                    if self._has_priority_cross_asset_relevance(text)
-                    else Decimal("0.50")
-                )
+            if not self._has_crypto_context(text) and not self._has_cross_asset_relevance(text):
+                return None
+            symbols = self._universe
+            relevance = Decimal("0.85")
         rank_component = (
             Decimal("0.5")
             if item.rank is None
@@ -741,12 +715,6 @@ class EventNormalizer:
         return any(
             self._contains_symbol_keyword(text, keyword)
             for keyword in self._crypto_context_keywords
-        )
-
-    def _has_priority_cross_asset_relevance(self, text: str) -> bool:
-        return any(
-            self._contains_symbol_keyword(text, keyword)
-            for keyword in self._priority_cross_asset_keywords
         )
 
     @staticmethod

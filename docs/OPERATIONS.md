@@ -65,7 +65,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 portfolio/pipeline 只有一个由 `review_trigger_symbol` 承载的当前 TriggerPlan。全部观察品种的行情、事实和信息触发都携带真实 `affected_symbols` 路由到这个组合 owner；非 owner 品种不运行 heartbeat、事件规则或独立 Coordinator。主 Agent 只通过这份组合计划立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。历史按 symbol 计划只作为审计事实保留，迁移后不得继续运行。
 
-当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。TriggerCoordinator 对固定 cadence 和通过既有来源资格裁决的官方事件、Canonical Fact、主 Agent 显式复核分别登记独立槽；市场价格冲击只复核认知，不凭自身登记事件槽。组合所有者的首个正常批次先登记 prior 与 posterior 的冻结 ProducerBinding，即使当前没有到期槽也不创建 obligation、Forecast 或 AI 调用；后续等价 Release 必须复用该激活时间，不能在槽边界后把原行为伪装成新行为。每个槽先生成全部 prior，再以共享槽边界冻结世界更新 Packet、prior、两侧 Prompt/Schema 行为身份和完成期限。现有 Assessment Worker 在一个耐久 posterior Workflow 内先生成同截止 WorldModel，再顺序执行一次 posterior Codex 调用；不得并行读取上一份 WorldModel。两次生成延迟都进入实际可用时间，Packet 或业务阶段失败直接闭合已登记义务；Activity 无法开始、超时或返回无效结果时，同一 Workflow 只调用一个幂等终态 Activity 写入 `NO_ESTIMATE`，不增加分析调用或第二结果系统。posterior 必须逐目标按冻结顺序裁决全部 eligible mechanism；遗漏机制，或概率变化与单边上涨、单边下跌、纯不确定贡献不一致，均作为结构失败终止该槽而不重试第二次 AI。当前不运行 Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
+当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。固定 cadence 永远形成独立槽；事件只有在不可变 Trigger 已冻结 `material_forecast_eligible=true` 时才形成材料槽。聚合弱线索、市场冲击、机制到期和主 Agent 普通复核只更新 WorldModel，不登记 Forecast。组合所有者首次正常批次登记冻结 ProducerBinding；等价 Release 复用激活时间，新行为从自己的激活点前瞻开始。正式槽先冻结 prior、Packet、Prompt/Schema 行为身份和完成期限，再由同一耐久 Workflow 顺序生成同截止 WorldModel 与 posterior；任一阶段失败或超时都以幂等 `NO_ESTIMATE` 闭合，不并行读取旧认知、不重问第二次 AI。posterior 必须逐目标裁决全部 eligible mechanism；遗漏、无归因变化或概率贡献与机制方向不一致均为结构失败。当前不运行 Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
@@ -89,7 +89,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 ## 6. 信息与世界认知
 
-Collector 保存原始响应、首次可见时间、来源身份、修订和轮询状态。所有官方日历只建立耐久的数据获取义务；到达发布时间后，只有取得官方内容或有界截止形成明确 `UNAVAILABLE`，才触发一次 WorldModel，不能用日历时点提前唤醒 AI，也不能在 Scheduling 中复制一份日历 Wakeup。日历外冲击由广域事件流发现。Provider 失败降低对应因果域 Coverage，不删除最后有效事实，也不伪造新鲜度。
+Collector 保存原始响应、首次可见时间、来源身份、修订和轮询状态。所有官方日历只建立耐久的数据获取义务；到达发布时间后，只有取得官方内容或有界截止形成明确 `UNAVAILABLE`，才触发一次 WorldModel，不能用日历时点提前唤醒 AI，也不能在 Scheduling 中复制一份日历 Wakeup。日历外冲击由广域事件流发现；当前一条 NewsNow 快速流可触发认知-only 复核，第二条聚合流只保存和交叉核验，二者都不能直接支持方向或建立材料 Forecast。Provider 失败降低对应因果域 Coverage，不删除最后有效事实，也不伪造新鲜度。
 
 AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全量新闻、账户或持仓。WorldModel 的浅薄、错误或失败必须原样可见：Schema/引用错误显示为调用失败；结构有效但分析差的结果仍保存并进入评价，不能用中文词表、长度或“通过门禁”隐藏。
 
@@ -97,7 +97,7 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 ## 7. 资本、风控与执行恢复
 
-基础配置和 Shadow profile 都不启用 Forecast producer。已退役 Context、AI+Quant 与 4h Quant 的历史 Forecast、Outcome 和冻结制品保留在公共账本中，但不会新增调用、产品投影或订单；4h Quant 的最高状态预期毛收益仍低于确定性的往返手续费下界，继续在线积累样本没有资本价值。可投资域仍保存 BTC、PAXG 和 SPY 三个候选经济暴露及其合法多空产品合同，供通过历史成本下界与前瞻证据的新 producer 复用；没有合格 producer 时 Capital 只维护账户、对账和程序化风险。BTC/PAXG Spot 仍是只读市场与未来 Forecast 结算参考；TradFi 产品继续读取官方交易日历，SPY 的经济暴露是美国权益，不冒充全球权益。
+基础配置默认关闭 Forecast producer，Shadow profile 只启用研究权限的 72h prior/posterior，当前没有 `CAPITAL_CANDIDATE` 授权。已退役 Context、AI+Quant 与 4h Quant 的历史 Forecast、Outcome 和冻结制品保留在公共账本中，但不会新增调用、产品投影或订单；4h Quant 的最高状态预期毛收益仍低于确定性的往返手续费下界，继续在线积累样本没有资本价值。可投资域仍保存 BTC、PAXG 和 SPY 三个候选经济暴露及其合法多空产品合同；研究逻辑账户可用相同产品语义评价费用后增量，但正式模拟账户在没有授权 Forecast 时只维护账户、对账和程序化风险。BTC/PAXG Spot 仍是只读市场与 Forecast 结算参考；TradFi 产品继续读取官方交易日历，SPY 的经济暴露是美国权益，不冒充全球权益。
 
 候选资本授权只登记“该前瞻合同可以参加本轮模拟比较”，不包含逐品种固定仓位、额外入场 bp、历史样本数或方向限制。Portfolio 比较每个合法多空产品投影与现金的完整费用后边际，Risk 只按账户生存边界缩减；模拟环境本身不得改变方向、目标仓位或制造试探小单。所有未被选择的合法产品投影仍在共同终点结算，因而零订单也必须产生可诊断的反事实反馈。
 
