@@ -32,6 +32,7 @@ from investment_manager.information.official.metrics import (
 )
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
+from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
 from investment_manager.portfolio.policy import CapitalPolicy
 from investment_manager.scheduling.policy import TemporalPolicy, TriggerPolicy
@@ -74,6 +75,21 @@ class AppConfig(StrictConfig):
         perpetual_symbols = tuple(item.symbol for item in self.market_data.perpetual_instruments)
         if self.assessment.enabled and not set(mandate_symbols).issubset(perpetual_symbols):
             raise ValueError("启用 ContextAssessment 时 Perpetual 观测域必须覆盖 Mandate")
+        perpetual_by_key = {
+            item.key: item for item in self.market_data.perpetual_instruments
+        }
+        capital_instrument_keys = {
+            item.instrument.key for item in self.capital.execution_specs
+        }
+        if self.assessment.enabled:
+            for reference in self.assessment.mandate.observation_references:
+                instrument = perpetual_by_key.get(reference.reference_instrument_key)
+                if instrument is None:
+                    raise ValueError("Assessment 经济参照必须属于 MarketData 观测域")
+                if instrument.product != InstrumentProduct.TRADFI_PERPETUAL:
+                    raise ValueError("Assessment 经济参照必须具有官方交易日历")
+                if instrument.key in capital_instrument_keys:
+                    raise ValueError("Assessment 经济参照只能观察，不能拥有执行权限")
         if self.assessment.enabled and (
             self.assessment.review_trigger_symbol not in mandate_symbols
         ):

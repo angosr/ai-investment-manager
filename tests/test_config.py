@@ -99,11 +99,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         if item.immediate_review_eligible
     } == {"fed-speeches", "fed-testimony"}
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v55"
+    assert config.decision_state.version == "portfolio-state-v56"
     assert config.decision_state.official_fact_policy.version == "official-fact-v21"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v58"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v59"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v21"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
@@ -146,7 +146,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BTCUSDT",
         "ETHUSDT",
     )
-    assert config.assessment.version == "context-assessment-v58"
+    assert config.assessment.version == "context-assessment-v59"
     assert config.outcome_evaluation.version == "typed-outcome-settlement-v59"
     assert config.outcome_evaluation.forecast_prior.enabled
     assert config.outcome_evaluation.forecast_prior.artifact_id == (
@@ -155,6 +155,13 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v36"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v15"
+    assert tuple(
+        (item.target_asset, item.reference_instrument_key)
+        for item in config.assessment.mandate.observation_references
+    ) == (("PAXG", "BINANCE:TRADFI_PERPETUAL:XAUUSDT"),)
+    assert config.assessment.mandate.observation_references[0].reference_instrument_key not in {
+        item.instrument.key for item in config.capital.execution_specs
+    }
     assert tuple(item.key for item in config.assessment.mandate.mandate_exposures) == (
         ("CRYPTO_NETWORK", "BTC"),
         ("INFLATION_SENSITIVE", "PAXG"),
@@ -353,6 +360,27 @@ def test_market_observation_domain_may_exceed_assessment_mandate() -> None:
         "PAXGUSDT",
         "XRPUSDT",
     )
+
+
+@pytest.mark.parametrize(
+    ("reference_key", "message"),
+    (
+        ("BINANCE:TRADFI_PERPETUAL:UNKNOWNUSDT", "必须属于 MarketData 观测域"),
+        ("BINANCE:TRADFI_PERPETUAL:SPYUSDT", "只能观察，不能拥有执行权限"),
+    ),
+)
+def test_economic_reference_cannot_escape_observation_boundary(
+    reference_key: str,
+    message: str,
+) -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["assessment"]["mandate"]["observation_references"][0][
+        "reference_instrument_key"
+    ] = reference_key
+
+    with pytest.raises(ValidationError, match=message):
+        AppConfig.model_validate(payload)
 
 
 def test_shadow_decision_packet_composition_accepts_observation_only_products() -> None:

@@ -638,6 +638,7 @@ def build_state_snapshot(
     market_snapshot_refs: tuple[str, ...] = (),
     feature_snapshot_refs: tuple[str, ...] = (),
     derivative_snapshot_refs: tuple[str, ...] = (),
+    economic_reference_snapshot_refs: tuple[str, ...] = (),
     intelligence_event_refs: tuple[str, ...] = (),
     account_snapshot_ref: str | None = None,
     data_quality_codes: tuple[str, ...] = (),
@@ -675,6 +676,12 @@ def build_state_snapshot(
     )
     if derivative_refs:
         payload["derivative_snapshot_refs"] = derivative_refs
+    economic_reference_refs = _unique_sorted(
+        economic_reference_snapshot_refs,
+        name="economic_reference_snapshot_refs",
+    )
+    if economic_reference_refs:
+        payload["economic_reference_snapshot_refs"] = economic_reference_refs
     if information_coverage:
         payload["information_coverage"] = information_coverage
     if intelligence_refs:
@@ -986,6 +993,10 @@ def _state_identity_payload(state: StateSnapshot) -> dict:
         payload["intelligence_event_refs"] = state.intelligence_event_refs
     if state.derivative_snapshot_refs:
         payload["derivative_snapshot_refs"] = state.derivative_snapshot_refs
+    if state.economic_reference_snapshot_refs:
+        payload["economic_reference_snapshot_refs"] = (
+            state.economic_reference_snapshot_refs
+        )
     if state.information_coverage:
         payload["information_coverage"] = state.information_coverage
     return payload

@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 decision_state:
-  version: portfolio-state-v55
+  version: portfolio-state-v56
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v21
@@ -118,8 +118,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v58
-    schema_version: decision-packet-v20
+    version: decision-packet-policy-v59
+    schema_version: decision-packet-v21
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
     maximum_facts: 20
@@ -552,7 +552,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v58
+  version: context-assessment-v59
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
@@ -573,6 +573,11 @@ assessment:
       - asset: PAXG
         market_symbol: PAXGUSDT
         horizons_minutes: [60, 240]
+    # 只观察的同经济底层参照随 State 点时冻结；不能成为预测目标、资本候选或订单。
+    observation_references:
+      - target_asset: PAXG
+        reference_instrument_key: BINANCE:TRADFI_PERPETUAL:XAUUSDT
+        target_price_per_reference_price: "1"
     # 顺序是 Packet 容量不足时的因果优先级：政策与最新官方宏观结果、流动性/定价中介、资金行为、交叉验证。
     required_risk_factors: [US_MONETARY_POLICY, US_INFLATION, US_EMPLOYMENT, US_GROWTH, US_FISCAL_LIQUIDITY, US_FISCAL_CAPACITY, US_REAL_INTEREST_RATES, US_DOLLAR, US_EQUITY_RISK_APPETITE, US_HIGH_YIELD_CREDIT_RISK, CRYPTO_LIQUIDITY_CAPACITY, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_ENERGY_INFLATION, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
 

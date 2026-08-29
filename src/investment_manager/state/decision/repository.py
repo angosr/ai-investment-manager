@@ -19,6 +19,7 @@ from investment_manager.state.decision.packet import (
     PacketReviewRequest,
     VisibleFact,
 )
+from investment_manager.state.economic_reference import EconomicReferenceSnapshot
 from investment_manager.state.evidence_repository import SqlStateEvidenceStore, StateEvidenceKind
 from investment_manager.state.facts import (
     validate_fact_revision_identity,
@@ -78,7 +79,7 @@ class SqlDecisionPacketAssembler:
             raise ValueError("DecisionPacket StateSnapshot 与 Mandate scope 不一致")
         deltas = self._load_deltas(delta_ids)
         facts = self._load_visible_facts(state.fact_revision_ids)
-        markets, features, derivatives, account, intelligence_events = (
+        markets, features, derivatives, economic_references, account, intelligence_events = (
             self._load_state_evidence(state)
         )
         return self._builder.build(
@@ -92,6 +93,7 @@ class SqlDecisionPacketAssembler:
             markets=markets,
             features=features,
             derivatives=derivatives,
+            economic_references=economic_references,
             previous_context=previous_context,
             information_coverage=state.information_coverage,
         )
@@ -193,6 +195,7 @@ class SqlDecisionPacketAssembler:
         tuple[MarketSnapshot, ...],
         tuple[FeatureSnapshot, ...],
         tuple[DerivativeContextSnapshot, ...],
+        tuple[EconomicReferenceSnapshot, ...],
         AccountSnapshot | None,
         tuple[IntelligenceEvent, ...],
     ]:
@@ -200,6 +203,7 @@ class SqlDecisionPacketAssembler:
             *state.market_snapshot_refs,
             *state.feature_snapshot_refs,
             *state.derivative_snapshot_refs,
+            *state.economic_reference_snapshot_refs,
             *state.intelligence_event_refs,
             *((state.account_snapshot_ref,) if state.account_snapshot_ref is not None else ()),
         )
@@ -241,6 +245,17 @@ class SqlDecisionPacketAssembler:
                 key=lambda item: item.asset,
             )
         )
+        economic_references = tuple(
+            sorted(
+                (
+                    value
+                    for kind, value in evidence.values()
+                    if kind == StateEvidenceKind.ECONOMIC_REFERENCE
+                    and isinstance(value, EconomicReferenceSnapshot)
+                ),
+                key=lambda item: item.target_asset,
+            )
+        )
         intelligence_events = tuple(
             sorted(
                 (
@@ -260,4 +275,11 @@ class SqlDecisionPacketAssembler:
             ):
                 raise ValueError("DecisionPacket Account evidence 类型不一致")
             account = account_entry[1]
-        return markets, features, derivatives, account, intelligence_events
+        return (
+            markets,
+            features,
+            derivatives,
+            economic_references,
+            account,
+            intelligence_events,
+        )

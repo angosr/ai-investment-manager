@@ -14,6 +14,7 @@ from investment_manager.market.models import (
     MarketSnapshot,
 )
 from investment_manager.market.perpetual.models import DerivativeContextSnapshot
+from investment_manager.state.economic_reference import EconomicReferenceSnapshot
 from investment_manager.state.evidence_repository import SqlStateEvidenceStore
 from investment_manager.state.facts import (
     StateDeltaPolicy,
@@ -66,6 +67,7 @@ class SqlStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...] = (),
+        economic_references: tuple[EconomicReferenceSnapshot, ...] = (),
         account: AccountSnapshot | None = None,
         intelligence_events: tuple[IntelligenceEvent, ...] = (),
         material_intelligence_event_refs: tuple[str, ...] | None = None,
@@ -83,6 +85,7 @@ class SqlStateProjector:
             markets=markets,
             features=features,
             derivatives=derivatives,
+            economic_references=economic_references,
             account=account,
             intelligence_events=intelligence_events,
         )
@@ -96,6 +99,9 @@ class SqlStateProjector:
             feature_snapshot_refs=tuple(content_hash(item) for item in features),
             derivative_snapshot_refs=tuple(
                 content_hash(item) for item in derivatives
+            ),
+            economic_reference_snapshot_refs=tuple(
+                content_hash(item) for item in economic_references
             ),
             intelligence_event_refs=tuple(
                 content_hash(item) for item in intelligence_events
@@ -140,6 +146,7 @@ class SqlStateProjector:
             markets=markets,
             features=features,
             derivatives=derivatives,
+            economic_references=economic_references,
             account=account,
             intelligence_events=intelligence_events,
         )
@@ -193,6 +200,7 @@ class SqlStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...],
+        economic_references: tuple[EconomicReferenceSnapshot, ...],
         account: AccountSnapshot,
         intelligence_events: tuple[IntelligenceEvent, ...],
     ) -> None:
@@ -202,6 +210,8 @@ class SqlStateProjector:
             self._evidence.put_feature(feature)
         for derivative in derivatives:
             self._evidence.put_derivative(derivative)
+        for reference in economic_references:
+            self._evidence.put_economic_reference(reference)
         if account is not None:
             self._evidence.put_account(account)
         for event in intelligence_events:
@@ -214,6 +224,7 @@ class SqlStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...],
+        economic_references: tuple[EconomicReferenceSnapshot, ...],
         account: AccountSnapshot | None,
         intelligence_events: tuple[IntelligenceEvent, ...],
     ) -> None:
@@ -244,6 +255,11 @@ class SqlStateProjector:
             for item in derivatives
         ):
             raise ValueError("State projection 不能使用其他时点的 Derivative evidence")
+        reference_assets = tuple(item.target_asset for item in economic_references)
+        if tuple(sorted(set(reference_assets))) != reference_assets:
+            raise ValueError("State projection 的经济交叉参考必须按目标资产唯一排序")
+        if any(item.as_of != as_of for item in economic_references):
+            raise ValueError("State projection 不能使用其他时点的经济交叉参考")
         if account is not None and (
             account.as_of > as_of or account.observed_at > as_of
         ):

@@ -90,6 +90,7 @@ class StateSnapshot(FrozenModel):
     market_snapshot_refs: tuple[str, ...] = ()
     feature_snapshot_refs: tuple[str, ...] = ()
     derivative_snapshot_refs: tuple[str, ...] = ()
+    economic_reference_snapshot_refs: tuple[str, ...] = ()
     intelligence_event_refs: tuple[str, ...] = ()
     account_snapshot_ref: str | None = Field(default=None, min_length=1)
     data_quality_codes: tuple[str, ...] = ()
@@ -109,6 +110,7 @@ class StateSnapshot(FrozenModel):
             "market_snapshot_refs",
             "feature_snapshot_refs",
             "derivative_snapshot_refs",
+            "economic_reference_snapshot_refs",
             "intelligence_event_refs",
             "data_quality_codes",
             "coverage_gap_codes",

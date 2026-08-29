@@ -29,6 +29,10 @@ from investment_manager.state.decision.packet import (
     PacketReviewRequest,
 )
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
+from investment_manager.state.economic_reference import (
+    EconomicReferenceSnapshot,
+    build_economic_reference_snapshot,
+)
 from investment_manager.state.projection import SqlStateProjector
 from investment_manager.state.repository import SqlFactStateStore
 
@@ -151,6 +155,7 @@ class DecisionPacketPreparation:
         self._coverage_reader = coverage_reader
         self._coverage_requirements = coverage_requirements
         self._perpetual_by_symbol = {item.symbol: item for item in perpetual_instruments}
+        self._perpetual_by_key = {item.key: item for item in perpetual_instruments}
         self._funding_history_lookback_hours = funding_history_lookback_hours
         self._maximum_perpetual_age_seconds = maximum_perpetual_age_seconds
         self._maximum_cross_market_quote_skew_seconds = maximum_cross_market_quote_skew_seconds
@@ -291,6 +296,11 @@ class DecisionPacketPreparation:
             mandate=mandate,
             markets=markets,
         )
+        economic_references, reference_quality_codes = self._economic_reference_context(
+            as_of=as_of,
+            mandate=mandate,
+            markets=markets,
+        )
         information_coverage: tuple[DomainCoverageSnapshot, ...] = ()
         coverage_gap_codes: tuple[str, ...] = ()
         if self._coverage_reader is not None:
@@ -307,6 +317,7 @@ class DecisionPacketPreparation:
             markets=markets,
             features=feature_snapshots,
             derivatives=derivatives,
+            economic_references=economic_references,
             intelligence_events=intelligence_events,
             material_intelligence_event_refs=tuple(
                 sorted(content_hash(item) for item in material_triggered_events)
@@ -314,7 +325,9 @@ class DecisionPacketPreparation:
             intelligence_affected_assets=intelligence_affected_assets,
             market_shock_symbols=market_shock_symbols,
             market_affected_assets=market_affected_assets,
-            data_quality_codes=derivative_quality_codes,
+            data_quality_codes=tuple(
+                sorted((*derivative_quality_codes, *reference_quality_codes))
+            ),
             coverage_gap_codes=coverage_gap_codes,
             information_coverage=information_coverage,
         )
@@ -493,6 +506,84 @@ class DecisionPacketPreparation:
             # rates, spot and other independent evidence in this same packet.
             return (), tuple(sorted(unavailable))
         return tuple(sorted(snapshots, key=lambda item: item.asset)), ()
+
+    def _economic_reference_context(
+        self,
+        *,
+        as_of: datetime,
+        mandate: AnalysisMandate,
+        markets: tuple[MarketSnapshot, ...],
+    ) -> tuple[tuple[EconomicReferenceSnapshot, ...], tuple[str, ...]]:
+        """Freeze optional observation-only references without weakening the packet."""
+
+        if not mandate.observation_references:
+            return (), ()
+        market_by_asset = {
+            asset.asset: market
+            for asset, market in zip(mandate.observation_assets, markets, strict=True)
+        }
+        schedule = self._market_store.latest_trading_schedule(as_of=as_of)
+        snapshots: list[EconomicReferenceSnapshot] = []
+        unavailable: list[str] = []
+        for policy in mandate.observation_references:
+            instrument = self._perpetual_by_key.get(policy.reference_instrument_key)
+            if instrument is None:
+                unavailable.append(
+                    f"ECONOMIC_REFERENCE.{policy.target_asset}.INSTRUMENT_UNAVAILABLE"
+                )
+                continue
+            state = self._market_store.latest_perpetual_state(
+                instrument=instrument,
+                as_of=as_of,
+            )
+            quote = self._market_store.latest_perpetual_quote(
+                instrument=instrument,
+                evaluation_at=as_of,
+                visible_at=as_of,
+            )
+            if state is None or quote is None:
+                unavailable.append(
+                    f"ECONOMIC_REFERENCE.{policy.target_asset}.STATE_OR_QUOTE_MISSING"
+                )
+                continue
+            if schedule is None:
+                unavailable.append(
+                    f"ECONOMIC_REFERENCE.{policy.target_asset}.SCHEDULE_MISSING"
+                )
+                continue
+            session = schedule.session_at(instrument=instrument, at=as_of)
+            if session is None:
+                unavailable.append(
+                    f"ECONOMIC_REFERENCE.{policy.target_asset}.SCHEDULE_NOT_COVERING_AS_OF"
+                )
+                continue
+            age_seconds = [
+                (as_of - state.observed_at).total_seconds(),
+                (as_of - quote.observed_at).total_seconds(),
+            ]
+            if session.session_type.tradable:
+                age_seconds.extend(
+                    (
+                        (as_of - state.exchange_time).total_seconds(),
+                        (as_of - quote.exchange_time).total_seconds(),
+                    )
+                )
+            if max(age_seconds) > self._maximum_perpetual_age_seconds:
+                unavailable.append(f"ECONOMIC_REFERENCE.{policy.target_asset}.STALE")
+                continue
+            snapshots.append(
+                build_economic_reference_snapshot(
+                    policy=policy,
+                    target=market_by_asset[policy.target_asset],
+                    reference_state=state,
+                    reference_quote=quote,
+                    schedule=schedule,
+                )
+            )
+        return (
+            tuple(sorted(snapshots, key=lambda item: item.target_asset)),
+            tuple(sorted(unavailable)),
+        )
 
     def _has_predecessor(
         self,

@@ -42,6 +42,7 @@ def _shadow_config(app_config) -> AppConfig:
     raw["assessment"]["mandate"]["observation_assets"] = (
         raw["assessment"]["mandate"]["observation_assets"][0],
     )
+    raw["assessment"]["mandate"]["observation_references"] = ()
     raw["decision_state"]["official_fact_policy"]["affected_assets"] = ("BTC",)
     return AppConfig.model_validate(raw)
 

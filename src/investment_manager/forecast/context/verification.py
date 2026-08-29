@@ -278,6 +278,24 @@ def packet_feature_observations(
                     ),
                     source_observed_at=source_observed_at,
                 )
+    for item in packet.economic_reference_states:
+        source_observed_at = max(
+            item.target_observed_at,
+            item.reference_state_observed_at,
+            item.reference_quote_observed_at,
+        )
+        for field in (
+            "reference_mark_index_premium_bps",
+            "reference_spread_bps",
+            "target_reference_deviation_bps",
+        ):
+            values[
+                f"economic_reference_state:{item.target_asset}.{field}"
+            ] = PacketFeatureObservation(
+                value=Decimal(str(getattr(item, field))),
+                source_ref=item.evidence_ref,
+                source_observed_at=source_observed_at,
+            )
     for item in getattr(packet, "facts", ()):
         for field, value in continuous_fact_numeric_values(item).items():
             values[f"fact_state:{item.fact_type}.{field}"] = PacketFeatureObservation(

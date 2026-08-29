@@ -97,6 +97,8 @@ ASSESS_INSTRUCTIONS = (
     "按同一因果骨架推理：行动方可观察的目标与约束 → 相对既有预期的新行动或信息 → "
     "利率、美元、信用、流动性、供给或资金流中介 → 跨资产响应与组合含义。严格区分事实、"
     "市场定价代理和推断；价格与仓位可以确认传导或放大冲击，但不能单独冒充外生原因。"
+    "economic_reference_states 只是区分外部经济参考与目标代理偏差的观察状态；闭市不代表方向，"
+    "它不能单独成为外生原因或资本依据。"
     "证据在哪一环停止，结论就停在哪里，并保留可验证的竞争解释。",
     "synthesis 给出主导状态、正在强化或抵消它的力量、传导阶段、作用期限和最重要的反转风险。"
     "mechanisms 只保留具有独立边际含义且可由后续观测证伪的力量，按决策价值排序；"
@@ -151,6 +153,7 @@ def assessment_visible_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
                 ),
                 *(item.evidence_ref for item in packet.intelligence_events),
                 *(item.evidence_ref for item in packet.derivative_states),
+                *(item.evidence_ref for item in packet.economic_reference_states),
                 *(
                     (item.evidence_id for item in previous.event_references)
                     if previous is not None
@@ -173,6 +176,7 @@ def assessment_current_evidence_ids(packet: DecisionPacket) -> frozenset[str]:
                 if item.directional_support_eligible
             ),
             *(item.evidence_ref for item in packet.derivative_states),
+            *(item.evidence_ref for item in packet.economic_reference_states),
         }
     )
 
@@ -239,6 +243,11 @@ _DERIVATIVE_VERIFICATION_FIELDS = (
     "global_long_account_fraction",
     "taker_buy_sell_ratio",
 )
+_ECONOMIC_REFERENCE_VERIFICATION_FIELDS = (
+    "reference_mark_index_premium_bps",
+    "reference_spread_bps",
+    "target_reference_deviation_bps",
+)
 
 
 def assessment_available_feature_selectors(packet: DecisionPacket) -> tuple[str, ...]:
@@ -254,6 +263,11 @@ def assessment_available_feature_selectors(packet: DecisionPacket) -> tuple[str,
             f"derivative_state:{item.asset}.{field}"
             for item in packet.derivative_states
             for field in _DERIVATIVE_VERIFICATION_FIELDS
+        ),
+        *(
+            f"economic_reference_state:{item.target_asset}.{field}"
+            for item in packet.economic_reference_states
+            for field in _ECONOMIC_REFERENCE_VERIFICATION_FIELDS
         ),
         *(
             f"fact_state:{item.fact_type}.{field}"

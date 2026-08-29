@@ -14,6 +14,7 @@ from investment_manager.market.models import (
     MarketSnapshot,
 )
 from investment_manager.market.perpetual.models import DerivativeContextSnapshot
+from investment_manager.state.economic_reference import EconomicReferenceSnapshot
 from investment_manager.state.tables import state_evidence_snapshots
 
 
@@ -21,6 +22,7 @@ class StateEvidenceKind(StrEnum):
     MARKET = "MARKET"
     FEATURE = "FEATURE"
     DERIVATIVE = "DERIVATIVE"
+    ECONOMIC_REFERENCE = "ECONOMIC_REFERENCE"
     ACCOUNT = "ACCOUNT"
     INTELLIGENCE = "INTELLIGENCE"
 
@@ -29,6 +31,7 @@ StateEvidence = (
     MarketSnapshot
     | FeatureSnapshot
     | DerivativeContextSnapshot
+    | EconomicReferenceSnapshot
     | AccountSnapshot
     | IntelligenceEvent
 )
@@ -48,6 +51,9 @@ class SqlStateEvidenceStore:
 
     def put_derivative(self, snapshot: DerivativeContextSnapshot) -> str:
         return self._put(StateEvidenceKind.DERIVATIVE, snapshot)
+
+    def put_economic_reference(self, snapshot: EconomicReferenceSnapshot) -> str:
+        return self._put(StateEvidenceKind.ECONOMIC_REFERENCE, snapshot)
 
     def put_account(self, snapshot: AccountSnapshot) -> str:
         return self._put(StateEvidenceKind.ACCOUNT, snapshot)
@@ -85,7 +91,13 @@ class SqlStateEvidenceStore:
 
     def _put(self, kind: StateEvidenceKind, snapshot: StateEvidence) -> str:
         evidence_ref = content_hash(snapshot)
-        if isinstance(
+        if isinstance(snapshot, EconomicReferenceSnapshot):
+            observed_at = max(
+                snapshot.target_observed_at,
+                snapshot.reference_state_observed_at,
+                snapshot.reference_quote_observed_at,
+            )
+        elif isinstance(
             snapshot,
             (MarketSnapshot, DerivativeContextSnapshot, AccountSnapshot, IntelligenceEvent),
         ):
@@ -122,6 +134,8 @@ def _parse_evidence(kind: StateEvidenceKind, payload: dict) -> StateEvidence:
         return FeatureSnapshot.model_validate(payload)
     if kind == StateEvidenceKind.DERIVATIVE:
         return DerivativeContextSnapshot.model_validate(payload)
+    if kind == StateEvidenceKind.ECONOMIC_REFERENCE:
+        return EconomicReferenceSnapshot.model_validate(payload)
     if kind == StateEvidenceKind.INTELLIGENCE:
         return IntelligenceEvent.model_validate(payload)
     return AccountSnapshot.model_validate(payload)

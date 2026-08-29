@@ -37,6 +37,10 @@ from investment_manager.market.models import (
     MarketSnapshot,
 )
 from investment_manager.market.perpetual.models import DerivativeContextSnapshot
+from investment_manager.state.economic_reference import (
+    EconomicReferenceSnapshot,
+    ObservationReference,
+)
 from investment_manager.state.facts import (
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FED_MONETARY_RELEASE_FACT_TYPE,
@@ -442,6 +446,37 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         )
     else:
         payload.pop("derivative_states", None)
+    if packet.economic_reference_states:
+        reference_columns = (
+            "target_asset",
+            "evidence_ref",
+            "reference_instrument_key",
+            "reference_state_exchange_time",
+            "session_type",
+            "reference_index_price",
+            "reference_mark_index_premium_bps",
+            "reference_spread_bps",
+            "target_reference_deviation_bps",
+        )
+        payload["economic_reference_states"] = {
+            "columns": reference_columns,
+            "rows": tuple(
+                (
+                    item.target_asset,
+                    item.evidence_ref,
+                    item.reference_instrument.key,
+                    item.reference_state_exchange_time.isoformat(),
+                    item.session_type.value,
+                    _analysis_decimal(item.reference_index_price),
+                    _analysis_decimal(item.reference_mark_index_premium_bps),
+                    _analysis_decimal(item.reference_spread_bps),
+                    _analysis_decimal(item.target_reference_deviation_bps),
+                )
+                for item in packet.economic_reference_states
+            ),
+        }
+    else:
+        payload.pop("economic_reference_states", None)
     payload["intelligence_events"] = tuple(
         _analysis_intelligence_event(item) for item in packet.intelligence_events
     )
@@ -564,6 +599,7 @@ class AnalysisMandate(FrozenModel):
     question: str = Field(min_length=1, max_length=500)
     mandate_exposures: tuple[MandateExposure, ...] = Field(min_length=1)
     observation_assets: tuple[ObservationAsset, ...] = Field(min_length=1)
+    observation_references: tuple[ObservationReference, ...] = ()
     required_risk_factors: tuple[str, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -577,6 +613,11 @@ class AnalysisMandate(FrozenModel):
             raise ValueError("Mandate observation assets 必须唯一且排序")
         if len(set(symbol_keys)) != len(symbol_keys):
             raise ValueError("Mandate observation market_symbol 必须唯一")
+        reference_assets = tuple(item.target_asset for item in self.observation_references)
+        if tuple(sorted(set(reference_assets))) != reference_assets:
+            raise ValueError("Mandate observation references 必须按目标资产唯一排序")
+        if not set(reference_assets).issubset(asset_keys):
+            raise ValueError("Mandate observation reference 必须属于观察资产")
         # Order is the mandate owner's explicit causal priority when the packet
         # cannot carry one representative for every channel.  Sorting it would
         # silently turn lexical order into investment priority.
@@ -625,6 +666,31 @@ class PacketAssetState(FrozenModel):
     market_age_seconds: int = Field(ge=0)
 
     _utc_observed_at = field_validator("observed_at")(require_utc)
+
+
+class PacketEconomicReferenceState(EconomicReferenceSnapshot):
+    """Model-visible reference state with its immutable State evidence identity."""
+
+    evidence_ref: str = Field(pattern=SHA256_PATTERN)
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: EconomicReferenceSnapshot,
+    ) -> PacketEconomicReferenceState:
+        return cls(
+            **snapshot.model_dump(),
+            evidence_ref=content_hash(snapshot),
+        )
+
+    @model_validator(mode="after")
+    def evidence_identity_matches_snapshot(self):
+        snapshot = EconomicReferenceSnapshot.model_validate(
+            self.model_dump(exclude={"evidence_ref"})
+        )
+        if self.evidence_ref != content_hash(snapshot):
+            raise ValueError("经济交叉参考 evidence_ref 与快照内容不一致")
+        return self
 
 
 class PacketDerivativeState(FrozenModel):
@@ -1059,6 +1125,7 @@ class DecisionPacket(FrozenModel):
     portfolio: PacketPortfolioState | None = None
     asset_states: tuple[PacketAssetState, ...] = Field(min_length=1)
     derivative_states: tuple[PacketDerivativeState, ...] = ()
+    economic_reference_states: tuple[PacketEconomicReferenceState, ...] = ()
     deltas: tuple[PacketDelta, ...] = ()
     review_requests: tuple[PacketReviewRequest, ...] = ()
     facts: tuple[PacketFact, ...]
@@ -1131,6 +1198,15 @@ class DecisionPacket(FrozenModel):
             raise ValueError("DecisionPacket derivative_states 必须按资产唯一且排序")
         if self.derivative_states and set(derivative_keys) != set(asset_keys):
             raise ValueError("DecisionPacket derivative_states 与 asset_states 不一致")
+        reference_keys = tuple(
+            item.target_asset for item in self.economic_reference_states
+        )
+        if tuple(sorted(set(reference_keys))) != reference_keys:
+            raise ValueError("DecisionPacket economic_reference_states 必须按资产唯一排序")
+        if not set(reference_keys).issubset(asset_keys):
+            raise ValueError("DecisionPacket economic reference 必须属于 asset_states")
+        if any(item.as_of != self.as_of for item in self.economic_reference_states):
+            raise ValueError("DecisionPacket economic reference 必须与 packet 同时点")
         for derivative in self.derivative_states:
             observation_times = (
                 derivative.observed_at,
@@ -1362,6 +1438,7 @@ class DecisionPacketBuilder:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...] = (),
+        economic_references: tuple[EconomicReferenceSnapshot, ...] = (),
         previous_context: PacketPreviousContext | None = None,
         information_coverage: tuple[DomainCoverageSnapshot, ...] = (),
     ) -> DecisionPacket:
@@ -1378,6 +1455,7 @@ class DecisionPacketBuilder:
             markets=markets,
             features=features,
             derivatives=derivatives,
+            economic_references=economic_references,
             previous_context=previous_context,
         )
         visible_by_id = {item.fact.revision_id: item for item in facts}
@@ -1434,6 +1512,10 @@ class DecisionPacketBuilder:
             self._derivative_state(item)
             for item in sorted(derivatives, key=lambda value: value.asset)
         )
+        economic_reference_states = tuple(
+            PacketEconomicReferenceState.from_snapshot(item)
+            for item in sorted(economic_references, key=lambda value: value.target_asset)
+        )
         required_views = tuple(
             RequiredView(asset=item.asset, horizon_minutes=horizon)
             for item in mandate.observation_assets
@@ -1457,6 +1539,7 @@ class DecisionPacketBuilder:
             "portfolio": (self._portfolio_state(account) if account is not None else None),
             "asset_states": asset_states,
             "derivative_states": derivative_states,
+            "economic_reference_states": economic_reference_states,
             "deltas": tuple(self._delta(item) for item in ordered_deltas),
             "review_requests": ordered_reviews,
             "facts": selected,
@@ -1575,6 +1658,7 @@ class DecisionPacketBuilder:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...],
+        economic_references: tuple[EconomicReferenceSnapshot, ...],
         previous_context: PacketPreviousContext | None,
     ) -> None:
         if state.analysis_scope != mandate.analysis_scope:
@@ -1613,6 +1697,10 @@ class DecisionPacketBuilder:
             sorted(content_hash(item) for item in derivatives)
         ):
             raise ValueError("衍生品事实与 StateSnapshot derivative_snapshot_refs 不一致")
+        if state.economic_reference_snapshot_refs != tuple(
+            sorted(content_hash(item) for item in economic_references)
+        ):
+            raise ValueError("经济交叉参考与 StateSnapshot 引用不一致")
         derivative_assets = tuple(item.asset for item in derivatives)
         derivative_symbols = tuple(item.instrument.symbol for item in derivatives)
         if derivatives and (
@@ -1629,6 +1717,24 @@ class DecisionPacketBuilder:
         for derivative in derivatives:
             if derivative.as_of != state.as_of or derivative.observed_at > state.as_of:
                 raise ValueError("衍生品事实与 StateSnapshot 时点不一致")
+        reference_assets = tuple(item.target_asset for item in economic_references)
+        if tuple(sorted(set(reference_assets))) != reference_assets:
+            raise ValueError("EconomicReferenceSnapshot 必须按目标资产唯一排序")
+        configured_references = {
+            item.target_asset: item for item in mandate.observation_references
+        }
+        if not set(reference_assets).issubset(configured_references):
+            raise ValueError("EconomicReferenceSnapshot 不属于 Mandate reference")
+        for reference in economic_references:
+            policy = configured_references[reference.target_asset]
+            if (
+                reference.as_of != state.as_of
+                or reference.reference_instrument.key
+                != policy.reference_instrument_key
+                or reference.target_price_per_reference_price
+                != policy.target_price_per_reference_price
+            ):
+                raise ValueError("EconomicReferenceSnapshot 与冻结政策或时点不一致")
         state_fact_ids = set(state.fact_revision_ids)
         revision_ids = tuple(item.fact.revision_id for item in facts)
         if len(set(revision_ids)) != len(revision_ids):
