@@ -1,0 +1,258 @@
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine
+
+from investment_manager.forecast.context.posterior_contract import (
+    ContextPosteriorInput,
+    ContextPosteriorStructuredOutput,
+    PosteriorBucketDraft,
+    PosteriorPriorTarget,
+    PosteriorTargetDraft,
+    finalize_posterior,
+    posterior_output_schema,
+)
+from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.contracts import ForecastPriceAnchor
+from investment_manager.forecast.models import (
+    ContextAssessment,
+    ContextCausalNode,
+    ContextMechanism,
+    ContextMechanismRelationship,
+    ContextTransmissionStage,
+    ContextVerificationPredicate,
+    ContextVerificationTest,
+)
+from investment_manager.forecast.program.baseline import load_forecast_baseline
+from investment_manager.forecast.program.prior import RollingPriorForecastProducer
+from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.results import (
+    ForecastMechanismContribution,
+    ForecastMechanismEffect,
+)
+from investment_manager.market.models import MarketQuote
+from investment_manager.market.repository import InMemoryMarketDataStore
+from investment_manager.schema import create_schema
+
+SLOT_AT = datetime(2026, 8, 30, tzinfo=UTC)
+
+
+def _prior_targets():
+    root = Path(__file__).resolve().parents[1]
+    artifact = load_forecast_baseline(
+        root / "evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json"
+    )
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    forecasts = SqlForecastStore(engine)
+    market = InMemoryMarketDataStore()
+    for symbol, price in (("BTCUSDT", Decimal("110000")), ("PAXGUSDT", Decimal("3500"))):
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"{symbol}-cutoff",
+                symbol=symbol,
+                observed_at=SLOT_AT,
+                bid=price,
+                bid_quantity="1",
+                ask=price + Decimal("1"),
+                ask_quantity="1",
+                source="test",
+            )
+        )
+    prior = RollingPriorForecastProducer(
+        artifact=artifact,
+        market=market,
+        contracts=contracts,
+        forecasts=forecasts,
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        activated_at=SLOT_AT - timedelta(hours=1),
+        maximum_quote_age_seconds=300,
+        clock=lambda: SLOT_AT + timedelta(minutes=1),
+    ).produce(as_of=SLOT_AT + timedelta(minutes=1))
+    return tuple(
+        PosteriorPriorTarget(
+            contract=contracts.contract(item.contract_id),
+            slot=contracts.slot(item.decision_slot_id),
+            prior=item,
+        )
+        for item in prior
+    )
+
+
+def _world_model() -> ContextAssessment:
+    mechanism = ContextMechanism(
+        mechanism_id="structural-liquidity-1",
+        relationship=ContextMechanismRelationship.SUPPORTS,
+        claim="政策现金流正在改善风险资产可用流动性。",
+        horizon_hours=72,
+        causal_chain=(
+            ContextCausalNode(statement="政策现金流已经变化。", evidence_ids=("fact-1",)),
+            ContextCausalNode(statement="融资条件获得缓冲。", evidence_ids=("fact-1",)),
+        ),
+        transmission_stage=ContextTransmissionStage.PROPAGATING,
+        verification_tests=(
+            ContextVerificationTest(
+                feature_selector="fact_state:liquidity.value",
+                evaluation_window_minutes=4320,
+                supports_predicate=ContextVerificationPredicate(operator="GT", value=Decimal("0")),
+                contradicts_predicate=ContextVerificationPredicate(
+                    operator="LT", value=Decimal("0")
+                ),
+            ),
+        ),
+        invalidation_conditions=("政策现金流反转",),
+        next_review_at=SLOT_AT + timedelta(days=1),
+    )
+    return ContextAssessment(
+        assessment_id="world-model-1",
+        analysis_scope="primary-portfolio",
+        mandate_version="mandate-v1",
+        as_of=SLOT_AT - timedelta(hours=6),
+        available_at=SLOT_AT - timedelta(hours=5),
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        trigger_ids=("trigger-1",),
+        synthesis="政策现金流改善流动性，但仍需观察融资条件传导。",
+        synthesis_horizon_hours=72,
+        mechanisms=(mechanism,),
+    )
+
+
+def _input(*, eligible: bool = True) -> ContextPosteriorInput:
+    return ContextPosteriorInput.create(
+        information_cutoff_at=SLOT_AT,
+        world_model=_world_model(),
+        eligible_mechanism_ids=("structural-liquidity-1",) if eligible else (),
+        targets=_prior_targets(),
+    )
+
+
+def _output(value: ContextPosteriorInput, *, change: bool, contribute: bool):
+    drafts = []
+    for target in value.targets:
+        probabilities = [item.probability for item in target.prior.outcome_probabilities]
+        if change:
+            probabilities[0] -= Decimal("0.01")
+            probabilities[-1] += Decimal("0.01")
+        drafts.append(
+            PosteriorTargetDraft(
+                contract_id=target.contract.contract_id,
+                buckets=tuple(
+                    PosteriorBucketDraft(
+                        bucket_id=bucket.bucket_id,
+                        probability=probability,
+                        rationale="结构流动性使尾部概率发生变化。"
+                        if change
+                        else "没有结构增量，保持先验。",
+                    )
+                    for bucket, probability in zip(
+                        target.contract.outcome_buckets,
+                        probabilities,
+                        strict=True,
+                    )
+                ),
+                mechanism_contributions=(
+                    (
+                        ForecastMechanismContribution(
+                            mechanism_id="structural-liquidity-1",
+                            effect=ForecastMechanismEffect.UPSIDE,
+                            rationale="政策现金流通过融资条件传导。",
+                        ),
+                    )
+                    if contribute
+                    else ()
+                ),
+            )
+        )
+    return ContextPosteriorStructuredOutput(forecasts=tuple(drafts))
+
+
+def _entry_anchors(value: ContextPosteriorInput, completed_at: datetime):
+    return {
+        target.contract.contract_id: (
+            ForecastPriceAnchor(
+                instrument_id=target.contract.target.legs[0].instrument.key,
+                price=target.prior.entry_prices[0].price,
+                observed_at=completed_at,
+                available_at=completed_at,
+                quote_ref=f"entry-{target.contract.contract_id}",
+            ),
+        )
+        for target in value.targets
+    }
+
+
+def test_joint_posterior_preserves_frozen_input_output_and_mechanism_lineage() -> None:
+    frozen = _input()
+    completed = SLOT_AT + timedelta(minutes=10)
+    output = _output(frozen, change=True, contribute=True)
+
+    forecasts = finalize_posterior(
+        output=output,
+        frozen_input=frozen,
+        producer_behavior_id="posterior-behavior-v1",
+        completed_at=completed,
+        entry_anchors=_entry_anchors(frozen, completed),
+    )
+
+    assert len(forecasts) == 2
+    assert all(item.available_at == completed for item in forecasts)
+    assert all(item.world_model_id == "world-model-1" for item in forecasts)
+    assert all(item.analysis_input_json is not None for item in forecasts)
+    assert all(item.analysis_output_json is not None for item in forecasts)
+    assert all(item.evidence_refs == ("fact-1",) for item in forecasts)
+
+
+def test_posterior_must_not_change_prior_without_structural_attribution() -> None:
+    frozen = _input(eligible=False)
+    completed = SLOT_AT + timedelta(minutes=10)
+
+    with pytest.raises(ValueError, match="必须绑定结构机制"):
+        finalize_posterior(
+            output=_output(frozen, change=True, contribute=False),
+            frozen_input=frozen,
+            producer_behavior_id="posterior-behavior-v1",
+            completed_at=completed,
+            entry_anchors=_entry_anchors(frozen, completed),
+        )
+
+
+def test_unchanged_posterior_is_a_valid_context_forecast_without_fake_contribution() -> None:
+    frozen = _input(eligible=False)
+    completed = SLOT_AT + timedelta(minutes=10)
+
+    forecasts = finalize_posterior(
+        output=_output(frozen, change=False, contribute=False),
+        frozen_input=frozen,
+        producer_behavior_id="posterior-behavior-v1",
+        completed_at=completed,
+        entry_anchors=_entry_anchors(frozen, completed),
+    )
+
+    assert all(not item.mechanism_contributions for item in forecasts)
+    assert all(not item.evidence_refs for item in forecasts)
+    assert all(item.world_model_id == "world-model-1" for item in forecasts)
+
+
+def test_posterior_schema_is_bounded_to_frozen_contracts_and_mechanisms() -> None:
+    frozen = _input()
+    schema = posterior_output_schema(frozen)
+    definitions = schema["$defs"]
+
+    assert definitions["PosteriorTargetDraft"]["properties"]["contract_id"]["enum"] == [
+        item.contract.contract_id for item in frozen.targets
+    ]
+    assert definitions["ForecastMechanismContribution"]["properties"]["mechanism_id"]["enum"] == [
+        "structural-liquidity-1"
+    ]
+
+    without_eligible = posterior_output_schema(_input(eligible=False))
+    assert (
+        without_eligible["$defs"]["PosteriorTargetDraft"]["properties"]["mechanism_contributions"][
+            "maxItems"
+        ]
+        == 0
+    )

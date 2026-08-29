@@ -71,6 +71,8 @@ class BaseForecast(FrozenModel):
     invalidation_conditions: tuple[str, ...] = ()
     analysis_input_json: str | None = None
     analysis_input_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    analysis_output_json: str | None = None
+    analysis_output_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     program_input_json: str | None = None
     program_input_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
@@ -109,13 +111,15 @@ class BaseForecast(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"BaseForecast {name} 必须唯一且排序")
-        has_context_provenance = bool(
+        has_context_detail = bool(
             self.mechanism_contributions or self.evidence_refs or self.invalidation_conditions
         )
-        if (self.world_model_id is not None) != has_context_provenance:
-            raise ValueError("BaseForecast WorldModel 身份与 Context 来源链必须同时存在")
+        if has_context_detail and self.world_model_id is None:
+            raise ValueError("BaseForecast Context 来源链缺少 WorldModel 身份")
         if (self.analysis_input_json is None) != (self.analysis_input_hash is None):
             raise ValueError("BaseForecast AI 输入原文与哈希必须同时存在")
+        if (self.analysis_output_json is None) != (self.analysis_output_hash is None):
+            raise ValueError("BaseForecast AI 输出原文与哈希必须同时存在")
         if (self.program_input_json is None) != (self.program_input_hash is None):
             raise ValueError("BaseForecast 程序输入原文与哈希必须同时存在")
         if self.analysis_input_json is not None and self.program_input_json is not None:
@@ -124,15 +128,22 @@ class BaseForecast(FrozenModel):
             raise ValueError("Context BaseForecast 必须保存真实 AI 输入快照")
         if self.world_model_id is None and self.analysis_input_json is not None:
             raise ValueError("非 Context BaseForecast 不得伪造 AI 输入快照")
-        if self.analysis_input_json is not None:
+        if self.analysis_output_json is not None and self.analysis_input_json is None:
+            raise ValueError("BaseForecast AI 输出不得脱离冻结输入")
+        for label, raw, digest in (
+            ("输入", self.analysis_input_json, self.analysis_input_hash),
+            ("输出", self.analysis_output_json, self.analysis_output_hash),
+        ):
+            if raw is None:
+                continue
             try:
-                parsed_input = json.loads(self.analysis_input_json)
+                parsed = json.loads(raw)
             except json.JSONDecodeError as exc:
-                raise ValueError("BaseForecast AI 输入快照不是有效 JSON") from exc
-            if canonical_json(parsed_input) != self.analysis_input_json:
-                raise ValueError("BaseForecast AI 输入快照必须是规范 JSON")
-            if content_hash(parsed_input) != self.analysis_input_hash:
-                raise ValueError("BaseForecast AI 输入快照哈希不一致")
+                raise ValueError(f"BaseForecast AI {label}快照不是有效 JSON") from exc
+            if canonical_json(parsed) != raw:
+                raise ValueError(f"BaseForecast AI {label}快照必须是规范 JSON")
+            if content_hash(parsed) != digest:
+                raise ValueError(f"BaseForecast AI {label}快照哈希不一致")
         if self.program_input_json is not None:
             try:
                 parsed_program_input = json.loads(self.program_input_json)
@@ -269,10 +280,7 @@ class ForecastOutcome(FrozenModel):
     def identity_timing_and_status_are_canonical(self):
         economic_start = self.outcome_start_at or self.information_cutoff_at
         if not (
-            self.information_cutoff_at
-            <= economic_start
-            < self.evaluation_at
-            <= self.settled_at
+            self.information_cutoff_at <= economic_start < self.evaluation_at <= self.settled_at
         ):
             raise ValueError("ForecastOutcome 时间顺序非法")
         has_result = self.status == ForecastOutcomeStatus.SETTLED
