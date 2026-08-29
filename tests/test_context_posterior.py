@@ -1470,13 +1470,13 @@ def _posterior_trigger_config_and_batch(app_config):
         heartbeat_seconds=900,
     )
     trigger = build_trigger_event(
-        trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
+        trigger_type=AnalysisTriggerType.HEARTBEAT,
         symbol=config.assessment.review_trigger_symbol,
         pipeline_id=config.pipeline.version,
         occurred_at=SLOT_AT + timedelta(minutes=1),
         observed_at=SLOT_AT + timedelta(minutes=1),
         priority=1,
-        dedup_key="posterior-slot-v1",
+        dedup_key="posterior-heartbeat-v1",
     )
     return config, build_trigger_batch(
         plan=plan,
@@ -1486,7 +1486,9 @@ def _posterior_trigger_config_and_batch(app_config):
     )
 
 
-def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -> None:
+def test_heartbeat_dispatches_one_due_joint_posterior_without_standalone_assessment(
+    app_config,
+) -> None:
     contracts, forecasts, _market, engine, prior, targets = _prior_runtime()
     config, batch = _posterior_trigger_config_and_batch(app_config)
     preparation = ContextPosteriorPreparation(
