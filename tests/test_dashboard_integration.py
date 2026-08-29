@@ -61,7 +61,7 @@ def _empty_engine(database_url: str | None = None):
 
 def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> DecisionPacket:
     return DecisionPacket.create(
-        schema_version="decision-packet-v4",
+        schema_version="decision-packet-v21",
         policy_version="dashboard-packet-v1",
         mandate_version="dashboard-test-mandate-v1",
         analysis_scope=analysis_scope,

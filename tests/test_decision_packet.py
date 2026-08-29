@@ -461,7 +461,14 @@ def test_packet_requires_mandate_exposures_from_schema_v20_onward(
     content = {
         name: getattr(current, name)
         for name in DecisionPacket.model_fields
-        if name not in {"packet_id", "content_hash", "mandate_exposures", "schema_version"}
+        if name
+        not in {
+            "packet_id",
+            "content_hash",
+            "mandate_exposures",
+            "economic_reference_states",
+            "schema_version",
+        }
     }
     historical = DecisionPacket.create(
         **content,
@@ -469,11 +476,38 @@ def test_packet_requires_mandate_exposures_from_schema_v20_onward(
     )
     payload = historical.model_dump(mode="json")
     payload.pop("mandate_exposures")
+    payload.pop("economic_reference_states")
     assert DecisionPacket.model_validate(payload) == historical
 
     payload["schema_version"] = "decision-packet-v20"
     with pytest.raises(ValueError, match="必须冻结 Capital mandate exposures"):
         DecisionPacket.model_validate(payload)
+
+
+def test_packet_recovers_v20_hash_without_v21_economic_references(
+    app_config,
+    replay_input,
+) -> None:
+    _, current = _packet(app_config, replay_input)
+    content = {
+        name: getattr(current, name)
+        for name in DecisionPacket.model_fields
+        if name
+        not in {
+            "packet_id",
+            "content_hash",
+            "economic_reference_states",
+            "schema_version",
+        }
+    }
+    historical = DecisionPacket.create(
+        **content,
+        schema_version="decision-packet-v20",
+    )
+    payload = historical.model_dump(mode="json")
+    payload.pop("economic_reference_states")
+
+    assert DecisionPacket.model_validate(payload) == historical
 
 
 def test_packet_rejects_trigger_refs_that_do_not_match_deltas(app_config, replay_input) -> None:

@@ -1175,12 +1175,7 @@ class DecisionPacket(FrozenModel):
         exposure_keys = tuple(item.key for item in self.mandate_exposures)
         if tuple(sorted(set(exposure_keys))) != exposure_keys:
             raise ValueError("DecisionPacket mandate exposures 必须唯一且排序")
-        schema_prefix = "decision-packet-v"
-        schema_generation = (
-            int(self.schema_version.removeprefix(schema_prefix))
-            if self.schema_version.startswith(schema_prefix)
-            else None
-        )
+        schema_generation = _decision_packet_schema_generation(self.schema_version)
         if schema_generation is not None and schema_generation >= 20 and not exposure_keys:
             raise ValueError("当前 DecisionPacket 必须冻结 Capital mandate exposures")
         required_view_keys = tuple(
@@ -1406,12 +1401,36 @@ def replace_packet_previous_context(
 
 
 def _decision_packet_content_hash(packet: DecisionPacket) -> str:
+    excluded = {"packet_id", "content_hash"}
+    schema_generation = _decision_packet_schema_generation(packet.schema_version)
+    if (
+        schema_generation is not None
+        and schema_generation < 20
+        and "mandate_exposures" not in packet.model_fields_set
+    ):
+        excluded.add("mandate_exposures")
+    if (
+        schema_generation is not None
+        and schema_generation < 21
+        and "economic_reference_states" not in packet.model_fields_set
+    ):
+        excluded.add("economic_reference_states")
     return content_hash(
         packet.model_dump(
             mode="json",
-            exclude={"packet_id", "content_hash"},
+            exclude=excluded,
         )
     )
+
+
+def _decision_packet_schema_generation(schema_version: str) -> int | None:
+    prefix = "decision-packet-v"
+    if not schema_version.startswith(prefix):
+        return None
+    try:
+        return int(schema_version.removeprefix(prefix))
+    except ValueError:
+        return None
 
 
 _SOURCE_RANK = {
