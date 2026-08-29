@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -878,50 +879,67 @@ class InformationCollector:
     def collect(self, *, observed_at: datetime) -> CollectionResult:
         read_count = normalized_count = inserted_count = 0
         failed_source_ids: list[str] = []
-        for source in self._sources:
-            started_at = max(require_utc(self._clock()), require_utc(observed_at))
-            source_read = source_inserted = 0
-            latest_publication_at: datetime | None = None
-            try:
-                items = source.read(observed_at=observed_at)
-                source_read = len(items)
-                latest_publication_at = max(
-                    (item.event_time for item in items),
-                    default=None,
+        observation_time = require_utc(observed_at)
+        reads: dict[
+            Future[tuple[RawIntelligenceItem, ...]],
+            tuple[IntelligenceSource, datetime],
+        ] = {}
+        with ThreadPoolExecutor(
+            max_workers=max(1, len(self._sources)),
+            thread_name_prefix="information-source",
+        ) as executor:
+            for source in self._sources:
+                started_at = max(require_utc(self._clock()), observation_time)
+                reads[executor.submit(source.read, observed_at=observation_time)] = (
+                    source,
+                    started_at,
                 )
-                for raw in items:
-                    read_count += 1
-                    event = self._normalizer.normalize(raw)
-                    if event is None:
-                        continue
-                    normalized_count += 1
-                    if self._store.put(event):
-                        inserted_count += 1
-                        source_inserted += 1
-                self._record_source_poll(
-                    source_id=source.source_id,
-                    status=(
-                        SourcePollStatus.CHANGED if source_inserted else SourcePollStatus.UNCHANGED
-                    ),
-                    started_at=started_at,
-                    latest_publication_at=latest_publication_at,
-                    observation_count=source_read,
-                    new_fact_count=source_inserted,
-                )
-            except Exception as exc:
-                logger.exception("information source failed: %s", source.source_id)
-                failed_source_ids.append(source.source_id)
-                self._record_source_poll(
-                    source_id=source.source_id,
-                    status=SourcePollStatus.FAILED,
-                    started_at=started_at,
-                    error_class=type(exc).__name__,
-                )
+            for future in as_completed(reads):
+                source, started_at = reads[future]
+                source_read = source_inserted = 0
+                latest_publication_at: datetime | None = None
+                try:
+                    items = future.result()
+                    source_read = len(items)
+                    latest_publication_at = max(
+                        (item.event_time for item in items),
+                        default=None,
+                    )
+                    for raw in items:
+                        read_count += 1
+                        event = self._normalizer.normalize(raw)
+                        if event is None:
+                            continue
+                        normalized_count += 1
+                        if self._store.put(event):
+                            inserted_count += 1
+                            source_inserted += 1
+                    self._record_source_poll(
+                        source_id=source.source_id,
+                        status=(
+                            SourcePollStatus.CHANGED
+                            if source_inserted
+                            else SourcePollStatus.UNCHANGED
+                        ),
+                        started_at=started_at,
+                        latest_publication_at=latest_publication_at,
+                        observation_count=source_read,
+                        new_fact_count=source_inserted,
+                    )
+                except Exception as exc:
+                    logger.exception("information source failed: %s", source.source_id)
+                    failed_source_ids.append(source.source_id)
+                    self._record_source_poll(
+                        source_id=source.source_id,
+                        status=SourcePollStatus.FAILED,
+                        started_at=started_at,
+                        error_class=type(exc).__name__,
+                    )
         return CollectionResult(
             read_count,
             normalized_count,
             inserted_count,
-            tuple(failed_source_ids),
+            tuple(sorted(failed_source_ids)),
         )
 
     def _record_source_poll(

@@ -66,10 +66,12 @@ class RecordingPacketPreparation:
 class RecordingForecastProducer:
     def __init__(self, results=()) -> None:
         self.as_of = None
+        self.calls = []
         self.results = results
 
-    def produce(self, *, as_of):
+    def produce(self, *, as_of, cause=None):
         self.as_of = as_of
+        self.calls.append((as_of, cause))
         return self.results
 
 
@@ -204,6 +206,49 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
     assert dispatches == ()
     assert producer.as_of == NOW
     assert consumer.batch == batch
+
+
+def test_qualified_information_event_creates_separate_material_forecast_panel(
+    app_config,
+) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    evidence_id = "e" * 64
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=85,
+        dedup_key="qualified-official-event",
+        evidence_ids=(evidence_id,),
+    )
+    producer = RecordingForecastProducer()
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
+
+    TriggerDispatchBuilder(
+        config=config,
+        program_forecast_producers=(producer,),
+    ).build(batch)
+
+    assert len(producer.calls) == 2
+    assert producer.calls[0] == (NOW, None)
+    material_cause = producer.calls[1][1]
+    assert material_cause is not None
+    assert material_cause.origin.value == "MATERIAL_STATE"
+    assert material_cause.trigger_refs == (evidence_id,)
 
 
 def test_trigger_service_assembly_passes_enabled_forecast_producer_as_tuple(

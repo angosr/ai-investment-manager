@@ -1906,10 +1906,11 @@ def test_event_lifecycle_is_derived_from_current_mechanism_references(
     replay_input,
 ) -> None:
     event_id = "e" * 64
-    previous = _previous_world_model(
+    previous_base = _previous_world_model(
         replay_input.market.as_of,
         assessment_id="assessment-prior-event",
-    ).model_copy(
+    )
+    previous = previous_base.model_copy(
         update={
             "event_references": (
                 PacketPreviousEventReference(
@@ -1920,7 +1921,20 @@ def test_event_lifecycle_is_derived_from_current_mechanism_references(
                     impact_state="ACTIVE",
                     rationale="该事件上一轮仍在影响风险溢价。",
                 ),
-            )
+            ),
+            "mechanisms": tuple(
+                mechanism.model_copy(
+                    update={
+                        "causal_chain": (
+                            mechanism.causal_chain[0].model_copy(
+                                update={"evidence_ids": (event_id,)}
+                            ),
+                            *mechanism.causal_chain[1:],
+                        )
+                    }
+                )
+                for mechanism in previous_base.mechanisms
+            ),
         }
     )
     _, packet = _packet(app_config, replay_input, previous_context=previous)
@@ -1948,6 +1962,127 @@ def test_event_lifecycle_is_derived_from_current_mechanism_references(
     assert assessment.event_references[0].evidence_id == event_id
     assert assessment.event_references[0].impact_state.value == "STALE"
     assert assessment.event_references[0].stale_at == packet.as_of
+
+
+def test_active_event_survives_one_model_omission_while_mechanism_continues(
+    app_config,
+    replay_input,
+) -> None:
+    event_id = "f" * 64
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-continued-event",
+    )
+    previous_mechanism = previous.mechanisms[0].model_copy(
+        update={
+            "causal_chain": (
+                previous.mechanisms[0].causal_chain[0].model_copy(
+                    update={"evidence_ids": (event_id,)}
+                ),
+                *previous.mechanisms[0].causal_chain[1:],
+            )
+        }
+    )
+    previous = previous.model_copy(
+        update={
+            "mechanisms": (previous_mechanism,),
+            "event_references": (
+                PacketPreviousEventReference(
+                    evidence_id=event_id,
+                    source="official-source",
+                    title="仍在传导的正式政策事件",
+                    event_time=replay_input.market.as_of - timedelta(hours=2),
+                    impact_state="ACTIVE",
+                    rationale="政策路径仍在通过短端利率传导。",
+                ),
+            ),
+        }
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    base = _world_model_output()
+    continued = base.world_model.mechanisms[0].model_copy(
+        update={"continuity_ref": previous_mechanism.mechanism_id}
+    )
+
+    assessment = finalize_world_model(
+        output=base.model_copy(
+            update={
+                "world_model": base.world_model.model_copy(
+                    update={"mechanisms": (continued,)}
+                )
+            }
+        ),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.event_references[0].evidence_id == event_id
+    assert assessment.event_references[0].impact_state.value == "ACTIVE"
+    assert assessment.event_references[0].stale_at is None
+
+
+def test_recent_stale_event_can_be_reactivated_by_current_evidence(
+    app_config,
+    replay_input,
+) -> None:
+    event_id = "9" * 64
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-reactivated-event",
+    ).model_copy(
+        update={
+            "event_references": (
+                PacketPreviousEventReference(
+                    evidence_id=event_id,
+                    source="official-source",
+                    title="过早退出但仍在传导的政策事件",
+                    event_time=replay_input.market.as_of - timedelta(hours=3),
+                    impact_state="STALE",
+                    rationale="上一轮曾认为影响已经结束。",
+                    stale_at=replay_input.market.as_of - timedelta(hours=1),
+                ),
+            )
+        }
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    assert event_id in assessment_visible_evidence_ids(packet)
+    base = _world_model_output()
+    mechanism = base.world_model.mechanisms[0].model_copy(
+        update={
+            "causal_chain": (
+                base.world_model.mechanisms[0].causal_chain[0].model_copy(
+                    update={"evidence_ids": (event_id, "revision-1")}
+                ),
+                *base.world_model.mechanisms[0].causal_chain[1:],
+            )
+        }
+    )
+    retirement = ContextMechanismRetirement(
+        previous_mechanism_id=previous.mechanisms[0].mechanism_id,
+        rationale="当前证据支持新的政策传导解释。",
+        evidence_ids=("revision-1",),
+    )
+
+    assessment = finalize_world_model(
+        output=base.model_copy(
+            update={
+                "world_model": base.world_model.model_copy(
+                    update={
+                        "mechanisms": (mechanism,),
+                        "retired_mechanisms": (retirement,),
+                    }
+                )
+            }
+        ),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.event_references[0].evidence_id == event_id
+    assert assessment.event_references[0].impact_state.value == "ACTIVE"
+    assert assessment.event_references[0].stale_at is None
 
 
 def test_finalize_assessment_writes_only_current_world_model_schema(

@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
+    MATERIAL_SLOT_POLICY_VERSION,
     ForecastBenchmarkProbability,
     ForecastContract,
     ForecastDecisionSlot,
@@ -20,6 +21,7 @@ from investment_manager.forecast.contracts import (
     ForecastProducerBinding,
     ForecastProducerKind,
     ForecastSlotCause,
+    ForecastSlotOrigin,
 )
 from investment_manager.forecast.models import ForecastTarget
 from investment_manager.forecast.program.baseline import (
@@ -40,7 +42,7 @@ from investment_manager.market.repository import MarketDataStore
 
 PRIOR_PRODUCER_ID = "rolling-unconditional-prior"
 PRIOR_CONTRACT_VERSION = "spot-midpoint-72h-v1"
-PRIOR_BEHAVIOR_VERSION = "rolling-visible-outcomes-v1"
+PRIOR_BEHAVIOR_VERSION = "rolling-visible-outcomes-v2"
 _HORIZON_MINUTES = 4_320
 _CADENCE_DAYS = 3
 _PHASE_EPOCH = date(1970, 1, 1)
@@ -106,6 +108,7 @@ def build_prior_targets(artifact: ForecastBaselineArtifact) -> tuple[PriorRuntim
     behavior_id = content_hash(
         {
             "version": PRIOR_BEHAVIOR_VERSION,
+            "material_slot_policy": MATERIAL_SLOT_POLICY_VERSION,
             "artifact_id": artifact.artifact_id,
             "joint_targets": tuple(
                 {
@@ -149,13 +152,27 @@ class RollingPriorForecastProducer:
         if self.maximum_quote_age_seconds < 1:
             raise ValueError("先验 producer 行情年龄必须为正数")
 
-    def produce(self, *, as_of: datetime) -> tuple[BaseForecast | ForecastNoEstimate, ...]:
+    def produce(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> tuple[BaseForecast | ForecastNoEstimate, ...]:
         observed_at = require_utc(as_of)
-        slot_at = prior_slot_at_or_before(observed_at)
+        slot_at = (
+            prior_slot_at_or_before(observed_at)
+            if cause is None or cause.origin == ForecastSlotOrigin.CADENCE
+            else observed_at
+        )
         if slot_at < self.activated_at:
             return ()
         return tuple(
-            self._produce(target, slot_at=slot_at, observed_at=observed_at)
+            self._produce(
+                target,
+                slot_at=slot_at,
+                observed_at=observed_at,
+                cause=cause or ForecastSlotCause.cadence(target.contract),
+            )
             for target in build_prior_targets(self.artifact)
         )
 
@@ -165,10 +182,10 @@ class RollingPriorForecastProducer:
         *,
         slot_at: datetime,
         observed_at: datetime,
+        cause: ForecastSlotCause,
     ) -> BaseForecast | ForecastNoEstimate:
         self.contracts.record_contract(target.contract)
         self.contracts.resolve_binding(target.binding, activated_at=self.activated_at)
-        cause = ForecastSlotCause.cadence(target.contract)
         slot_id = ForecastDecisionSlot.identity_for(
             target.contract.contract_id, slot_at, cause=cause
         )

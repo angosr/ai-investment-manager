@@ -4,6 +4,10 @@ from pathlib import Path
 from sqlalchemy import create_engine
 
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.contracts import (
+    MATERIAL_SLOT_POLICY_VERSION,
+    ForecastSlotCause,
+)
 from investment_manager.forecast.program.baseline import load_forecast_baseline
 from investment_manager.forecast.program.prior import (
     RollingPriorForecastProducer,
@@ -72,6 +76,54 @@ def test_prior_targets_are_one_joint_portfolio_behavior() -> None:
 
     assert len(targets) == 2
     assert len({item.binding.producer_behavior_id for item in targets}) == 1
+
+
+def test_prior_producer_records_material_event_as_independent_slot() -> None:
+    event_at = datetime(2026, 8, 29, 14, tzinfo=UTC)
+    completed_at = event_at + timedelta(minutes=1)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    market = InMemoryMarketDataStore()
+    for symbol, price in (("BTCUSDT", "110000"), ("PAXGUSDT", "3500")):
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"{symbol}-event-quote",
+                symbol=symbol,
+                observed_at=event_at,
+                bid=price,
+                bid_quantity="1",
+                ask=str(float(price) + 1),
+                ask_quantity="1",
+                source="test",
+            )
+        )
+    contracts = SqlForecastContractStore(engine)
+    producer = RollingPriorForecastProducer(
+        artifact=_artifact(),
+        market=market,
+        contracts=contracts,
+        forecasts=SqlForecastStore(engine),
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        activated_at=event_at - timedelta(hours=1),
+        maximum_quote_age_seconds=300,
+        clock=lambda: completed_at,
+    )
+    cause = ForecastSlotCause.material_state(
+        policy_version=MATERIAL_SLOT_POLICY_VERSION,
+        trigger_refs=("official-event-1",),
+    )
+
+    results = producer.produce(as_of=event_at, cause=cause)
+    repeated = producer.produce(as_of=event_at, cause=cause)
+
+    assert len(results) == len(repeated) == 2
+    assert all(isinstance(item, BaseForecast) for item in results)
+    assert tuple(item.forecast_id for item in results) == tuple(
+        item.forecast_id for item in repeated
+    )
+    slots = tuple(contracts.slot(item.decision_slot_id) for item in results)
+    assert all(slot is not None and slot.slot_as_of == event_at for slot in slots)
+    assert all(slot is not None and slot.cause == cause for slot in slots)
 
 
 def test_prior_cadence_never_backfills_before_activation() -> None:

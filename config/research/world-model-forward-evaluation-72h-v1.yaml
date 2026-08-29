@@ -17,6 +17,10 @@ forecast_contract:
   fixed_benchmark: development_distribution_from_baseline_artifact
   cadence: non_overlapping_72h_utc_epoch_phase
   material_event_slots: separate_obligations_clustered_by_overlapping_outcome_window
+  material_event_policy: >-
+    只接受已经通过现役 Scheduling 来源资格与材料等级裁决的官方 Intelligence、
+    Canonical Fact 和主 Agent 显式复核；排除仅由价格变化形成的 Market Shock。
+    从该行为发布后前瞻登记，不补跑结果已经可见的历史事件。
   completion_deadline_seconds: 3600
   no_backfill_after_deadline: true
 

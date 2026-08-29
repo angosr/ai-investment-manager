@@ -25,7 +25,11 @@ from investment_manager.forecast.context.workflow import (
     ASSESSMENT_WORKFLOW_NAME,
     AssessmentWorkflowRequest,
 )
-from investment_manager.forecast.contracts import ForecastNoEstimateReason
+from investment_manager.forecast.contracts import (
+    MATERIAL_SLOT_POLICY_VERSION,
+    ForecastNoEstimateReason,
+    ForecastSlotCause,
+)
 from investment_manager.forecast.models import (
     MAX_WORLD_MECHANISM_CLAIM_CHARACTERS,
     MAX_WORLD_VERIFICATION_TESTS,
@@ -81,11 +85,49 @@ class TriggerBatchRecorder(Protocol):
 
 
 class ProgramForecastProducer(Protocol):
-    def produce(self, *, as_of: datetime) -> tuple[PriorResult, ...]: ...
+    def produce(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> tuple[PriorResult, ...]: ...
 
 
 class ProgramBatchConsumer(Protocol):
     def consume(self, batch: TriggerBatch) -> object: ...
+
+
+def _material_forecast_cause(batch: TriggerBatch) -> ForecastSlotCause | None:
+    """Turn an admitted structural event batch into one independent obligation.
+
+    Scheduling has already applied source qualification and priority.  Market
+    shocks are deliberately excluded: an endogenous price move may refresh the
+    WorldModel, but it is not an external information surprise by itself.
+    """
+
+    eligible_types = {
+        AnalysisTriggerType.CANONICAL_FACT_REVISED,
+        AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        AnalysisTriggerType.AGENT_WAKEUP,
+    }
+    eligible = tuple(
+        item for item in batch.triggers if item.trigger_type in eligible_types
+    )
+    if not eligible:
+        return None
+    trigger_refs = tuple(
+        sorted(
+            {
+                reference
+                for trigger in eligible
+                for reference in (trigger.evidence_ids or (trigger.trigger_id,))
+            }
+        )
+    )
+    return ForecastSlotCause.material_state(
+        policy_version=MATERIAL_SLOT_POLICY_VERSION,
+        trigger_refs=trigger_refs,
+    )
 
 
 class AssessmentHistoryReader(Protocol):
@@ -147,12 +189,27 @@ class TriggerDispatchBuilder:
 
     def build(self, batch: TriggerBatch) -> tuple[AnalysisDispatchRequest, ...]:
         as_of = batch.created_at
-        prior_results: list[PriorResult] = []
+        trigger_types = {item.trigger_type for item in batch.triggers}
+        owns_portfolio_assessment = batch.symbol == self._config.assessment.review_trigger_symbol
+        prior_panels: list[tuple[ForecastSlotCause | None, tuple[PriorResult, ...]]] = []
+        cadence_results: list[PriorResult] = []
         for producer in self._program_forecast_producers:
-            prior_results.extend(producer.produce(as_of=as_of))
+            cadence_results.extend(producer.produce(as_of=as_of))
+        if cadence_results:
+            prior_panels.append((None, tuple(cadence_results)))
+        material_cause = (
+            _material_forecast_cause(batch) if owns_portfolio_assessment else None
+        )
+        if material_cause is not None:
+            material_results: list[PriorResult] = []
+            for producer in self._program_forecast_producers:
+                material_results.extend(
+                    producer.produce(as_of=as_of, cause=material_cause)
+                )
+            if material_results:
+                prior_panels.append((material_cause, tuple(material_results)))
         for consumer in self._program_batch_consumers:
             consumer.consume(batch)
-        trigger_types = {item.trigger_type for item in batch.triggers}
         dispatches: list[AnalysisDispatchRequest] = []
         assessment_triggered = bool(
             trigger_types
@@ -163,14 +220,17 @@ class TriggerDispatchBuilder:
                 AnalysisTriggerType.AGENT_WAKEUP,
             }
         )
-        owns_portfolio_assessment = batch.symbol == self._config.assessment.review_trigger_symbol
-        posterior_seed = None
+        material_seed_created = False
         if self._posterior_preparation is not None and owns_portfolio_assessment:
-            posterior_seed = self._posterior_preparation.reserve(
-                tuple(prior_results),
-                as_of=as_of,
-            )
-            if posterior_seed is not None:
+            for cause, prior_results in prior_panels:
+                posterior_seed = self._posterior_preparation.reserve(
+                    prior_results,
+                    as_of=as_of,
+                )
+                if posterior_seed is None:
+                    continue
+                if cause is not None:
+                    material_seed_created = True
                 command = self._assessment_command(
                     batch,
                     as_of=posterior_seed.information_cutoff_at,
@@ -203,22 +263,11 @@ class TriggerDispatchBuilder:
                             payload=posterior_request.model_dump(mode="json"),
                         )
                     )
-        later_material_trigger = posterior_seed is not None and any(
-            item.trigger_type
-            in {
-                AnalysisTriggerType.CANONICAL_FACT_REVISED,
-                AnalysisTriggerType.INTELLIGENCE_INSERTED,
-                AnalysisTriggerType.MARKET_SHOCK,
-                AnalysisTriggerType.AGENT_WAKEUP,
-            }
-            and item.observed_at > posterior_seed.information_cutoff_at
-            for item in batch.triggers
-        )
         if (
             self._config.assessment.enabled
             and assessment_triggered
             and owns_portfolio_assessment
-            and (posterior_seed is None or later_material_trigger)
+            and not material_seed_created
         ):
             command = self._assessment_command(
                 batch,

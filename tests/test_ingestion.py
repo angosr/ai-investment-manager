@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -66,6 +67,18 @@ class FailingSource:
 
     def read(self, *, observed_at):
         raise OSError(f"unavailable at {observed_at.isoformat()}")
+
+
+@dataclass
+class CoordinatedSource:
+    source_id: str
+    started: threading.Event
+    release: threading.Event
+
+    def read(self, *, observed_at):
+        self.started.set()
+        assert self.release.wait(timeout=1)
+        return ()
 
 
 @dataclass
@@ -1013,6 +1026,32 @@ def test_collector_isolates_source_failure_without_blocking_first_party_feed() -
     assert result.failed_source_ids == ("failed-source",)
     assert result.inserted_count == 1
     assert len(store.visible(symbol="BTCUSDT", as_of=observed_at)) == 1
+
+
+def test_collector_reads_independent_sources_concurrently() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    slow_started = threading.Event()
+    fast_started = threading.Event()
+    release = threading.Event()
+    slow = CoordinatedSource("slow-source", slow_started, release)
+    fast = CoordinatedSource("fast-source", fast_started, release)
+
+    def release_after_both_started() -> None:
+        assert slow_started.wait(timeout=1)
+        assert fast_started.wait(timeout=1)
+        release.set()
+
+    coordinator = threading.Thread(target=release_after_both_started)
+    coordinator.start()
+    result = InformationCollector(
+        (slow, fast),
+        EventNormalizer(),
+        InMemoryEventStore(),
+    ).collect(observed_at=observed_at)
+    coordinator.join(timeout=1)
+
+    assert not coordinator.is_alive()
+    assert result.failed_source_ids == ()
 
 
 def test_collector_records_per_source_coverage_without_coupling_failures() -> None:
