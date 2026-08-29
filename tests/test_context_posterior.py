@@ -463,8 +463,48 @@ def test_posterior_prompt_projects_decision_semantics_once_within_capacity() -> 
     assert "entry_prices" not in prompt
     assert "cutoff_prices" not in prompt
     assert "forecast_benchmark" not in prompt
+    assert "active_events" not in prompt
+    assert "causal_chain" not in prompt
     assert "各自 horizon_minutes" in prompt
     assert "72 小时收益桶" not in prompt
+
+
+def test_posterior_prompt_capacity_is_independent_of_full_world_causal_depth() -> None:
+    frozen = _input()
+    template = frozen.world_model.mechanisms[0]
+    mechanisms = tuple(
+        template.model_copy(
+            update={
+                "mechanism_id": f"structural-mechanism-{index}",
+                "claim": "组合含义" * 100,
+                "causal_chain": tuple(
+                    ContextCausalNode(
+                        statement=f"不应在后验重复的完整因果节点{index}-{node}" + "链" * 500,
+                        evidence_ids=(),
+                    )
+                    for node in range(5)
+                ),
+            }
+        )
+        for index in range(6)
+    )
+    world_model = frozen.world_model.model_copy(
+        update={
+            "synthesis": "联合组合结论" * 250,
+            "mechanisms": mechanisms,
+        }
+    )
+    maximum_world = ContextPosteriorInput.create(
+        information_cutoff_at=frozen.information_cutoff_at,
+        world_model=world_model,
+        eligible_mechanism_ids=tuple(item.mechanism_id for item in mechanisms),
+        targets=frozen.targets,
+    )
+
+    prompt = build_posterior_prompt(maximum_world)
+
+    assert len(prompt) < 16_000
+    assert "不应在后验重复的完整因果节点" not in prompt
 
 
 def test_posterior_rejects_direction_inconsistent_with_mechanism() -> None:

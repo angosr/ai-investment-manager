@@ -51,7 +51,7 @@ def test_empty_admission_preserves_the_frozen_active_posterior() -> None:
         authorization_identities=(),
     )
 
-    assert behavior_id == "f7444ab670463a45bdc689510682a0773f6016e5a8cd5f80978ee6f82ea9be03"
+    assert behavior_id == "d1d67f4f53bd2b645624acd95a35e03b05d448d1f6eb49e98bd947efecd2f9d1"
     assert admissions.prior_outcome_families == ()
     assert admissions.posterior_outcome_families == ()
 

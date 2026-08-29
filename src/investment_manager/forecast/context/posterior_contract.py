@@ -33,7 +33,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 
 POSTERIOR_INPUT_VERSION = "world-model-posterior-input-v1"
-POSTERIOR_MODEL_INPUT_VERSION = "world-model-posterior-projection-v2"
+POSTERIOR_MODEL_INPUT_VERSION = "world-model-posterior-projection-v3"
 POSTERIOR_SEED_VERSION = "world-model-posterior-seed-v1"
 POSTERIOR_OUTPUT_VERSION = "world-model-posterior-output-v1"
 POSTERIOR_PRODUCER_ID = "world-model-posterior"
@@ -258,26 +258,37 @@ def build_posterior_prompt(value: ContextPosteriorInput) -> str:
 def posterior_analysis_projection(value: ContextPosteriorInput) -> dict[str, object]:
     """Decision-dense model view; the complete immutable input stays auditable.
 
-    Contracts, slots, quotes and program-input lineage are required to freeze
-    identity and settle outcomes, but repeating them to the model dilutes the
-    only judgment it owns: whether named structural mechanisms should move the
-    prior distribution.  The projection therefore carries each semantic fact
-    exactly once and never truncates a mechanism or target opportunistically.
+    Contracts, slots, quotes, complete causal chains and program-input lineage
+    remain in the immutable input, but repeating them to the model dilutes the
+    only judgment it owns: whether named structural mechanism contracts should
+    move the prior distribution.  The projection carries that fixed interface
+    exactly once and never changes shape in response to prompt length.
     """
 
-    observations_by_mechanism: dict[str, list[dict[str, object]]] = {}
+    # The WorldModel owns causal reconstruction and event attribution.  The
+    # posterior owns only the bounded probability update implied by its frozen
+    # mechanism contracts.  Re-sending event summaries and complete causal
+    # chains here would create a second interpretation pass and makes prompt
+    # capacity depend on how complicated the world happened to be.
+    current_selectors = {
+        mechanism.mechanism_id: {
+            test.feature_selector for test in mechanism.verification_tests
+        }
+        for mechanism in value.world_model.mechanisms
+    }
+    observations_by_mechanism: dict[str, dict[str, ContextMechanismObservation]] = {}
     for observation in value.mechanism_observations:
-        observations_by_mechanism.setdefault(observation.mechanism_id, []).append(
-            {
-                "feature": observation.feature_selector,
-                "value": observation.value,
-                "match": observation.match,
-                "support_streak": observation.support_streak,
-                "contradiction_streak": observation.contradiction_streak,
-                "resolution": observation.resolution,
-                "observed_at": observation.observed_at,
-            }
-        )
+        if observation.feature_selector not in current_selectors.get(
+            observation.mechanism_id, set()
+        ):
+            continue
+        by_feature = observations_by_mechanism.setdefault(observation.mechanism_id, {})
+        previous = by_feature.get(observation.feature_selector)
+        if previous is None or (observation.observed_at, observation.observation_id) > (
+            previous.observed_at,
+            previous.observation_id,
+        ):
+            by_feature[observation.feature_selector] = observation
     eligible = set(value.eligible_mechanism_ids)
     mechanisms = tuple(
         {
@@ -286,8 +297,21 @@ def posterior_analysis_projection(value: ContextPosteriorInput) -> dict[str, obj
             "claim": mechanism.claim,
             "horizon_hours": mechanism.horizon_hours,
             "transmission_stage": mechanism.transmission_stage,
-            "causal_chain": tuple(node.statement for node in mechanism.causal_chain),
-            "observations": tuple(observations_by_mechanism.get(mechanism.mechanism_id, ())),
+            "latest_observations": tuple(
+                {
+                    "feature": observation.feature_selector,
+                    "value": observation.value,
+                    "match": observation.match,
+                    "support_streak": observation.support_streak,
+                    "contradiction_streak": observation.contradiction_streak,
+                    "resolution": observation.resolution,
+                    "observed_at": observation.observed_at,
+                }
+                for observation in sorted(
+                    observations_by_mechanism.get(mechanism.mechanism_id, {}).values(),
+                    key=lambda item: item.feature_selector,
+                )
+            ),
         }
         for mechanism in value.world_model.mechanisms
         if mechanism.mechanism_id in eligible
@@ -330,14 +354,6 @@ def posterior_analysis_projection(value: ContextPosteriorInput) -> dict[str, obj
             "assessment_id": value.world_model.assessment_id,
             "synthesis": value.world_model.synthesis,
             "synthesis_horizon_hours": value.world_model.synthesis_horizon_hours,
-            "active_events": tuple(
-                {
-                    "title": event.title,
-                    "rationale": event.rationale,
-                }
-                for event in value.world_model.event_references
-                if event.impact_state.value == "ACTIVE"
-            ),
             "eligible_mechanisms": mechanisms,
         },
         "eligible_mechanism_ids": value.eligible_mechanism_ids,
