@@ -123,7 +123,7 @@ AI 不读取 raw time series，也不自行计算可以被程序准确完成的�
 5. mandate 中可交易产品及需要理解的因果通道；
 6. 本次任务、信息截止和输出 Schema。
 
-组合目标、市场观察和资产预测是三种不可互换的身份。`mandate_exposures` 只列当前 Capital 可投资域需要理解的经济暴露，必须与该域逐项一致；`observation_assets` 只列用于验证因果链的点时市场代理，可以包含不可交易的 ETH，也不要求每项组合暴露都存在同构的 Spot/Perpetual 数据。Forecast targets 才定义需要输出并结算的资产收益分布。WorldModel 读取前两者，只输出一份联合因果模型，不再为 observation asset 输出方向或时域观点；Forecast 读取该模型和自身 target state 后形成唯一概率判断。因而 SPY 可以是组合目标而不需要伪造 Binance Spot，ETH 可以是传导证据而不会获得资本资格，PAXG 也不会因为旧观察列表遗漏而从世界目标中消失。
+组合目标、市场观察和资产预测是三种不可互换的身份。`mandate_exposures` 只列当前 Capital 可投资域需要理解的经济暴露，必须与该域逐项一致；`observation_assets` 只列用于验证因果链的点时市场代理，可以包含不可交易的 ETH，也不要求每项组合暴露都存在同构的 Spot/Perpetual 数据。FactDelta 的时域只描述一项状态变化在多长窗口内仍值得复核，由 `delta_policy` 唯一拥有；它不是 WorldModel 必须输出的资产视图，不能复制进 mandate、AI 输入或行为身份。Forecast targets 才定义需要输出并结算的资产收益分布。WorldModel 读取前两者，只输出一份联合因果模型，不再为 observation asset 输出方向或时域观点；Forecast 读取该模型和自身 target state 后形成唯一概率判断。因而 SPY 可以是组合目标而不需要伪造 Binance Spot，ETH 可以是传导证据而不会获得资本资格，PAXG 也不会因为旧观察列表遗漏而从世界目标中消失。
 
 这三个集合只有各自一个配置所有者。应用装配必须验证 `mandate_exposures` 与 Capital 可投资经济暴露精确相等，WorldModel 行为身份必须同时覆盖组合目标和观察合同；任一集合变化都会建立新的前瞻行为与评价 cohort，历史快照和结算继续引用原身份。不得把组合目标拼进自然语言问题、从 ticker 名猜经济暴露，或为了兼容旧资产视图再保留第二套方向输出。
 
