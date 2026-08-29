@@ -1,0 +1,47 @@
+{
+  "schema_version": "retired-product-observations-v1",
+  "retired_at": "2026-08-29T01:16:00Z",
+  "product_id": "USDT001",
+  "asset": "USDT",
+  "policy_version": "binance-usdt-flexible-evidence-v1",
+  "source_table": "cash_yield_product_observations",
+  "source_row_count": 3,
+  "redaction": "账户个性化额度和预览金额不进入 Git；首条预览的决策结果已由 usdt-flexible-runtime-admission-v1-result.json 保存。",
+  "observations": [
+    {
+      "observation_id": "cash_yield_product_observation_55adefa40c5c319f1c2f",
+      "available_at": "2026-08-28T22:37:55.613874Z",
+      "annual_rate": "0.02796612",
+      "can_purchase": true,
+      "can_redeem": true,
+      "sold_out": false,
+      "minimum_purchase_amount": "0.01",
+      "reward_asset": "USDT",
+      "observation_hash": "65ea3aab3edf118efbb0a52514f0fb8a89d83a887a250cec35faa3a45d70a0c8"
+    },
+    {
+      "observation_id": "cash_yield_product_observation_8b58835ae6f5d04bb768",
+      "available_at": "2026-08-28T23:40:47.449496Z",
+      "annual_rate": "0.02896347",
+      "can_purchase": true,
+      "can_redeem": true,
+      "sold_out": false,
+      "minimum_purchase_amount": "0.01",
+      "reward_asset": "USDT",
+      "observation_hash": "2640231b350a5f80eb03611bb978dbe7adff2f8de2e1a90965bc832964798d64"
+    },
+    {
+      "observation_id": "cash_yield_product_observation_685b99b07b4d1dfb5a8d",
+      "available_at": "2026-08-29T00:53:24.215613Z",
+      "annual_rate": "0.02856789",
+      "can_purchase": true,
+      "can_redeem": true,
+      "sold_out": false,
+      "minimum_purchase_amount": "0.01",
+      "reward_asset": "USDT",
+      "observation_hash": "9036294d57c370e336686a724c72430156edce9b4dc2d791eda8feacc2c39021"
+    }
+  ],
+  "frozen_decision": "RETIRED_WITHOUT_RUNTIME_CONSUMER",
+  "capital_authorization": "NONE"
+}
