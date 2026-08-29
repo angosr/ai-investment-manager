@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import typer
+import yaml
 from pydantic import ValidationError
 
 from investment_manager.entrypoints.cli import release_commands
@@ -15,6 +16,7 @@ from investment_manager.entrypoints.cli.release_commands import (
     _CUTOVER_SAFETY_HEALTH_KEYS,
     _DASHBOARD_READY_KEYS,
     _initialize_assembly_database,
+    _load_rollback_readiness_config,
     _recover_ready_failure,
     _require_health_checks,
     _require_trigger_coordinators_idle,
@@ -37,7 +39,7 @@ from investment_manager.governance.release.deployment import (
 )
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.scheduling.workflows import coordinator_workflow_id
-from investment_manager.settings import load_config
+from investment_manager.settings import load_config, load_config_mapping
 
 
 def _unit(tmp_path: Path, manifest_id: str = "release-test") -> ReleaseRuntimeUnit:
@@ -131,6 +133,32 @@ def test_release_requires_only_enabled_runtime_artifacts() -> None:
         "reference-selection-v1",
         "web-dist",
     )
+
+
+def test_rollback_readiness_projects_retired_views_without_weakening_current_config(
+    tmp_path: Path,
+) -> None:
+    current = load_config("config/investment-manager.shadow.yaml")
+    payload = load_config_mapping("config/investment-manager.shadow.yaml")
+    mandate = payload["assessment"]["mandate"]
+    mandate["version"] = "primary-portfolio-mandate-v15"
+    for asset in mandate["observation_assets"]:
+        asset["horizons_minutes"] = [60, 240]
+    path = tmp_path / "rollback.yaml"
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    projected = _load_rollback_readiness_config(path)
+
+    assert projected.temporal == current.temporal
+    assert projected.pipeline == current.pipeline
+    assert all(
+        not hasattr(item, "horizons_minutes")
+        for item in projected.assessment.mandate.observation_assets
+    )
+    mandate["version"] = "primary-portfolio-mandate-v16"
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValidationError, match="horizons_minutes"):
+        _load_rollback_readiness_config(path)
 
 
 def test_ready_state_requires_exact_complete_service_set(tmp_path: Path) -> None:

@@ -130,6 +130,8 @@ PostgreSQL、Temporal 和所需上游服务先独立就绪；业务 Release 统�
 
 收到 INT/TERM 后 supervisor 先标记 STOPPING，再停止 Dashboard、Assessment、Trigger、Outcome、Information 和 Market。异常强制退出后，不得只删除 PID 文件重启；先确认受管状态中的进程均已消失，再由同一入口恢复 Outbox、Workflow、订单查询和账户投影，最后接受新增风险。
 
+候选 supervisor 不得用现役业务 Schema 重新解释回滚版本已经冻结的行为配置。跨版本恢复只允许在 Release 边界把已知历史配置投影为 readiness 所需的运行参数；回滚子进程仍由其自身 checkout、配置和 Manifest 启动并自证一致。该投影不得进入 WorldModel、Forecast 或 Capital，也不得让现役配置重新接受已删除字段。
+
 ## 9. 故障判断
 
 - 行情/账户过期：冻结新增风险，检查生效 TriggerPlan，而不是静态 heartbeat。

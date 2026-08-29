@@ -12,6 +12,7 @@ from typing import Annotated
 
 import httpx
 import typer
+from pydantic import ValidationError
 from sqlalchemy import func, select, text
 from temporalio.api.enums.v1 import TaskQueueType
 from temporalio.api.taskqueue.v1 import TaskQueue
@@ -68,7 +69,7 @@ from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.scheduling.tables import analysis_trigger_plans
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.schema import compose_metadata
-from investment_manager.settings import AppConfig, load_config
+from investment_manager.settings import AppConfig, load_config, load_config_mapping
 
 _CUTOVER_SAFETY_HEALTH_KEYS = {
     "capital_account",
@@ -276,7 +277,7 @@ def _recover_ready_failure(
     typer.echo(
         f"Release 服务异常退出：{reason}；恢复 {rollback_unit.manifest_id}"
     )
-    rollback_config = load_config(rollback_unit.config_path)
+    rollback_config = _load_rollback_readiness_config(rollback_unit.config_path)
     rollback_manifest = load_release_manifest(rollback_unit.manifest_path)
     recovered = _start_until_ready(
         unit=rollback_unit,
@@ -323,7 +324,7 @@ def _start_candidate_or_rollback(
                 f"候选 Release 未 ready 且没有可回滚版本：{candidate_error}"
             ) from candidate_error
         typer.echo(f"候选 Release 未 ready，回滚 {rollback_unit.manifest_id}")
-        rollback_config = load_config(rollback_unit.config_path)
+        rollback_config = _load_rollback_readiness_config(rollback_unit.config_path)
         rollback_manifest = load_release_manifest(rollback_unit.manifest_path)
         return (
             _start_until_ready(
@@ -457,9 +458,10 @@ def _require_safe_cutover(
 ) -> None:
     if previous.status != RuntimeStateStatus.READY:
         raise ValueError("当前受管 Release 不是 READY，必须先恢复运行状态")
-    # Recovery runs inside the challenger supervisor, so it must be able to
-    # parse the previous unit before that unit is stopped.
-    load_config(previous.unit.config_path)
+    # Freeze the minimal compatibility projection before stopping the previous
+    # supervisor. Rollback children still load their own config with their own
+    # checkout; this object is used only by the candidate supervisor readiness.
+    _load_rollback_readiness_config(previous.unit.config_path)
     if not process_exists(previous.supervisor_pid):
         raise ValueError("当前 Release supervisor 已消失，拒绝猜测孤儿写进程状态")
     lease = RuntimeLease(runtime_directory / "writer.lock")
@@ -545,6 +547,40 @@ def _current_release_trigger_plans(
             return tuple(AnalysisTriggerPlan.model_validate(item) for item in payloads)
     finally:
         engine.dispose()
+
+
+def _load_rollback_readiness_config(path: Path) -> AppConfig:
+    """Project a known frozen config across a removed, non-runtime field.
+
+    The returned object is never passed to rollback children and therefore
+    cannot change their behavior. Current configs remain strict through
+    ``load_config``; only a v15 mandate may contain the retired view horizons.
+    """
+
+    try:
+        return load_config(path)
+    except ValidationError as original_error:
+        payload = load_config_mapping(path)
+        mandate = payload.get("assessment", {}).get("mandate", {})
+        assets = mandate.get("observation_assets", ())
+        if mandate.get("version") != "primary-portfolio-mandate-v15" or not assets:
+            raise original_error
+        if not all(isinstance(item, dict) and "horizons_minutes" in item for item in assets):
+            raise original_error
+        projected = {
+            **payload,
+            "assessment": {
+                **payload["assessment"],
+                "mandate": {
+                    **mandate,
+                    "observation_assets": [
+                        {key: value for key, value in item.items() if key != "horizons_minutes"}
+                        for item in assets
+                    ],
+                },
+            },
+        }
+        return AppConfig.model_validate(projected)
 
 
 def _stop_previous(previous: ReleaseRuntimeState, *, timeout_seconds: int) -> None:
