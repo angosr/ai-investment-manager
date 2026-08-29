@@ -63,7 +63,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 ## 4. Forecast 槽与恢复
 
-每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
+每个 portfolio/pipeline 只有一个由 `review_trigger_symbol` 承载的当前 TriggerPlan。全部观察品种的行情、事实和信息触发都携带真实 `affected_symbols` 路由到这个组合 owner；非 owner 品种不运行 heartbeat、事件规则或独立 Coordinator。主 Agent 只通过这份组合计划立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。历史按 symbol 计划只作为审计事实保留，迁移后不得继续运行。
 
 当前唯一在线 Forecast 实验是研究权限的 72h 透明 prior 与同槽 WorldModel posterior。TriggerCoordinator 对固定 cadence 和通过既有来源资格裁决的官方事件、Canonical Fact、主 Agent 显式复核分别登记独立槽；市场价格冲击只复核认知，不凭自身登记事件槽。组合所有者的首个正常批次先登记 prior 与 posterior 的冻结 ProducerBinding，即使当前没有到期槽也不创建 obligation、Forecast 或 AI 调用；后续等价 Release 必须复用该激活时间，不能在槽边界后把原行为伪装成新行为。每个槽先生成全部 prior，再以共享槽边界冻结世界更新 Packet、prior、两侧 Prompt/Schema 行为身份和完成期限。现有 Assessment Worker 在一个耐久 posterior Workflow 内先生成同截止 WorldModel，再顺序执行一次 posterior Codex 调用；不得并行读取上一份 WorldModel。两次生成延迟都进入实际可用时间，Packet 或业务阶段失败直接闭合已登记义务；Activity 无法开始、超时或返回无效结果时，同一 Workflow 只调用一个幂等终态 Activity 写入 `NO_ESTIMATE`，不增加分析调用或第二结果系统。posterior 必须逐目标按冻结顺序裁决全部 eligible mechanism；遗漏机制，或概率变化与单边上涨、单边下跌、纯不确定贡献不一致，均作为结构失败终止该槽而不重试第二次 AI。当前不运行 Quant 产品投影或稳定性副本。运行恢复必须按同一 slot/producer behavior 重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
@@ -77,7 +77,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 市场冲击检测以 mandate 为作用域：窗口内首次普通冲击立即触发，其他资产的同等级命中不重复调用，只有升级为紧急或新窗口开始才重新触发。排查时应查看永久行情事实和已发布 Trigger；不得通过缩短 heartbeat、增加 symbol 规则或人工重复触发补偿被正确合并的候选冲击。
 
-Heartbeat 负责恢复到期任务、账户投影、对账和风险复核，不自动更新 WorldModel。没有形成仓位、订单或风险变化的例行复核仍保存其不可变 Risk/Capital 审计事实，但不进入“资金决策”行动投影；否则每分钟无变化记录会挤走真正的下单与减险历史。全现金且没有新 Forecast/Target/订单时同样不生成行动条目。
+组合 owner 的 Heartbeat 负责恢复到期任务、账户投影、对账和风险复核，不自动更新 WorldModel。非 owner heartbeat 没有合法消费者，必须关闭而不能依赖下游 no-op 掩盖。没有形成仓位、订单或风险变化的例行复核仍保存其不可变 Risk/Capital 审计事实，但不进入“资金决策”行动投影；否则每分钟无变化记录会挤走真正的下单与减险历史。全现金且没有新 Forecast/Target/订单时同样不生成行动条目。
 
 ## 5. Codex 账号
 

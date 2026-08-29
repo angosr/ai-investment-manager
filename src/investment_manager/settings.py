@@ -63,6 +63,13 @@ class AppConfig(StrictConfig):
 
         return tuple(item.market_symbol for item in self.assessment.mandate.observation_assets)
 
+    @property
+    def analysis_trigger_symbols(self) -> tuple[str, ...]:
+        """Single portfolio coordination scope; observation assets remain broader."""
+
+        owner = self.assessment.review_trigger_symbol
+        return (owner,) if owner is not None else self.analysis_symbols
+
     @model_validator(mode="after")
     def cross_domain_invariants_hold(self):
         if self.decision_state.analysis_scope != self.assessment.mandate.analysis_scope:

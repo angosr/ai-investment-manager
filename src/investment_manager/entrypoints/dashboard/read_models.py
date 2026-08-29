@@ -715,7 +715,8 @@ class DashboardReader:
 
         pipeline = self._config.pipeline.version
         recent_start = now - timedelta(hours=1)
-        scopes = tuple(f"{symbol}:{pipeline}" for symbol in self._config.analysis_symbols)
+        trigger_symbols = self._config.analysis_trigger_symbols
+        scopes = tuple(f"{symbol}:{pipeline}" for symbol in trigger_symbols)
         behavior_hash = configured_assess_behavior_hash(self._config)
         with self._engine.connect() as connection:
             recent_rows = connection.execute(
@@ -745,6 +746,7 @@ class DashboardReader:
                     analysis_trigger_plans.c.payload,
                 ).where(
                     analysis_trigger_plans.c.pipeline_id == pipeline,
+                    analysis_trigger_plans.c.symbol.in_(trigger_symbols),
                     analysis_trigger_plans.c.is_current.is_(True),
                 )
             ).all()
@@ -768,7 +770,7 @@ class DashboardReader:
                 latest_assessment_completed = database_utc(latest_assessment_completed)
             plan_by_symbol = {symbol: payload for symbol, _, payload in plan_rows}
             scope_statuses: list[AnalysisScopeRuntimeStatus] = []
-            for symbol in self._config.analysis_symbols:
+            for symbol in trigger_symbols:
                 completed = latest_assessment_completed
                 plan_payload = plan_by_symbol.get(symbol)
                 plan = (
@@ -791,7 +793,7 @@ class DashboardReader:
                     )
                 )
 
-        expected_symbols = set(self._config.analysis_symbols)
+        expected_symbols = set(trigger_symbols)
         actual_symbols = {symbol for symbol, _, _ in plan_rows}
         if not plan_rows or manifest_payload is None:
             release_aligned = None

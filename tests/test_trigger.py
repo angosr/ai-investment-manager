@@ -875,6 +875,31 @@ def test_dispatcher_acknowledges_superseded_outbox_without_reviving_it(
     asyncio.run(dispatcher.deliver(message))
 
 
+def test_dispatcher_ignores_observation_symbol_outbox_after_portfolio_owner_migration(
+    app_config, replay_input
+) -> None:
+    class FailIfUsed:
+        def __getattr__(self, name):
+            raise AssertionError(f"不应访问非 owner coordinator 依赖：{name}")
+
+    message = TriggerOutboxMessage(
+        outbox_id="outbox-observation-symbol",
+        aggregate_key=f"PAXGUSDT:{app_config.pipeline.version}",
+        message_kind=TriggerOutboxKind.PLAN_REVISED,
+        created_at=replay_input.market.as_of,
+        available_at=replay_input.market.as_of,
+        attempt_count=0,
+        payload={"kind": TriggerOutboxKind.PLAN_REVISED.value},
+    )
+    dispatcher = TemporalTriggerDispatcher(
+        client=FailIfUsed(),
+        config=app_config,
+        plans=FailIfUsed(),
+    )
+
+    asyncio.run(dispatcher.deliver(message))
+
+
 def test_dispatcher_restarts_a_closed_current_pipeline_coordinator(
     app_config,
     replay_input,

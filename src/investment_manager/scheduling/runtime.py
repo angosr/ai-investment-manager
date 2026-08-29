@@ -70,6 +70,11 @@ class TemporalTriggerDispatcher:
         if pipeline_id != self.config.pipeline.version:
             # Release cutover 后的历史 outbox 只作事实保留，不得复活旧 coordinator。
             return
+        if symbol not in self.config.analysis_trigger_symbols:
+            # Observation assets route their material changes to the one portfolio
+            # owner. Historical per-symbol outbox facts must not resurrect no-op
+            # coordinators after the hard migration.
+            return
         plan = self.plans.plan_for_scope(symbol=symbol, pipeline_id=pipeline_id)
         workflow_id = coordinator_workflow_id(symbol, pipeline_id)
         with suppress(WorkflowAlreadyStartedError):

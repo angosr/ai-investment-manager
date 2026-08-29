@@ -661,7 +661,7 @@ async def _core_readiness_missing(
     engine = build_engine(database_url)
     try:
         repository = SqlTriggerRepository(engine, config.trigger)
-        for symbol in config.analysis_symbols:
+        for symbol in config.analysis_trigger_symbols:
             try:
                 plan = repository.plan_for_scope(
                     symbol=symbol,

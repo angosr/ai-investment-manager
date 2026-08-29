@@ -112,7 +112,9 @@ def create_app(
                 return {"symbol": symbol, **status}
 
             return tuple(
-                await asyncio.gather(*(query(symbol) for symbol in config.analysis_symbols))
+                await asyncio.gather(
+                    *(query(symbol) for symbol in config.analysis_trigger_symbols)
+                )
             )
 
         try:

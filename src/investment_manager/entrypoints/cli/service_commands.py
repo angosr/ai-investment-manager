@@ -300,8 +300,8 @@ def trigger_now(
     loaded, manifest = load_runtime_release(config, release_manifest)
     if loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
         raise ValueError("trigger-now 只允许 SHADOW 或 TESTNET")
-    if symbol not in loaded.analysis_symbols:
-        raise ValueError("symbol 不在当前分析 Mandate")
+    if symbol not in loaded.analysis_trigger_symbols:
+        raise ValueError("symbol 不是当前组合 Trigger owner")
     result = apply_trigger_now(
         repository=SqlTriggerRepository(runtime_engine(database_url), loaded.trigger),
         symbol=symbol,
@@ -344,8 +344,8 @@ def set_trigger_heartbeat(
     loaded, manifest = load_runtime_release(config, release_manifest)
     if loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
         raise ValueError("set-trigger-heartbeat 只允许 SHADOW 或 TESTNET")
-    if symbol not in loaded.analysis_symbols:
-        raise ValueError("symbol 不在当前分析 Mandate")
+    if symbol not in loaded.analysis_trigger_symbols:
+        raise ValueError("symbol 不是当前组合 Trigger owner")
     result = apply_trigger_heartbeat(
         repository=SqlTriggerRepository(runtime_engine(database_url), loaded.trigger),
         symbol=symbol,

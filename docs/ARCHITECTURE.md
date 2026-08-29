@@ -378,6 +378,8 @@ Scheduling 只表达“何时重新运行哪项用例”，触发来源只有四
 3. 行情、账户和持仓异常推动程序化 Risk 复核；
 4. 主 Agent 可立即触发或增删未来触发点，并永久记录理由和版本。
 
+组合只有一个 Scheduling owner 和一份现役 TriggerPlan。行情、事实与信息仍覆盖全部 observation assets，但在形成触发时把实际受影响资产写入 `affected_symbols`，统一投递给组合 owner；不能为每个观察品种复制 heartbeat、事件规则、Forecast cadence 或主 Agent 控制面。非 owner 品种只是 Evidence/State 的观察维度，不拥有第二个 AI、Forecast 或资本协调器。这样既保留跨资产冲击来源，又避免多个 symbol coordinator 对同一组合重复空转或产生相互竞争的调度状态。
+
 日历外 Intelligence Event 有两个必须分离的门：注意力门只依据事件在当前 mandate 下的影响程度决定是否立即唤醒 WorldModel；证据门再依据来源等级、独立核验和同步市场响应决定它能否支持方向或留在现役机制中。来源可靠度不得乘进注意力优先级，否则最需要核验的重大低等级线索会在 AI 之前被静默删除；反过来，通过注意力门也不构成事实确认、材料 Delta、Forecast 槽或资本权限。直接触发的低等级线索可以进入本次冻结信息面板供核验，但必须明确不可单独支持方向，后续不能在没有更强证据时成为现役引用；只有通过证据门的事件才进入材料变化与事件 Forecast 路径。
 
 Forecast 槽的来源只有两种：合同 cadence，以及冻结触发政策产生的材料 `State/Delta`。每个槽只有一个来源、一个身份、一个 information cutoff、一次生产义务和一个终态。完成期限、Outcome、生产者行为和缺失处理都必须在结果可见前确定；每个合格槽都必须以 Forecast 或 `NO_ESTIMATE` 终结。事件槽不是临时插单，也不能只挑 AI 想交易的事件；它是一个显式的条件采样机制，永远不是定时样本的替代品。

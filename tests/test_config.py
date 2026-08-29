@@ -120,6 +120,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     )
     assert config.market_data.reference_price_symbols == ("SPYBUSDT",)
     assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
+    assert config.analysis_trigger_symbols == ("BTCUSDT",)
     observed = {item.key for item in observed_market_instruments(config)}
     assert "BINANCE:SPOT:SPYBUSDT" in observed
     assert "BINANCE:SPOT:SPYBUSDT" not in {
