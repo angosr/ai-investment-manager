@@ -1,0 +1,87 @@
+schema_version: volatility-state-prior-plan-v1
+plan_id: volatility-state-prior-72h-v1
+frozen_at: 2026-08-29T21:11:00Z
+permission: RETROSPECTIVE_REJECTION_ONLY
+
+hypothesis: >-
+  已实现波动率比短期方向更容易预测。仅用信息截止前 30 个完整 UTC 日的
+  平均绝对对数收益识别低、中、高波动状态，并把现役 72 小时无条件分布
+  收缩为同状态历史分布，可能在 BTC 与 PAXG 上同时改善分布概率质量；
+  该状态不直接提供方向观点，也不授予资本权限。
+
+research_prior:
+  - source: https://www.nber.org/papers/w10914
+    adopted: >-
+      只采用日度已实现波动对未来一周至一月波动具有样本外信息、约一至两个月
+      日度滞后足以表达持续性的经验先验；不移植论文的 MIDAS 参数或股票结果。
+  - source: https://www.nber.org/papers/w22208
+    adopted: >-
+      只采用高波动时降低风险暴露这一组合先验；不继承论文 Alpha、权重或
+      因子结论，本计划首先检验收益分布而不是直接生成仓位。
+
+baseline:
+  artifact_id: forecast_baseline_7edf2cf090b47cdad2e5
+  artifact_path: evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json
+  artifact_sha256: edcacebaa54e3ffd872320e200a41a5ab48da34e6905791eaeb98c167c145871
+  producer: rolling-unconditional-prior
+
+targets:
+  - symbol: BTCUSDT
+    dataset_id: historical_dataset_d54a1c9f090efe425800
+    bars_hash: 883beb7b7dd75cada797613151501e7e30edf8eead3c18c6fb3c01e305a90a27
+  - symbol: PAXGUSDT
+    dataset_id: historical_dataset_b1a3cbad1cca6e90e80f
+    bars_hash: c1d44d89522f08e023a4afd5ed64cd22f480a757825ba6d62c1d214b66318067
+
+sample_contract:
+  interval: 1d
+  horizon_days: 3
+  slot_phase_epoch: 1970-01-01
+  information_cutoff: completed_bar_close
+  outcome: close_to_close_return_bps
+  development_end_exclusive: 2024-01-01
+  validation: from_development_boundary_to_last_settleable_slot
+  independence: non_overlapping_cadence_slots
+  blind: NONE
+
+feature:
+  name: trailing_mean_absolute_log_return
+  lookback_completed_days: 30
+  calculation: >-
+    截止点及之前最后 31 个完整日线收盘价形成 30 个对数收益，取绝对值算术均值；
+    不年化、不读取未完成日线，历史样本也只使用各自截止点之前的价格。
+  regimes: [LOW, MEDIUM, HIGH]
+  thresholds: development_feature_nearest_rank_terciles
+
+estimation:
+  outcome_buckets: reuse_baseline_frozen_boundaries_and_representatives
+  unconditional_distribution: expanding_all_settled_outcomes_at_cutoff
+  conditional_distribution: expanding_settled_outcomes_in_current_frozen_regime
+  shrinkage: >-
+    每个 bucket 的同状态计数加 20 乘当前扩展窗口无条件概率，再除以同状态样本数加 20；
+    该固定强度只防止稀疏状态过拟合，不按目标或结果调参。
+  shrinkage_strength: 20
+
+evaluation:
+  paired_metrics:
+    - multiclass_brier
+    - ordinal_ranked_probability_score
+    - maximum_absolute_bucket_calibration_error
+  temporal_stability: chronological_halves_of_each_target_validation
+  gate_all_required:
+    - 每个目标的候选平均 Brier 严格低于同截止扩展无条件 prior
+    - 每个目标的候选平均顺序概率分数严格低于同截止扩展无条件 prior
+    - 每个目标前后半段的候选平均顺序概率分数均不高于同截止 prior
+    - 每个目标的候选最大绝对 bucket 校准误差不高于同截止 prior
+  economic_interpretation: >-
+    通过只证明一个更好的 72 小时 Quant 分布候选；不能证明可交易 Alpha。
+    后续只能登记新的前瞻 RESEARCH producer，并由现有 Product、Portfolio、Risk、
+    Execution 逻辑账户在真实 spread、fee、funding、延迟和换手下评价资本增量。
+
+search_control:
+  candidate_count: 1
+  prohibited_follow_ups: >-
+    结果揭示后不得在同一数据上搜索其他 lookback、分位数、状态数、平滑强度、
+    波动公式或按资产单独调参；失败时保存结论并删除专属 evaluator 与测试。
+
+runtime_change_before_forward_evidence: NONE
