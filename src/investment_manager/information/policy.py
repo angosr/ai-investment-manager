@@ -218,6 +218,31 @@ class InformationPolicy(StrictConfig):
     )
     coverage_requirements: tuple[CoverageRequirement, ...] = ()
 
+    @model_validator(mode="before")
+    @classmethod
+    def previous_newsnow_sources_are_read_only_compatible(cls, value):
+        """Parse the adjacent release without inheriting its implicit privileges."""
+
+        if not isinstance(value, dict) or "newsnow_sources" not in value:
+            return value
+        if "newsnow_event_feeds" in value:
+            raise ValueError("NewsNow 新旧 source 配置不得同时存在")
+        sources = value["newsnow_sources"]
+        if not isinstance(sources, (list, tuple)) or not all(
+            isinstance(item, str) for item in sources
+        ):
+            raise ValueError("旧 NewsNow sources 必须是字符串列表")
+        normalized = dict(value)
+        normalized.pop("newsnow_sources")
+        normalized["newsnow_event_feeds"] = tuple(
+            {
+                "stream_id": item,
+                "immediate_review_eligible": False,
+            }
+            for item in sources
+        )
+        return normalized
+
     @field_validator("official_event_feeds")
     @classmethod
     def official_event_feeds_must_be_unique_and_sorted(

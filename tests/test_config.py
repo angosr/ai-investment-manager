@@ -15,7 +15,7 @@ from investment_manager.portfolio.policy import (
     EconomicExposure,
     MandateStatus,
 )
-from investment_manager.settings import AppConfig, load_config
+from investment_manager.settings import AppConfig, load_config, load_config_mapping
 from investment_manager.state.decision.service import assemble_decision_packet_preparation
 from investment_manager.state.policy import DecisionStatePolicy
 
@@ -301,6 +301,21 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "MARKET_VOLATILITY",
     )
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
+
+
+def test_previous_newsnow_source_shape_is_parsed_without_review_privilege() -> None:
+    payload = load_config_mapping("config/investment-manager.yaml")
+    information = dict(payload["information"])
+    information.pop("newsnow_event_feeds")
+    information["newsnow_sources"] = ["mktnews-flash", "fastbull-express"]
+    payload["information"] = information
+
+    config = AppConfig.model_validate(payload)
+
+    assert tuple(
+        (item.stream_id, item.immediate_review_eligible)
+        for item in config.information.newsnow_event_feeds
+    ) == (("mktnews-flash", False), ("fastbull-express", False))
 
 
 def test_previous_release_config_defaults_new_forecast_prior_to_disabled() -> None:
