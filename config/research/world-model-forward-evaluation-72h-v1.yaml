@@ -1,0 +1,53 @@
+schema_version: world-model-forward-evaluation-plan-v1
+plan_id: world-model-forward-evaluation-72h-v1
+baseline_artifact_id: forecast_baseline_7edf2cf090b47cdad2e5
+
+question: >-
+  在相同点时信息、72 小时目标和结算结果上，当前世界认知是否比不读取世界认知的
+  透明无条件先验提供稳定的预测增量，并且该增量能否改善完整成本后的组合结果。
+
+targets:
+  - BTCUSDT
+  - PAXGUSDT
+
+forecast_contract:
+  horizon_minutes: 4320
+  outcome: spot_midpoint_to_midpoint_return
+  buckets: frozen_by_baseline_artifact
+  fixed_benchmark: development_distribution_from_baseline_artifact
+  cadence: non_overlapping_72h_utc_epoch_phase
+  material_event_slots: separate_obligations_clustered_by_overlapping_outcome_window
+  completion_deadline_seconds: 3600
+  no_backfill_after_deadline: true
+
+producers:
+  prior:
+    kind: PROGRAM
+    permission: RESEARCH
+    rule: historical_terminal_bucket_counts_plus_visible_forward_outcomes
+  posterior:
+    kind: CONTEXT
+    permission: RESEARCH
+    invocation: one_joint_codex_call_for_all_available_targets
+    input: >-
+      同槽 prior、截止前最新有效 WorldModel、目标相关机制及验证状态；模型不得读取
+      截止后的市场、事件、结算或资本动作。
+    adjustment_rule: >-
+      只有当前 WorldModel 中可识别的非市场结构机制可以改变 prior；每个实质改变必须
+      引用机制并说明传导，缺少可用机制时输出与 prior 相同的分布或 NO_ESTIMATE。
+
+evaluation:
+  forecast: paired_brier_rps_calibration_and_return_monotonicity
+  independence: one_joint_cadence_interval_is_one_independent_sample
+  event_dependence: overlapping_material_slots_are_one_cluster
+  capital: same_product_portfolio_risk_execution_and_full_cost_logical_accounts
+  promotion: >-
+    不设置固定样本数量门槛；仅当配对预测增量及其不确定性、覆盖、市场状态和费用后
+    逻辑账户共同支持增值时，才另行登记资本候选行为。
+
+scope:
+  capital_change: NONE
+  frontend_change: NONE
+  prohibited: >-
+    不恢复退役 4 小时 Quant、纯 Context、稳定副本、多 Agent 投票、第二套 Outcome、
+    第二套资本账本或为了获得样本而强制下单。
