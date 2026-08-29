@@ -1,0 +1,39 @@
+{
+  "schema_version": "reference-product-forward-observation-v1",
+  "observed_at": "2026-08-29T01:15:34Z",
+  "candidate_instrument_key": "BINANCE:SPOT:SPYBUSDT",
+  "authority": "PRODUCT_RESEARCH_OBSERVATION_ONLY",
+  "runtime_release": {
+    "manifest_id": "release-world-capital-shadow-v219-spyb-observation",
+    "code_version": "7383357f7b0ed25bae1be317f5dc254df462942e",
+    "configuration_hash": "96be54d9e243be1be7e8f37bd1db234c7260b72921dbff590877010a814049c4",
+    "manifest_file_sha256": "dadb41d767593aa3ec9c8082db43c7f4dff9ac1659330b424c90d80f4fbd6a4f",
+    "status": "READY",
+    "dashboard_health": "OK"
+  },
+  "initial_forward_quote_dataset": {
+    "dataset_id": "historical_executable_quotes_6983550ea2a64a49a701",
+    "source_table": "market_quotes",
+    "source_row_count": 42,
+    "quote_count": 7,
+    "sampling_interval_seconds": 10,
+    "first_observed_at": "2026-08-29T01:13:44.108992Z",
+    "last_observed_at": "2026-08-29T01:14:40.683515Z",
+    "quotes_hash": "5616c7e7f9ff08baa9afbb46544475a8d868d3ed5ca639454afc7b2da9e3f661",
+    "manifest_file_sha256": "a8b127c527026fbb36982e3b0e6cb8feed63e3772b9228354a26f58be959fd67"
+  },
+  "permission_isolation": {
+    "in_analysis_symbols": false,
+    "in_execution_specs": false,
+    "candidate_capital_authorization_count": 0,
+    "orders_created": 0
+  },
+  "decision": "FORWARD_PRODUCT_OBSERVATION_STARTED",
+  "capital_authorization": "NONE",
+  "bounded_interpretation": "该样本只证明既有 Market 行情事实到内容寻址报价证据的通路已经可用；不足一分钟的报价不能证明 SPYB 跟踪质量、长期流动性、账户资格或 Reference 资格。",
+  "next_evidence": [
+    "持续积累覆盖美股开盘、收盘和闭市时段的主网点时报价与成交",
+    "取得同步底层 SPY 总回报或可验证参考价格后评价溢折价和跟踪残差",
+    "修复 Spot Testnet 凭证后完成只读账户资格核验"
+  ]
+}
