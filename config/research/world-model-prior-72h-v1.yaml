@@ -1,0 +1,52 @@
+schema_version: forecast-baseline-plan-v1
+plan_id: world-model-prior-72h-v1
+
+purpose: >-
+  为世界认知的 72 小时方向分布建立一个透明、点时、无泄漏的比较坐标。
+  该先验不是交易策略，也不需要证明独立 Alpha；后续 AI 只能在完全相同的
+  Forecast 时点、目标和结算结果上证明相对增量。
+
+targets:
+  - symbol: BTCUSDT
+    dataset_id: historical_dataset_d54a1c9f090efe425800
+    bars_hash: 883beb7b7dd75cada797613151501e7e30edf8eead3c18c6fb3c01e305a90a27
+  - symbol: PAXGUSDT
+    dataset_id: historical_dataset_b1a3cbad1cca6e90e80f
+    bars_hash: c1d44d89522f08e023a4afd5ed64cd22f480a757825ba6d62c1d214b66318067
+
+sample_contract:
+  interval: 1d
+  horizon_days: 3
+  slot_phase_epoch: 1970-01-01
+  slot_phase_days: 3
+  information_cutoff: completed_bar_close
+  outcome: close_to_close_return_bps
+  settlement_availability: outcome_endpoint_bar_close
+  independence: non_overlapping_cadence_slots
+
+estimation:
+  development_end_exclusive: 2024-01-01
+  bucket_quantiles: ["0.20", "0.40", "0.60", "0.80"]
+  quantile_method: empirical_nearest_rank
+  representative: development_bucket_median
+  fixed_benchmark: development_empirical_distribution
+  forecast_prior: >-
+    对每个验证时点，仅使用结算可见时间不晚于该信息截止时点的全部历史结果，
+    在冻结桶内计算扩展窗口无条件频率；不使用价格特征、状态筛选或参数搜索。
+
+evaluation:
+  period: from_development_boundary_to_last_settleable_slot
+  metrics:
+    - multiclass_brier
+    - ordinal_ranked_probability_score
+    - bucket_frequency_calibration
+  validity_rule: >-
+    数据身份、日线连续性、非重叠时点、结算可见性和概率归一化必须全部成立；
+    分数只描述基线难度和校准，不以优于自身固定分布作为 Alpha 门禁。
+
+scope:
+  excluded_target: >-
+    SPY 暂不进入本计划；独立经济 Outcome 和 SPYB 产品映射尚未形成跨会话证据。
+  capital_change: NONE
+  historical_claim: >-
+    本结果只能验证基线合同与点时流水线，不能证明 AI 增量、费用后 Alpha 或资本资格。
