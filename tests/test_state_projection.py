@@ -813,6 +813,110 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
     assert replayed.status == PacketPreparationStatus.NO_MATERIAL_DELTA
 
 
+def test_projection_version_baseline_does_not_swallow_explicit_material_event(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    facts = SqlFactStateStore(engine)
+    events = InMemoryEventStore()
+    mandate = AnalysisMandate(
+        version="portfolio-mandate-v1",
+        analysis_scope="primary-portfolio",
+        question="Assess material external evidence.",
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("EXTERNAL_INFORMATION",),
+    )
+
+    def preparation(version: str) -> DecisionPacketPreparation:
+        return DecisionPacketPreparation(
+            market_store=_PointInTimeMarketStore(replay_input.market),
+            event_reader=events,
+            facts=facts,
+            projector=SqlStateProjector(
+                engine,
+                projection_version=version,
+                delta_policy=DELTA_POLICY,
+            ),
+            assembler=SqlDecisionPacketAssembler(
+                engine,
+                DecisionPacketPolicy(
+                    version="packet-policy-baseline-trigger-v1",
+                    schema_version="decision-packet-baseline-trigger-v1",
+                ),
+            ),
+            features=FeatureEngine(app_config.feature),
+            market_interval=app_config.market_data.interval,
+            market_bar_window=app_config.market_data.bar_window,
+            market_source=app_config.market_data.version,
+            maximum_market_age_seconds=(
+                app_config.decision_state.packet_policy.maximum_market_age_seconds
+            ),
+            clock=lambda: OBSERVED_AT + timedelta(minutes=1),
+        )
+
+    assert (
+        preparation("portfolio-state-v1")
+        .prepare(
+            analysis_id="old-version-baseline",
+            as_of=OBSERVED_AT,
+            mandate=mandate,
+        )
+        .status
+        == PacketPreparationStatus.BASELINE_RECORDED
+    )
+    event_at = OBSERVED_AT + timedelta(minutes=1)
+    event = IntelligenceEvent(
+        evidence_id="first-party-policy-speech",
+        normalizer_version="official-normalizer-v1",
+        acquisition_route="official-feed-v1",
+        event_time=event_at,
+        observed_at=event_at,
+        source="official:central-bank",
+        title="Central bank chair policy speech",
+        body="The official policy speech changed the expected rate path.",
+        symbols=("BTCUSDT",),
+        relevance="0.95",
+        impact="0.95",
+        source_reliability="1",
+        novelty="0.95",
+        immediate_review_eligible=True,
+        directional_support_eligible=True,
+    )
+    events.put(event)
+
+    new_version = preparation("portfolio-state-v2")
+    result = new_version.prepare(
+        analysis_id="new-version-event-trigger",
+        as_of=event_at,
+        mandate=mandate,
+        intelligence_evidence_ids=(event.evidence_id,),
+    )
+    exact_retry = new_version.prepare(
+        analysis_id="new-version-event-trigger",
+        as_of=event_at,
+        mandate=mandate,
+        intelligence_evidence_ids=(event.evidence_id,),
+    )
+
+    assert result.status == PacketPreparationStatus.READY
+    assert result.delta_id is None
+    assert result.packet is not None
+    assert result.packet.deltas == ()
+    assert result.packet.intelligence_events[0].evidence_id == event.evidence_id
+    assert result.packet.intelligence_events[0].directly_triggered is True
+    assert result.packet.review_requests[0].evidence_ids == (event.evidence_id,)
+    assert exact_retry == result
+
+
 def test_explicit_review_receives_recent_background_intelligence(
     app_config,
     replay_input,

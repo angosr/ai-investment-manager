@@ -301,11 +301,28 @@ class DecisionPacketPreparation:
             information_coverage=information_coverage,
         )
 
-        if projection.delta is None and not effective_reviews:
-            baseline = not self._has_predecessor(
-                mandate=mandate,
-                as_of=as_of,
+        baseline = not self._has_predecessor(
+            mandate=mandate,
+            as_of=as_of,
+        )
+        if (
+            projection.delta is None
+            and baseline
+            and not effective_reviews
+            and (material_triggered_events or market_shock_symbols)
+        ):
+            # A projection-version change has no comparable predecessor, but it
+            # must not swallow the explicit event/shock that caused this build.
+            # Preserve that cause as a review request; the immutable State still
+            # remains a baseline and no cross-version MaterialDelta is invented.
+            baseline_review = PacketReviewRequest.create(
+                requested_at=as_of,
+                reason="状态版本基线建立时复核本次明确触发的材料变化",
+                evidence_ids=tuple(event.evidence_id for event in material_triggered_events),
             )
+            effective_reviews = (baseline_review,)
+
+        if projection.delta is None and not effective_reviews:
             return DecisionPacketPreparationResult(
                 status=(
                     PacketPreparationStatus.BASELINE_RECORDED
