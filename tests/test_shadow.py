@@ -159,7 +159,7 @@ class RecordingCapital:
 def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) -> None:
     config = _shadow_config(app_config)
     plan = build_initial_trigger_plan(
-        symbol="BTCUSDT",
+        symbol=config.assessment.review_trigger_symbol,
         pipeline_id=config.pipeline.version,
         manifest_id="manifest-v1",
         updated_at=NOW,
@@ -201,7 +201,7 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
     )
     trigger = build_trigger_event(
         trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
-        symbol="BTCUSDT",
+        symbol=plan.symbol,
         pipeline_id=config.pipeline.version,
         occurred_at=NOW,
         observed_at=NOW,
@@ -209,6 +209,7 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
         dedup_key="forecast-slot-1",
     )
     producer = RecordingForecastProducer()
+    posterior = RecordingPosteriorPreparation()
     consumer = RecordingBatchConsumer()
     batch = build_trigger_batch(
         plan=plan,
@@ -220,11 +221,14 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
     dispatches = TriggerDispatchBuilder(
         config=config,
         program_forecast_producers=(producer,),
+        posterior_preparation=posterior,
         program_batch_consumers=(consumer,),
     ).build(batch)
 
     assert dispatches == ()
     assert producer.as_of == NOW
+    assert posterior.activation_count == 1
+    assert posterior.calls == []
     assert consumer.batch == batch
 
 
