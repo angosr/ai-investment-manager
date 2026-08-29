@@ -15,7 +15,7 @@ component_versions:
   - [market_data, binance-public-shadow-v18]
   - [shadow, shadow-simulation-v2]
   - [information, information-intake-v46]
-  - [pipeline, world-capital-shadow-v81]
+  - [pipeline, off-pipeline-v8]
   - [codex_runtime, codex-runtime-v11]
   - [assessment, context-assessment-v55]
   - [codex_accounts, local-directory-account-registry-v2]
