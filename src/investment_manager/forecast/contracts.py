@@ -190,7 +190,7 @@ class ForecastSlotOrigin(StrEnum):
     MATERIAL_STATE = "MATERIAL_STATE"
 
 
-MATERIAL_SLOT_POLICY_VERSION = "qualified-structural-event-v2"
+MATERIAL_SLOT_POLICY_VERSION = "qualified-structural-event-v3"
 
 
 class ForecastSlotStratum(StrEnum):

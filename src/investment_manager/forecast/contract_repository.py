@@ -12,6 +12,7 @@ from investment_manager.forecast.contracts import (
     ForecastNoEstimate,
     ForecastPermission,
     ForecastProducerBinding,
+    ForecastSlotCause,
     ForecastSlotObligation,
     ForecastSlotOrigin,
 )
@@ -280,6 +281,40 @@ class SqlForecastContractStore:
             return None
         slot = ForecastDecisionSlot.model_validate(payload)
         return slot.slot_as_of
+
+    def material_slots(self) -> tuple[ForecastDecisionSlot, ...]:
+        """Return the shared immutable material-event history for sample deduplication."""
+
+        stored_origin = forecast_decision_slots.c.payload["cause"]["origin"].as_string()
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(forecast_decision_slots.c.payload)
+                .where(stored_origin == ForecastSlotOrigin.MATERIAL_STATE.value)
+                .order_by(
+                    forecast_decision_slots.c.slot_as_of,
+                    forecast_decision_slots.c.slot_id,
+                )
+            ).scalars()
+            return tuple(ForecastDecisionSlot.model_validate(item) for item in payloads)
+
+    def resolve_material_cause(
+        self,
+        cause: ForecastSlotCause,
+    ) -> tuple[datetime | None, bool]:
+        """Return the original slot anchor and whether the cause adds unseen evidence."""
+
+        slots = self.material_slots()
+        matches = tuple(slot.slot_as_of for slot in slots if slot.cause == cause)
+        consumed = frozenset(
+            reference
+            for slot in slots
+            if slot.cause is not None
+            for reference in slot.cause.trigger_refs
+        )
+        return (
+            min(matches) if matches else None,
+            not set(cause.trigger_refs).issubset(consumed),
+        )
 
     def slot(self, slot_id: str) -> ForecastDecisionSlot | None:
         payload = self._payload(

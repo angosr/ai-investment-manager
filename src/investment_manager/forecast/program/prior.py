@@ -166,6 +166,12 @@ class RollingPriorForecastProducer:
         )
         if slot_at < self.activated_at:
             return ()
+        if cause is not None and cause.origin == ForecastSlotOrigin.MATERIAL_STATE:
+            existing_slot_at, adds_unseen_evidence = self.contracts.resolve_material_cause(cause)
+            if existing_slot_at is not None:
+                slot_at = existing_slot_at
+            elif not adds_unseen_evidence:
+                return ()
         return tuple(
             self._produce(
                 target,
@@ -185,17 +191,20 @@ class RollingPriorForecastProducer:
         cause: ForecastSlotCause,
     ) -> BaseForecast | ForecastNoEstimate:
         self.contracts.record_contract(target.contract)
-        self.contracts.resolve_binding(target.binding, activated_at=self.activated_at)
+        binding = self.contracts.resolve_binding(
+            target.binding,
+            activated_at=self.activated_at,
+        )
         slot_id = ForecastDecisionSlot.identity_for(
             target.contract.contract_id, slot_at, cause=cause
         )
         existing = self.forecasts.result_for_behavior(
             decision_slot_id=slot_id,
-            producer_behavior_id=target.binding.producer_behavior_id,
+            producer_behavior_id=binding.producer_behavior_id,
         )
         if existing is not None:
             return existing
-        absence_id = stable_id("forecast_no_estimate", slot_id, target.binding.producer_behavior_id)
+        absence_id = stable_id("forecast_no_estimate", slot_id, binding.producer_behavior_id)
         absence = self.contracts.no_estimate(absence_id)
         if absence is not None:
             return absence
@@ -212,7 +221,7 @@ class RollingPriorForecastProducer:
             cutoff_prices=cutoff_anchors,
             cause=cause,
         )
-        self.contracts.record_slot(slot, binding=target.binding)
+        self.contracts.record_slot(slot, binding=binding)
         completed_at = max(require_utc(self.clock()), observed_at)
         if completed_at > slot.completion_deadline_at:
             return self._no_estimate(target, slot, completed_at, "PRIOR_DEADLINE_MISSED")

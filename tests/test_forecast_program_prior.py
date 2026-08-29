@@ -114,9 +114,17 @@ def test_prior_producer_records_material_event_as_independent_slot() -> None:
     )
 
     results = producer.produce(as_of=event_at, cause=cause)
-    repeated = producer.produce(as_of=event_at, cause=cause)
+    repeated = producer.produce(as_of=event_at + timedelta(minutes=5), cause=cause)
+    replayed_under_new_policy = producer.produce(
+        as_of=event_at + timedelta(minutes=10),
+        cause=ForecastSlotCause.material_state(
+            policy_version="replacement-material-policy-v1",
+            trigger_refs=("official-event-1",),
+        ),
+    )
 
     assert len(results) == len(repeated) == 2
+    assert replayed_under_new_policy == ()
     assert all(isinstance(item, BaseForecast) for item in results)
     assert tuple(item.forecast_id for item in results) == tuple(
         item.forecast_id for item in repeated
