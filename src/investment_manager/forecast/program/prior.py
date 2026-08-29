@@ -55,7 +55,7 @@ class PriorRuntimeTarget:
 
 
 def build_prior_targets(artifact: ForecastBaselineArtifact) -> tuple[PriorRuntimeTarget, ...]:
-    targets = []
+    prepared: list[tuple[ForecastBaselineTargetResult, InstrumentId, ForecastContract]] = []
     for baseline in artifact.results:
         base_asset = baseline.symbol.removesuffix("USDT")
         instrument = InstrumentId.binance_spot(
@@ -102,29 +102,35 @@ def build_prior_targets(artifact: ForecastBaselineArtifact) -> tuple[PriorRuntim
             ),
             decision_benchmark="research-only-no-capital-decision-v1",
         )
-        behavior_id = content_hash(
-            {
-                "version": PRIOR_BEHAVIOR_VERSION,
-                "artifact_id": artifact.artifact_id,
-                "contract": contract,
-                "seed_counts": baseline.terminal_bucket_counts,
-            }
+        prepared.append((baseline, instrument, contract))
+    behavior_id = content_hash(
+        {
+            "version": PRIOR_BEHAVIOR_VERSION,
+            "artifact_id": artifact.artifact_id,
+            "joint_targets": tuple(
+                {
+                    "contract": contract,
+                    "seed_counts": baseline.terminal_bucket_counts,
+                }
+                for baseline, _instrument, contract in prepared
+            ),
+        }
+    )
+    return tuple(
+        PriorRuntimeTarget(
+            baseline=baseline,
+            instrument=instrument,
+            contract=contract,
+            binding=ForecastProducerBinding.create(
+                contract_id=contract.contract_id,
+                producer_kind=ForecastProducerKind.PROGRAM,
+                producer_id=PRIOR_PRODUCER_ID,
+                producer_behavior_id=behavior_id,
+                permission=ForecastPermission.RESEARCH,
+            ),
         )
-        targets.append(
-            PriorRuntimeTarget(
-                baseline=baseline,
-                instrument=instrument,
-                contract=contract,
-                binding=ForecastProducerBinding.create(
-                    contract_id=contract.contract_id,
-                    producer_kind=ForecastProducerKind.PROGRAM,
-                    producer_id=PRIOR_PRODUCER_ID,
-                    producer_behavior_id=behavior_id,
-                    permission=ForecastPermission.RESEARCH,
-                ),
-            )
-        )
-    return tuple(targets)
+        for baseline, instrument, contract in prepared
+    )
 
 
 @dataclass(frozen=True, slots=True)

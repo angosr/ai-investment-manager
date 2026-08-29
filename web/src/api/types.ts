@@ -227,6 +227,24 @@ export interface ForecastEvaluationEvidence {
     mean_max_bucket_probability_delta: string | null;
     mean_expected_gross_bps_delta: string | null;
   };
+  world_model_capital_increment_evidence: {
+    status:
+      | "NOT_STARTED"
+      | "AWAITING_FORECAST"
+      | "AWAITING_SETTLEMENT"
+      | "INPUT_UNAVAILABLE"
+      | "EVIDENCE_AVAILABLE";
+    candidate_behavior_id: string | null;
+    comparator_behavior_id: string | null;
+    settled_panel_count: number;
+    candidate: CapitalPathEvidence | null;
+    comparator: CapitalPathEvidence | null;
+    net_equity_increment: string | null;
+    fee_cost_increment: string | null;
+    gross_turnover_increment: string | null;
+    drawdown_improvement_fraction: string | null;
+    reason_code: string | null;
+  };
   capital_choice_evidence: {
     evaluation_version: string;
     capital_behavior_id: string;
@@ -245,6 +263,17 @@ export interface ForecastEvaluationEvidence {
       selected_unprofitable_exposure: boolean;
     }[];
   } | null;
+}
+
+export interface CapitalPathEvidence {
+  producer_behavior_id: string;
+  panel_count: number;
+  as_of: string;
+  equity: string;
+  net_pnl: string;
+  fee_cost: string;
+  drawdown_fraction: string;
+  gross_turnover: string;
 }
 
 export interface CapitalChoiceCandidateOutcome {

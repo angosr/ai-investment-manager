@@ -480,6 +480,19 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             "mean_max_bucket_probability_delta": None,
             "mean_expected_gross_bps_delta": None,
         },
+        "world_model_capital_increment_evidence": {
+            "status": "NOT_STARTED",
+            "candidate_behavior_id": None,
+            "comparator_behavior_id": None,
+            "settled_panel_count": 0,
+            "candidate": None,
+            "comparator": None,
+            "net_equity_increment": None,
+            "fee_cost_increment": None,
+            "gross_turnover_increment": None,
+            "drawdown_improvement_fraction": None,
+            "reason_code": None,
+        },
     }
     assert bad_assessment_detail.json()["synthesis"] == bad_assessment.synthesis
     assert capital_rows.status_code == 200

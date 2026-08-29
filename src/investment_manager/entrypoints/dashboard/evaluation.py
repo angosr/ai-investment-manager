@@ -21,6 +21,10 @@ from investment_manager.forecast.product.repository import (
 )
 from investment_manager.forecast.program.prior import PRIOR_PRODUCER_ID
 from investment_manager.forecast.results import ForecastOutcomeStatus
+from investment_manager.governance.evaluation.capital_increment import (
+    SqlWorldModelCapitalIncrementReader,
+    WorldModelCapitalIncrementEvidence,
+)
 from investment_manager.portfolio.evaluation import (
     CapitalChoiceCase,
     CapitalChoiceEvidence,
@@ -65,9 +69,22 @@ class EvaluationDashboardReader:
             candidate_producer_id=POSTERIOR_PRODUCER_ID,
             comparator_producer_id=PRIOR_PRODUCER_ID,
         )
+        self._world_model_capital_increment = SqlWorldModelCapitalIncrementReader(
+            engine=engine,
+            capital_policy=config.capital,
+            initial_cash=config.shadow.initial_quote_balance,
+            funding_lookback_hours=config.market_data.funding_history_lookback_hours,
+            candidate_producer_id=POSTERIOR_PRODUCER_ID,
+            comparator_producer_id=PRIOR_PRODUCER_ID,
+        )
 
     def world_model_increment_evidence(self) -> ForecastIncrementEvidence:
         return self._world_model_increment.read()
+
+    def world_model_capital_increment_evidence(
+        self,
+    ) -> WorldModelCapitalIncrementEvidence:
+        return self._world_model_capital_increment.read()
 
     def capital_choice_evidence(self) -> CapitalChoiceEvidence | None:
         """Evaluate the newest decision whose complete candidate set has settled."""
@@ -354,6 +371,45 @@ def serialize_world_model_increment_evidence(
                 pair.mean_max_bucket_probability_delta
             ),
             "mean_expected_gross_bps_delta": optional_decimal(pair.mean_expected_gross_bps_delta),
+        }
+    }
+
+
+def serialize_world_model_capital_increment_evidence(
+    evidence: WorldModelCapitalIncrementEvidence,
+) -> dict:
+    def optional_decimal(value: Decimal | None) -> str | None:
+        return None if value is None else str(value)
+
+    def path(value):
+        if value is None:
+            return None
+        return {
+            "producer_behavior_id": value.producer_behavior_id,
+            "panel_count": value.panel_count,
+            "as_of": _iso(value.as_of),
+            "equity": str(value.equity),
+            "net_pnl": str(value.net_pnl),
+            "fee_cost": str(value.fee_cost),
+            "drawdown_fraction": str(value.drawdown_fraction),
+            "gross_turnover": str(value.gross_turnover),
+        }
+
+    return {
+        "world_model_capital_increment_evidence": {
+            "status": evidence.status.value,
+            "candidate_behavior_id": evidence.candidate_behavior_id,
+            "comparator_behavior_id": evidence.comparator_behavior_id,
+            "settled_panel_count": evidence.settled_panel_count,
+            "candidate": path(evidence.candidate),
+            "comparator": path(evidence.comparator),
+            "net_equity_increment": optional_decimal(evidence.net_equity_increment),
+            "fee_cost_increment": optional_decimal(evidence.fee_cost_increment),
+            "gross_turnover_increment": optional_decimal(evidence.gross_turnover_increment),
+            "drawdown_improvement_fraction": optional_decimal(
+                evidence.drawdown_improvement_fraction
+            ),
+            "reason_code": evidence.reason_code,
         }
     }
 

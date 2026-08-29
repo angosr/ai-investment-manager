@@ -84,7 +84,10 @@ function CapitalTimeline({
       ) : tab === "analysis" ? (
         <div>
           {forecastEvaluation?.world_model_increment_evidence ? (
-            <WorldModelIncrementLine evidence={forecastEvaluation.world_model_increment_evidence} />
+            <WorldModelIncrementLine
+              evidence={forecastEvaluation.world_model_increment_evidence}
+              capitalEvidence={forecastEvaluation.world_model_capital_increment_evidence}
+            />
           ) : null}
           {forecastEvaluation?.capital_choice_evidence ? (
             <CapitalChoiceEvidenceLine evidence={forecastEvaluation.capital_choice_evidence} />
@@ -116,14 +119,16 @@ function CapitalTimeline({
 
 function WorldModelIncrementLine({
   evidence,
+  capitalEvidence,
 }: {
   evidence: ForecastEvaluationEvidence["world_model_increment_evidence"];
+  capitalEvidence: ForecastEvaluationEvidence["world_model_capital_increment_evidence"];
 }) {
   if (evidence.status === "NOT_STARTED") {
     return (
       <div className={styles.forecastEvidence}>
         <b>世界认知的前瞻效果尚未开始结算</b>
-        <span>尚无固定时点的同窗预测；系统不会用事后回看替代真实证据。</span>
+        <span>尚无固定时点的同窗预测，因此目前不能判断它是否改善决策或盈利。</span>
       </div>
     );
   }
@@ -143,7 +148,8 @@ function WorldModelIncrementLine({
       <div className={styles.forecastEvidence}>
         <b>世界认知预测已冻结，等待行情结算</b>
         <span>
-          已有 {evidence.forecast_panel_count} 个固定窗口完成预测；结算前不判断它是否有效。
+          已有 {evidence.forecast_panel_count} 个固定窗口完成预测；行情终点形成前，
+          不判断方向是否更准，也不判断扣除手续费后是否有价值。
         </span>
       </div>
     );
@@ -161,10 +167,32 @@ function WorldModelIncrementLine({
         基于 {evidence.non_overlapping_panel_count} 个互不重叠的 72 小时窗口，
         相对同一时点的统计先验：改善 {evidence.candidate_better_panel_count} 次，
         持平 {evidence.equal_panel_count} 次，变差 {evidence.candidate_worse_panel_count} 次。
-        这里只衡量预测增量，尚不等于扣除费用后能够盈利。
+        <CapitalIncrementText evidence={capitalEvidence} />
       </span>
     </div>
   );
+}
+
+function CapitalIncrementText({
+  evidence,
+}: {
+  evidence: ForecastEvaluationEvidence["world_model_capital_increment_evidence"];
+}) {
+  if (evidence.status === "EVIDENCE_AVAILABLE") {
+    const increment = Number(evidence.net_equity_increment ?? 0);
+    const relation = increment > 0 ? "多赚" : increment < 0 ? "少赚或多亏" : "结果相同";
+    return (
+      <>
+        {` 使用完全相同的产品、风控与手续费重放后，世界认知路径相对统计先验${relation}`}
+        {increment === 0 ? "" : ` ${Math.abs(increment).toFixed(2)} USDT`}
+        {`（${evidence.settled_panel_count} 个已结算窗口）。`}
+      </>
+    );
+  }
+  if (evidence.status === "INPUT_UNAVAILABLE") {
+    return <> 费用后对照无法完成：当时的可成交报价或产品规则不完整，不能伪造结果。</>;
+  }
+  return <> 费用后资本对照尚未到结算终点。</>;
 }
 
 function CapitalChoiceEvidenceLine({

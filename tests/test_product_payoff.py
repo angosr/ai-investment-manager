@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from investment_manager.execution.planning.planner import (
     InstrumentExecutionSpec,
 )
+from investment_manager.forecast.context.posterior_contract import POSTERIOR_PRODUCER_ID
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -38,8 +39,12 @@ from investment_manager.forecast.product.models import (
     ProductProjectionState,
     project_product_payoff,
 )
+from investment_manager.forecast.product.projector import (
+    PointInTimeProductPayoffProjector,
+)
 from investment_manager.forecast.product.repository import SqlProductPayoffProjectionStore
 from investment_manager.forecast.product.settlement import ProductPayoffOutcomeSettler
+from investment_manager.forecast.program.prior import PRIOR_PRODUCER_ID
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import (
     BaseForecast,
@@ -47,6 +52,10 @@ from investment_manager.forecast.results import (
     ForecastLegOutcome,
     ForecastOutcome,
     ForecastOutcomeStatus,
+)
+from investment_manager.governance.evaluation.capital_increment import (
+    CapitalIncrementStatus,
+    SqlWorldModelCapitalIncrementReader,
 )
 from investment_manager.governance.evaluation.logical_account import (
     ProducerDecisionPanel,
@@ -56,7 +65,6 @@ from investment_manager.governance.evaluation.logical_account import (
 )
 from investment_manager.governance.evaluation.producer_capital import (
     ProducerCapitalReplay,
-    ProducerProductProjectionRecorder,
     evaluate_producer_capital_path,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
@@ -74,7 +82,7 @@ from investment_manager.market.perpetual.models import (
     PerpetualQuote,
     perpetual_product_rule_content_hash,
 )
-from investment_manager.market.repository import InMemoryMarketDataStore
+from investment_manager.market.repository import InMemoryMarketDataStore, SqlMarketDataStore
 from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
@@ -87,7 +95,7 @@ from investment_manager.portfolio.models import (
     SleevePosition,
     SleeveTarget,
 )
-from investment_manager.portfolio.policy import SleeveRiskTemplate
+from investment_manager.portfolio.policy import ProductPayoffPolicy, SleeveRiskTemplate
 from investment_manager.risk.portfolio import (
     SleeveRiskProfile,
 )
@@ -138,12 +146,13 @@ def _target(
     )
 
 
-def _contract() -> ForecastContract:
+def _contract(representative_scale: str = "100") -> ForecastContract:
+    scale = Decimal(representative_scale)
     buckets = (
         ForecastOutcomeBucket(
             bucket_id="LOSS",
             upper_bps=Decimal("-50"),
-            representative_bps=Decimal("-100"),
+            representative_bps=-scale,
         ),
         ForecastOutcomeBucket(
             bucket_id="FLAT",
@@ -154,7 +163,7 @@ def _contract() -> ForecastContract:
         ForecastOutcomeBucket(
             bucket_id="GAIN",
             lower_bps=Decimal("50"),
-            representative_bps=Decimal("100"),
+            representative_bps=scale,
         ),
     )
     benchmark = tuple(
@@ -1556,6 +1565,207 @@ def _put_context_market(
     )
 
 
+def test_point_in_time_projector_maps_one_forecast_to_both_perpetual_directions() -> None:
+    contract = _contract()
+    forecast = _forecast(contract)
+    market = InMemoryMarketDataStore()
+    _put_context_market(market, at=forecast.available_at, update_id=41)
+    rules = _product_rules(forecast.available_at)
+    market.put_perpetual_product_rules(rules)
+    spec = InstrumentExecutionSpec(
+        instrument=PERPETUAL,
+        quantity_step=rules.market_quantity_step,
+        minimum_order_notional=rules.minimum_notional,
+        fee_bps=Decimal("5"),
+    )
+    projector = PointInTimeProductPayoffProjector(
+        policy=ProductPayoffPolicy(
+            version="linear-perpetual-product-payoff-v1",
+            economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+            instrument_keys=(PERPETUAL.key,),
+            maximum_rule_age_seconds=900,
+        ),
+        contract=contract,
+        market=market,
+        instruments=(PERPETUAL,),
+        execution_specs=(spec,),
+        risk=SleeveRiskTemplate(
+            version="test-product-risk-v1",
+            basis_stress_bps=Decimal("100"),
+            funding_stress_bps=Decimal("30"),
+            execution_stress_bps=Decimal("100"),
+            derivative_initial_margin_fraction=Decimal("0.1"),
+        ),
+        maximum_quote_age_seconds=300,
+        funding_lookback_hours=720,
+    )
+
+    projections = projector.build_for_replay(forecast, as_of=forecast.available_at)
+
+    assert projections is not None
+    assert tuple(item.target.legs[0].direction for item in projections) == (
+        ExposureDirection.LONG,
+        ExposureDirection.SHORT,
+    )
+    assert all(item.mapping_cohort_id == projector.mapping_cohort_id for item in projections)
+    assert all(item.mapping_uncertainty_bps > 0 for item in projections)
+    assert all(item.expected_funding_bps == Decimal("1") for item in projections)
+    assert all(rules.rules_id in item.input_refs for item in projections)
+
+
+def test_world_model_capital_increment_replays_prior_and_posterior_with_same_costs(
+    app_config,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    contract = _contract("1000")
+    contracts = SqlForecastContractStore(engine)
+    forecasts = SqlForecastStore(engine)
+    contracts.record_contract(contract)
+    slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=NOW,
+        cutoff_prices=(_anchor(SPOT, "100", "capital-increment-cutoff"),),
+        cause=ForecastSlotCause.cadence(contract),
+    )
+    prior_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id=PRIOR_PRODUCER_ID,
+        producer_behavior_id="joint-prior-behavior",
+        permission=ForecastPermission.RESEARCH,
+    )
+    posterior_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id=POSTERIOR_PRODUCER_ID,
+        producer_behavior_id="joint-posterior-behavior",
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(prior_binding, activated_at=NOW)
+    contracts.record_binding(posterior_binding, activated_at=NOW)
+    contracts.record_slot(slot, binding=prior_binding)
+    contracts.record_obligation(slot=slot, binding=posterior_binding)
+    available_at = NOW + timedelta(minutes=1)
+
+    def producer_forecast(
+        binding: ForecastProducerBinding,
+        probabilities: tuple[str, str, str],
+        *,
+        input_refs: tuple[str, ...],
+    ) -> BaseForecast:
+        distribution = tuple(
+            ForecastBucketProbability(bucket_id=bucket.bucket_id, probability=Decimal(value))
+            for bucket, value in zip(contract.outcome_buckets, probabilities, strict=True)
+        )
+        expected = sum(
+            (
+                item.probability * bucket.representative_bps
+                for item, bucket in zip(
+                    distribution,
+                    contract.outcome_buckets,
+                    strict=True,
+                )
+            ),
+            Decimal("0"),
+        )
+        program_input = {"producer_behavior_id": binding.producer_behavior_id}
+        is_context = binding.producer_kind == ForecastProducerKind.CONTEXT
+        return BaseForecast(
+            forecast_id=stable_id(
+                "base_forecast",
+                slot.slot_id,
+                binding.producer_behavior_id,
+            ),
+            contract_id=contract.contract_id,
+            decision_slot_id=slot.slot_id,
+            producer_id=binding.producer_id,
+            producer_behavior_id=binding.producer_behavior_id,
+            outcome_family_id=contract.outcome_family_id,
+            target=contract.target,
+            horizon_minutes=contract.horizon_minutes,
+            cutoff_prices=slot.cutoff_prices,
+            entry_prices=(
+                _anchor(SPOT, "100", f"{binding.producer_id}-entry").model_copy(
+                    update={"available_at": available_at}
+                ),
+            ),
+            information_cutoff_at=slot.information_cutoff_at,
+            input_observed_at=slot.information_cutoff_at,
+            available_at=available_at,
+            valid_until=slot.evaluation_at,
+            outcome_probabilities=distribution,
+            expected_gross_bps=expected,
+            input_refs=input_refs,
+            world_model_id="test-world-model" if is_context else None,
+            analysis_input_json=canonical_json(program_input) if is_context else None,
+            analysis_input_hash=content_hash(program_input) if is_context else None,
+            program_input_json=None if is_context else canonical_json(program_input),
+            program_input_hash=None if is_context else content_hash(program_input),
+        )
+
+    prior = producer_forecast(
+        prior_binding,
+        ("0.90", "0.05", "0.05"),
+        input_refs=("prior-input",),
+    )
+    posterior = producer_forecast(
+        posterior_binding,
+        ("0.05", "0.05", "0.90"),
+        input_refs=(prior.forecast_id,),
+    )
+    forecasts.record(prior)
+    forecasts.record(posterior)
+    market = SqlMarketDataStore(engine)
+    _put_context_market(market, at=available_at, update_id=51)
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", PERPETUAL.key, 53),
+            instrument=PERPETUAL,
+            exchange_time=available_at,
+            observed_at=available_at,
+            bid=Decimal("99.95"),
+            bid_quantity=Decimal("100"),
+            ask=Decimal("100.05"),
+            ask_quantity=Decimal("100"),
+            update_id=53,
+            source="test",
+        )
+    )
+    market.put_perpetual_product_rules(_product_rules(available_at))
+    final_exchange_at = slot.evaluation_at - timedelta(seconds=1)
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", PERPETUAL.key, 52),
+            instrument=PERPETUAL,
+            exchange_time=final_exchange_at,
+            observed_at=slot.evaluation_at,
+            bid=Decimal("104.9"),
+            bid_quantity=Decimal("100"),
+            ask=Decimal("105.1"),
+            ask_quantity=Decimal("100"),
+            update_id=52,
+            source="test",
+        )
+    )
+    reader = SqlWorldModelCapitalIncrementReader(
+        engine=engine,
+        capital_policy=app_config.capital,
+        initial_cash=Decimal("10000"),
+        funding_lookback_hours=720,
+        candidate_producer_id=POSTERIOR_PRODUCER_ID,
+        comparator_producer_id=PRIOR_PRODUCER_ID,
+    )
+    evidence = reader.read(as_of=slot.evaluation_at + timedelta(minutes=1))
+
+    assert evidence.status == CapitalIncrementStatus.EVIDENCE_AVAILABLE
+    assert evidence.settled_panel_count == 1
+    assert evidence.candidate is not None and evidence.comparator is not None
+    assert evidence.candidate.fee_cost > 0 and evidence.comparator.fee_cost > 0
+    assert evidence.net_equity_increment is not None
+    assert evidence.net_equity_increment > 0
+
+
 def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config) -> None:
     contract = _contract()
     slot = ForecastDecisionSlot.create(
@@ -1625,31 +1835,6 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
         complete_panels=(panel,),
         pending_panel_count=0,
     )
-    projection_calls = []
-    recorded_projection = _decision_projection_inputs(forecast)[1][0]
-    recorder = ProducerProductProjectionRecorder(
-        producer_behavior_ids=(forecast.producer_behavior_id,),
-        panels=SimpleNamespace(read=lambda **_kwargs: ledger),
-        product_payoffs_by_family={
-            forecast.outcome_family_id: SimpleNamespace(
-                project=lambda value, *, as_of: (
-                    projection_calls.append((value.forecast_id, as_of))
-                    or recorded_projection,
-                )
-            )
-        },
-    )
-
-    first_recording = recorder.reconcile(as_of=forecast.available_at)
-    second_recording = recorder.reconcile(as_of=forecast.available_at)
-
-    assert first_recording.processed_panel_count == 1
-    assert first_recording.projected_forecast_count == 1
-    assert first_recording.projection_count == 1
-    assert first_recording.unavailable_forecast_count == 0
-    assert second_recording.processed_panel_count == 0
-    assert projection_calls == [(forecast.forecast_id, panel.available_at)]
-
     def independent_replay() -> ProducerCapitalReplay:
         return ProducerCapitalReplay(
             producer_behavior_id=forecast.producer_behavior_id,

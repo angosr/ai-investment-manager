@@ -7,6 +7,7 @@ from investment_manager.forecast.contract_repository import SqlForecastContractS
 from investment_manager.forecast.program.baseline import load_forecast_baseline
 from investment_manager.forecast.program.prior import (
     RollingPriorForecastProducer,
+    build_prior_targets,
     prior_slot_at_or_before,
 )
 from investment_manager.forecast.repository import SqlForecastStore
@@ -64,6 +65,13 @@ def test_prior_producer_records_one_research_forecast_per_target_idempotently() 
     )
     assert all(item.program_input_json is not None for item in first)
     assert all(item.analysis_input_json is None for item in first)
+
+
+def test_prior_targets_are_one_joint_portfolio_behavior() -> None:
+    targets = build_prior_targets(_artifact())
+
+    assert len(targets) == 2
+    assert len({item.binding.producer_behavior_id for item in targets}) == 1
 
 
 def test_prior_cadence_never_backfills_before_activation() -> None:

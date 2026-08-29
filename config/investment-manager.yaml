@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v80
+  version: total-portfolio-capital-v81
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -254,6 +254,17 @@ capital:
     funding_stress_bps: "30"
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
+  # 现役 72h prior/posterior 共用同一产品映射；这只授权费用后反事实评价，
+  # 不给任一 Forecast producer 真实 Portfolio 权限。
+  product_payoff_policies:
+    - version: linear-perpetual-product-payoff-v1
+      economic_exposure_id: CRYPTO_NETWORK:BTC:USDT
+      instrument_keys: [BINANCE:USD_M_PERPETUAL:BTCUSDT]
+      maximum_rule_age_seconds: 900
+    - version: linear-perpetual-product-payoff-v1
+      economic_exposure_id: INFLATION_SENSITIVE:PAXG:USDT
+      instrument_keys: [BINANCE:USD_M_PERPETUAL:PAXGUSDT]
+      maximum_rule_age_seconds: 900
 outcome_evaluation:
   version: typed-outcome-settlement-v57
   forecast_version: analysis-forecast-v3

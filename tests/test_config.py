@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-capital-shadow-v81"
+    assert config.pipeline.version == "world-capital-shadow-v82"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -55,7 +55,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v80"
+    assert config.capital.version == "total-portfolio-capital-v81"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -71,6 +71,16 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert tuple(item.key for item in config.capital.forecast_reference_instruments) == (
         "BINANCE:SPOT:BTCUSDT",
         "BINANCE:SPOT:PAXGUSDT",
+    )
+    assert tuple(
+        (item.economic_exposure_id, item.instrument_keys)
+        for item in config.capital.product_payoff_policies
+    ) == (
+        ("CRYPTO_NETWORK:BTC:USDT", ("BINANCE:USD_M_PERPETUAL:BTCUSDT",)),
+        (
+            "INFLATION_SENSITIVE:PAXG:USDT",
+            ("BINANCE:USD_M_PERPETUAL:PAXGUSDT",),
+        ),
     )
     assert config.capital.decision.version == "portfolio-net-edge-v17"
     assert config.information.version == "information-intake-v46"

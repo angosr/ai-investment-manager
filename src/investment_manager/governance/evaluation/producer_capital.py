@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
@@ -18,7 +17,6 @@ from investment_manager.governance.evaluation.logical_account import (
     ProducerDecisionPanel,
     ProducerLogicalAccount,
     ProducerPanelLedger,
-    SqlProducerPanelReader,
 )
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash
@@ -60,80 +58,6 @@ class ProductPayoffBuilder(Protocol):
         *,
         as_of: datetime,
     ) -> tuple[ProductPayoffProjection, ...] | None: ...
-
-
-class ProductPayoffRecorder(ProductPayoffBuilder, Protocol):
-    def project(
-        self,
-        forecast: BaseForecast,
-        *,
-        as_of: datetime,
-    ) -> tuple[ProductPayoffProjection, ...]: ...
-
-
-class ProducerProductProjectionReport(FrozenModel):
-    processed_panel_count: int
-    projected_forecast_count: int
-    projection_count: int
-    unavailable_forecast_count: int
-
-
-@dataclass(slots=True)
-class ProducerProductProjectionRecorder:
-    """Freeze every legal product expression for complete research panels."""
-
-    producer_behavior_ids: tuple[str, ...]
-    panels: SqlProducerPanelReader
-    product_payoffs_by_family: Mapping[str, ProductPayoffRecorder]
-    _processed_panel_ids: set[str] = field(default_factory=set, init=False)
-
-    def __post_init__(self) -> None:
-        if (
-            not self.producer_behavior_ids
-            or tuple(sorted(set(self.producer_behavior_ids)))
-            != self.producer_behavior_ids
-            or not self.product_payoffs_by_family
-        ):
-            raise ValueError("研究产品投影必须绑定唯一行为和产品映射")
-
-    def reconcile(self, *, as_of: datetime) -> ProducerProductProjectionReport:
-        now = require_utc(as_of)
-        processed = projected = projection_count = unavailable = 0
-        for behavior_id in self.producer_behavior_ids:
-            ledger = self.panels.read(producer_behavior_id=behavior_id, as_of=now)
-            for panel in ledger.complete_panels:
-                if panel.panel_id in self._processed_panel_ids:
-                    continue
-                processed += 1
-                for forecast in panel.forecasts:
-                    projector = self.product_payoffs_by_family.get(
-                        forecast.outcome_family_id
-                    )
-                    if projector is None:
-                        continue
-                    try:
-                        projections = projector.project(
-                            forecast,
-                            as_of=panel.available_at,
-                        )
-                    except PointInTimeInputUnavailable:
-                        unavailable += 1
-                        continue
-                    if not projections:
-                        unavailable += 1
-                        continue
-                    projected += 1
-                    projection_count += len(projections)
-                # Availability is frozen at panel.available_at. Retrying the same
-                # cutoff cannot legitimately turn a missing point-in-time fact into
-                # evidence; a process restart still performs an idempotent audit.
-                self._processed_panel_ids.add(panel.panel_id)
-        return ProducerProductProjectionReport(
-            processed_panel_count=processed,
-            projected_forecast_count=projected,
-            projection_count=projection_count,
-            unavailable_forecast_count=unavailable,
-        )
 
 
 class ProducerCapitalReplay:
@@ -337,6 +261,7 @@ class ProducerCapitalReplay:
                 visible_at=as_of,
             )
         )
+        self._funding_start = as_of
         return tuple(
             sorted(
                 settlements,

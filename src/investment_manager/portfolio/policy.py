@@ -159,6 +159,7 @@ class CapitalPolicy(StrictConfig):
     planner: TradePlannerPolicy
     execution_specs: tuple[InstrumentExecutionSpec, ...] = Field(min_length=1)
     sleeve_risk: SleeveRiskTemplate
+    product_payoff_policies: tuple[ProductPayoffPolicy, ...] = ()
     candidate_capital_authorizations: tuple[CandidateCapitalAuthorization, ...] = ()
 
     @model_validator(mode="after")
@@ -197,6 +198,31 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Capital Risk 压力损失上限不得宽于 Mandate")
         if self.risk.maximum_gross_exposure_fraction > self.mandate.maximum_gross_exposure_fraction:
             raise ValueError("Capital Risk gross 上限不得宽于 Mandate")
+        payoff_exposures = tuple(item.economic_exposure_id for item in self.product_payoff_policies)
+        if tuple(sorted(set(payoff_exposures))) != payoff_exposures:
+            raise ValueError("Product payoff policies 必须按经济暴露唯一排序")
+        universe_by_key = {
+            item.instrument_key: item for item in self.investable_universe.instruments
+        }
+        payoff_keys = tuple(
+            key for policy in self.product_payoff_policies for key in policy.instrument_keys
+        )
+        if len(set(payoff_keys)) != len(payoff_keys) or not set(payoff_keys).issubset(
+            universe_by_key
+        ):
+            raise ValueError("Product payoff policies 必须唯一引用可投资域产品")
+        instruments_by_key = {item.instrument.key: item.instrument for item in self.execution_specs}
+        for policy in self.product_payoff_policies:
+            mapped = tuple(universe_by_key[key] for key in policy.instrument_keys)
+            exposures = {item.economic_exposure for item in mapped}
+            if len(exposures) != 1:
+                raise ValueError("一项 Product payoff policy 只能表达一个经济暴露")
+            product = instruments_by_key[policy.instrument_keys[0]]
+            expected_id = (
+                f"{next(iter(exposures)).value}:{product.base_asset}:{product.settlement_asset}"
+            )
+            if policy.economic_exposure_id != expected_id:
+                raise ValueError("Product payoff economic_exposure_id 与产品经济身份不一致")
         reference = self.reference_policy
         if reference is not None:
             if self.mandate.status != MandateStatus.APPROVED:
