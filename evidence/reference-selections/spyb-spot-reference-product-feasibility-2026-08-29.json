@@ -1,0 +1,76 @@
+{
+  "schema_version": "reference-product-feasibility-v1",
+  "evaluated_at": "2026-08-29T00:52:11Z",
+  "base_commit": "73c2c9e03f77c6e070e0182b5290ebdbe645e052",
+  "scope": "当前 Binance 同账户是否出现比 SPY 永续更适合长期美国权益 Reference 的产品表达",
+  "authority": "PRODUCT_RESEARCH_SELECTION_ONLY",
+  "candidate": {
+    "instrument_key": "BINANCE:SPOT:SPYBUSDT",
+    "exchange_symbol": "SPYBUSDT",
+    "base_asset": "SPYB",
+    "quote_asset": "USDT",
+    "economic_exposure": "US_EQUITY",
+    "issuer": "BTech Holdings Limited",
+    "legal_form": "ADGM 发行、对应 SPY ETF 经济暴露的 bStocks 证券凭证；不是 SPY 份额或直接股东权利"
+  },
+  "official_sources": {
+    "spot_exchange_info": "https://api.binance.com/api/v3/exchangeInfo?symbol=SPYBUSDT",
+    "spot_klines": "https://api.binance.com/api/v3/klines",
+    "bstocks_faq": "https://www.binance.com/en/support/faq/detail/f0c03cd6509a4085b4cce1636f16be38",
+    "proof_of_collateral": "https://www.binance.com/en/proof-of-collateral/bstocks",
+    "digital_securities_documents": "https://www.binance.com/en/about-legal/digital-securities-documentation"
+  },
+  "frozen_dataset": {
+    "dataset_id": "historical_dataset_3a4e10907c223959a662",
+    "schema_version": "historical-bars-v2",
+    "source": "binance-rest-historical",
+    "collected_at": "2026-08-29T00:51:26.809191Z",
+    "requested_window": [
+      "2026-07-01T00:00:00Z",
+      "2026-08-29T00:00:00Z"
+    ],
+    "first_open_time": "2026-07-07T00:00:00Z",
+    "last_close_time": "2026-08-28T23:59:59.999000Z",
+    "bar_count": 53,
+    "bars_content_hash": "ce0e1ef7aa59bd3a2cf618f833c65d886f4496293df0888b2f008ddd3233d9d7",
+    "manifest_file_sha256": "3dec8d928cbc247739982df8f986e4f36db508f4bbc751857d84298da866ae60",
+    "bars_file_sha256": "e793b3f7b0f96db463407cdc8f6acc64af339ecae65a51b3de8d8fb7ba2f9a0a",
+    "instrument_rules": {
+      "price_increment": "0.01000000",
+      "quantity_increment": "0.00100000",
+      "minimum_quantity": "0.00100000",
+      "minimum_notional": "5.00000000"
+    }
+  },
+  "economic_advantages_over_spy_perpetual": [
+    "Spot 长仓没有永续 funding 现金流和强平路径",
+    "官方描述为 24/7 Spot 交易，适合低频长期持有而不是依赖 TradFi 永续交易时段",
+    "底层股息通过 multiplier 在扣除税费等后再投资，至少在产品合同上保留总回报机制",
+    "当前官方 FAQ 声明无佣金、托管费、管理费和转换费，但仍有点差、网络费、税费、扣缴和其他产品成本"
+  ],
+  "unresolved_product_risks": [
+    "账户和司法辖区资格尚未核验；产品只面向部分合格用户",
+    "不是直接 SPY 持仓，没有直接股东、SIPC 或 FDIC 保护",
+    "只有 53 根完整日线，无法从自身历史估计长期溢折价、流动性和跟踪残差",
+    "价格可因库存、做市、非美股时段、费用、税费和结算限制偏离底层 SPY",
+    "股息和公司行动依赖 multiplier、发行人处理、扣缴、舍入及平台数据语义",
+    "公司行动、市场中断、资格或合规变化可暂停交易、转换、转让或赎回",
+    "抵押披露是周期性而非实时，且不覆盖全部待结算与运营调整"
+  ],
+  "decision": "SELECTED_FOR_ACCOUNT_ELIGIBILITY_AND_FORWARD_PRODUCT_MAPPING_RESEARCH",
+  "capital_authorization": "NONE",
+  "runtime_change": "NONE",
+  "reason": "SPYB Spot 从产品结构上消除了 SPY 永续的长期 funding 与强平问题，是当前最值得验证的美国权益 Reference 产品表达；但其法律资格、产品历史、乘数、跟踪、深度和公司行动语义尚不足以进入可投资域或 Reference。",
+  "next_evidence": [
+    "使用不产生真实订单的官方账户或测试接口确认当前账户产品资格",
+    "冻结 bStocks 规则、multiplier、抵押披露、公司行动和完整费用税费语义",
+    "点时记录 SPYB 双边可成交报价，并与同期 SPY 总回报参考分离评价溢折价、深度和跟踪残差",
+    "只在产品映射能够被同一账户、Risk、Execution 和 Reference evaluator 回放后更新可投资域"
+  ],
+  "forbidden_inference": [
+    "不得因为 Spot 上线或当前点差较窄就认定长期可执行",
+    "不得把底层 SPY 长历史当成 SPYB 产品历史",
+    "不得把无 funding 解释为无成本或无发行人风险",
+    "不得自动替换 SPY 永续、创建订单或登记 Reference"
+  ]
+}
