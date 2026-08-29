@@ -83,6 +83,9 @@ function CapitalTimeline({
         </div>
       ) : tab === "analysis" ? (
         <div>
+          {forecastEvaluation?.world_model_increment_evidence ? (
+            <WorldModelIncrementLine evidence={forecastEvaluation.world_model_increment_evidence} />
+          ) : null}
           {forecastEvaluation?.capital_choice_evidence ? (
             <CapitalChoiceEvidenceLine evidence={forecastEvaluation.capital_choice_evidence} />
           ) : null}
@@ -108,6 +111,59 @@ function CapitalTimeline({
         </div>
       )}
     </section>
+  );
+}
+
+function WorldModelIncrementLine({
+  evidence,
+}: {
+  evidence: ForecastEvaluationEvidence["world_model_increment_evidence"];
+}) {
+  if (evidence.status === "NOT_STARTED") {
+    return (
+      <div className={styles.forecastEvidence}>
+        <b>世界认知的前瞻效果尚未开始结算</b>
+        <span>尚无固定时点的同窗预测；系统不会用事后回看替代真实证据。</span>
+      </div>
+    );
+  }
+  if (evidence.status === "AWAITING_FORECAST") {
+    return (
+      <div className={styles.forecastEvidence}>
+        <b>世界认知预测尚未完整产出</b>
+        <span>
+          已到 {evidence.due_panel_count} 个固定预测窗口，完整输出 {evidence.forecast_panel_count} 个，
+          未能估计 {evidence.unavailable_panel_count} 个，仍待完成 {evidence.pending_panel_count} 个。
+        </span>
+      </div>
+    );
+  }
+  if (evidence.status === "AWAITING_SETTLEMENT") {
+    return (
+      <div className={styles.forecastEvidence}>
+        <b>世界认知预测已冻结，等待行情结算</b>
+        <span>
+          已有 {evidence.forecast_panel_count} 个固定窗口完成预测；结算前不判断它是否有效。
+        </span>
+      </div>
+    );
+  }
+  const improvement = Number(evidence.mean_ranked_probability_improvement ?? 0);
+  const outcome = improvement > 0
+    ? "世界认知降低了概率误差"
+    : improvement < 0
+      ? "世界认知增加了概率误差"
+      : "世界认知尚未改变总体概率误差";
+  return (
+    <div className={styles.forecastEvidence}>
+      <b>{outcome}</b>
+      <span>
+        基于 {evidence.non_overlapping_panel_count} 个互不重叠的 72 小时窗口，
+        相对同一时点的统计先验：改善 {evidence.candidate_better_panel_count} 次，
+        持平 {evidence.equal_panel_count} 次，变差 {evidence.candidate_worse_panel_count} 次。
+        这里只衡量预测增量，尚不等于扣除费用后能够盈利。
+      </span>
+    </div>
   );
 }
 

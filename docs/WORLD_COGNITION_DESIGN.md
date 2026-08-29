@@ -271,6 +271,8 @@ AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定
 
 透明 prior 与 AI+prior 使用同一 DecisionSlot/Outcome 账本形成唯一前瞻对照。当前两者均只以 `RESEARCH` 身份运行，首个真实前瞻槽为 2026-08-30 00:00 UTC；在同槽结果、独立 Outcome 与费用后资本对照形成前，二者都没有 Portfolio 权限。对照不是多 Agent 投票，也不产生第二目标组合。评价既比较概率、校准和覆盖，也比较预测幅度是否足以在统一产品映射与完整成本后形成资本增量。若 posterior 只增加噪声、换手或费用，直接删除该行为或无增量输入，而不是增加门禁、置信乘数或更多叙事字段。
 
+现役读取层已经直接从公共 Forecast 义务、`Forecast`/`NO_ESTIMATE` 与来源无关的 `Outcome` 形成同槽配对，不读取已退役实验表，也不另建评价账本。它按 posterior 的完整 producer behavior 隔离 cohort：Prompt、模型、合同或输入行为换代后从新队列重新累计，不能把不同版本拼成漂亮均值；联合目标有任一项漏答就计为未完整产出，Outcome 未结算就只显示等待，不提前判定有效。结算后网页只用通俗措辞报告互不重叠窗口中相对透明 prior 的改善、持平和变差，并明确“概率增量不等于费用后盈利”。这补齐了认知到预测的可证伪闭环；预测到资本的独立费用后逻辑账户仍是后续未完成边界，在它真实运行前不得声称世界认知已经产生资本价值。
+
 同槽不等于把 Codex 串在数据与结算关键路径上。Quant prior 和 posterior 的完整模型输入在槽时冻结，posterior 由现有 Assessment worker 异步完成，Outcome 服务只负责独立结算；评价记录生成延迟并坚持原 information cutoff，晚到后不能偷看新事实。posterior 若晋升为唯一资本来源，仍只保留这一份 AI 调用，不得恢复纯 Context 或维持“双 AI 再投票”。
 
 异步 challenger 只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把正式输入、同槽 Quant 终态、posterior Prompt/Schema、研究 ProducerBinding 和截止时间冻结为一个内容寻址的 Temporal 子 Workflow 请求；Assessment worker 只消费该冻结请求，并把成功 Forecast 或明确 `NO_ESTIMATE` 写回公共 Forecast/Outcome 账本。成功输出自身就是任务终态，不另建重复 result 表、策略账户或候选组合。Quant 缺少某个目标时，准备器必须显式保留该缺失终态并立刻为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。一次联合调用仍可覆盖其余拥有真实 Quant prior 的目标。

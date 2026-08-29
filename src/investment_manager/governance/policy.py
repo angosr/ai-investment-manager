@@ -1,4 +1,5 @@
 from enum import StrEnum
+
 from pydantic import Field, model_validator
 
 from investment_manager.kernel.configuration import StrictConfig

@@ -11,12 +11,16 @@ from sqlalchemy.engine import Engine
 
 from investment_manager.execution.group.models import ExecutionGroup
 from investment_manager.execution.tables import execution_groups
+from investment_manager.forecast.context.increment_evidence import (
+    ForecastIncrementEvidence,
+    SqlForecastIncrementEvidenceReader,
+)
+from investment_manager.forecast.context.posterior_contract import POSTERIOR_PRODUCER_ID
 from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
 )
-from investment_manager.forecast.results import (
-    ForecastOutcomeStatus,
-)
+from investment_manager.forecast.program.prior import PRIOR_PRODUCER_ID
+from investment_manager.forecast.results import ForecastOutcomeStatus
 from investment_manager.portfolio.evaluation import (
     CapitalChoiceCase,
     CapitalChoiceEvidence,
@@ -44,14 +48,26 @@ class EvaluationDashboardReader:
     def __init__(self, engine: Engine, config: AppConfig) -> None:
         self._engine = engine
         self._config = config
-        self._trading_cost_cache_key: tuple[
-            int,
-            int,
-            datetime | None,
-            tuple[str, ...],
-        ] | None = None
+        self._trading_cost_cache_key: (
+            tuple[
+                int,
+                int,
+                datetime | None,
+                tuple[str, ...],
+            ]
+            | None
+        ) = None
         self._trading_cost_cache: TradingCostEvidence | None = None
         self._trading_cost_cache_lock = Lock()
+        self._world_model_increment = SqlForecastIncrementEvidenceReader(
+            engine=engine,
+            outcome_evaluation_version=(config.outcome_evaluation.target_forecast_version),
+            candidate_producer_id=POSTERIOR_PRODUCER_ID,
+            comparator_producer_id=PRIOR_PRODUCER_ID,
+        )
+
+    def world_model_increment_evidence(self) -> ForecastIncrementEvidence:
+        return self._world_model_increment.read()
 
     def capital_choice_evidence(self) -> CapitalChoiceEvidence | None:
         """Evaluate the newest decision whose complete candidate set has settled."""
@@ -230,6 +246,7 @@ class EvaluationDashboardReader:
             expected_fee_cost=expected_fee_cost,
         )
 
+
 def serialize_capital_choice_evidence(
     evidence: CapitalChoiceEvidence | None,
 ) -> dict:
@@ -300,6 +317,45 @@ def serialize_trading_cost_evidence(evidence: TradingCostEvidence) -> dict:
     return {"trading_cost_evidence": payload}
 
 
+def serialize_world_model_increment_evidence(
+    evidence: ForecastIncrementEvidence,
+) -> dict:
+    pair = evidence.pair
+
+    def optional_decimal(value: Decimal | None) -> str | None:
+        return None if value is None else str(value)
+
+    return {
+        "world_model_increment_evidence": {
+            "status": evidence.status.value,
+            "candidate_producer_id": evidence.candidate_producer_id,
+            "comparator_producer_id": evidence.comparator_producer_id,
+            "candidate_behavior_id": evidence.candidate_behavior_id,
+            "due_panel_count": evidence.due_panel_count,
+            "forecast_panel_count": evidence.forecast_panel_count,
+            "unavailable_panel_count": evidence.unavailable_panel_count,
+            "pending_panel_count": evidence.pending_panel_count,
+            "settled_panel_count": pair.settled_panel_count,
+            "paired_target_count": pair.paired_target_count,
+            "non_overlapping_panel_count": pair.non_overlapping_panel_count,
+            "candidate_better_panel_count": pair.candidate_better_panel_count,
+            "equal_panel_count": pair.equal_panel_count,
+            "candidate_worse_panel_count": pair.candidate_worse_panel_count,
+            "mean_ranked_probability_improvement": optional_decimal(
+                pair.mean_ranked_probability_improvement
+            ),
+            "ranked_probability_improvement_lower_bound": optional_decimal(
+                pair.ranked_probability_improvement_lower_bound
+            ),
+            "ranked_probability_improvement_upper_bound": optional_decimal(
+                pair.ranked_probability_improvement_upper_bound
+            ),
+            "mean_max_bucket_probability_delta": optional_decimal(
+                pair.mean_max_bucket_probability_delta
+            ),
+            "mean_expected_gross_bps_delta": optional_decimal(pair.mean_expected_gross_bps_delta),
+        }
+    }
 
 
 def _iso(value: datetime | None) -> str | None:

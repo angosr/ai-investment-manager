@@ -459,6 +459,27 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             "median_holding_seconds": None,
             "maximum_holding_seconds": None,
         },
+        "world_model_increment_evidence": {
+            "status": "NOT_STARTED",
+            "candidate_producer_id": "world-model-posterior",
+            "comparator_producer_id": "rolling-unconditional-prior",
+            "candidate_behavior_id": None,
+            "due_panel_count": 0,
+            "forecast_panel_count": 0,
+            "unavailable_panel_count": 0,
+            "pending_panel_count": 0,
+            "settled_panel_count": 0,
+            "paired_target_count": 0,
+            "non_overlapping_panel_count": 0,
+            "candidate_better_panel_count": 0,
+            "equal_panel_count": 0,
+            "candidate_worse_panel_count": 0,
+            "mean_ranked_probability_improvement": None,
+            "ranked_probability_improvement_lower_bound": None,
+            "ranked_probability_improvement_upper_bound": None,
+            "mean_max_bucket_probability_delta": None,
+            "mean_expected_gross_bps_delta": None,
+        },
     }
     assert bad_assessment_detail.json()["synthesis"] == bad_assessment.synthesis
     assert capital_rows.status_code == 200
@@ -587,9 +608,7 @@ def test_event_api_projects_latest_normalized_revision_once(
     response = asyncio.run(read_events())
 
     assert response.status_code == 200
-    assert [item["event_id"] for item in response.json()["events"]] == [
-        "NEWS:event-normalizer-v2"
-    ]
+    assert [item["event_id"] for item in response.json()["events"]] == ["NEWS:event-normalizer-v2"]
 
 
 def test_dashboard_accounts_use_the_runtime_release_identity(app_config, tmp_path) -> None:

@@ -10,6 +10,10 @@ from temporalio.testing import WorkflowEnvironment
 
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
 from investment_manager.forecast.codex.router import AnalystResult
+from investment_manager.forecast.context.increment_evidence import (
+    ForecastIncrementStatus,
+    SqlForecastIncrementEvidenceReader,
+)
 from investment_manager.forecast.context.posterior_analyst import (
     CodexContextPosteriorAnalyst,
     PosteriorRunBundleBuilder,
@@ -49,14 +53,21 @@ from investment_manager.forecast.models import (
     ContextVerificationTest,
 )
 from investment_manager.forecast.program.baseline import load_forecast_baseline
-from investment_manager.forecast.program.prior import RollingPriorForecastProducer
+from investment_manager.forecast.program.prior import (
+    PRIOR_PRODUCER_ID,
+    RollingPriorForecastProducer,
+)
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import (
+    ForecastLegOutcome,
     ForecastMechanismContribution,
     ForecastMechanismEffect,
+    ForecastOutcome,
+    ForecastOutcomeStatus,
 )
 from investment_manager.forecast.tables import forecasts as forecast_rows
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketQuote
 from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
@@ -521,6 +532,96 @@ def test_posterior_execution_records_joint_forecasts_and_reuses_them(
     assert replayed.reused_authoritative is True
     assert replayed.forecast_ids == first.forecast_ids
     assert analyst.calls == 1
+
+
+def test_posterior_increment_is_scored_only_after_shared_outcomes_settle(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, engine, frozen, completed_at = _execution_fixture(
+        base_app_config
+    )
+    application = ContextPosteriorApplication(
+        analyst=_ExecutionAnalyst(
+            preparation.producer_behavior_id,
+            AnalystResult(
+                True,
+                _output(frozen, change=True, contribute=True),
+                "CODEX_ANALYSIS_SUCCEEDED",
+                attempts=1,
+                completed_at=completed_at,
+                run_id="posterior-evidence-run-1",
+            ),
+        ),
+        contracts=contracts,
+        forecasts=forecasts,
+        market=market,
+        maximum_quote_age_seconds=300,
+        clock=lambda: SLOT_AT + timedelta(minutes=3),
+    )
+    application.execute(
+        frozen,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+    reader = SqlForecastIncrementEvidenceReader(
+        engine=engine,
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        candidate_producer_id="world-model-posterior",
+        comparator_producer_id=PRIOR_PRODUCER_ID,
+    )
+
+    pending = reader.read()
+
+    assert pending.status == ForecastIncrementStatus.AWAITING_SETTLEMENT
+    assert pending.due_panel_count == 1
+    assert pending.forecast_panel_count == 1
+    assert pending.pair.settled_panel_count == 0
+
+    for target in frozen.targets:
+        gross_return = Decimal("100")
+        realized = next(
+            item.bucket_id
+            for item in target.contract.outcome_buckets
+            if (item.lower_bps is None or gross_return >= item.lower_bps)
+            and (item.upper_bps is None or gross_return < item.upper_bps)
+        )
+        instrument = target.contract.target.legs[0].instrument
+        forecasts.record_outcome(
+            ForecastOutcome(
+                outcome_id=stable_id(
+                    "forecast_outcome",
+                    target.slot.slot_id,
+                    "forecast-target-outcome-v1",
+                ),
+                contract_id=target.contract.contract_id,
+                decision_slot_id=target.slot.slot_id,
+                evaluation_version="forecast-target-outcome-v1",
+                status=ForecastOutcomeStatus.SETTLED,
+                information_cutoff_at=target.slot.information_cutoff_at,
+                evaluation_at=target.slot.evaluation_at,
+                settled_at=target.slot.evaluation_at + timedelta(seconds=1),
+                legs=(
+                    ForecastLegOutcome(
+                        instrument_id=instrument.key,
+                        direction=target.contract.target.legs[0].direction,
+                        gross_weight=Decimal("1"),
+                        reference_price=Decimal("100"),
+                        exit_price=Decimal("101"),
+                        price_return_bps=gross_return,
+                    ),
+                ),
+                gross_target_return_bps=gross_return,
+                realized_bucket_id=realized,
+                reason_code="GROSS_TARGET_RETURN_AVAILABLE",
+            )
+        )
+
+    settled = reader.read()
+
+    assert settled.status == ForecastIncrementStatus.EVIDENCE_AVAILABLE
+    assert settled.pair.settled_panel_count == 1
+    assert settled.pair.non_overlapping_panel_count == 1
+    assert settled.pair.paired_target_count == 2
+    assert settled.pair.mean_max_bucket_probability_delta == Decimal("0.01")
 
 
 def test_posterior_execution_recovers_partial_joint_write_without_second_ai_call(

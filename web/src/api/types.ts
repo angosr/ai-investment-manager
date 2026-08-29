@@ -206,6 +206,27 @@ export interface AssessmentFeed {
 }
 
 export interface ForecastEvaluationEvidence {
+  world_model_increment_evidence: {
+    status: "NOT_STARTED" | "AWAITING_FORECAST" | "AWAITING_SETTLEMENT" | "EVIDENCE_AVAILABLE";
+    candidate_producer_id: string;
+    comparator_producer_id: string;
+    candidate_behavior_id: string | null;
+    due_panel_count: number;
+    forecast_panel_count: number;
+    unavailable_panel_count: number;
+    pending_panel_count: number;
+    settled_panel_count: number;
+    paired_target_count: number;
+    non_overlapping_panel_count: number;
+    candidate_better_panel_count: number;
+    equal_panel_count: number;
+    candidate_worse_panel_count: number;
+    mean_ranked_probability_improvement: string | null;
+    ranked_probability_improvement_lower_bound: string | null;
+    ranked_probability_improvement_upper_bound: string | null;
+    mean_max_bucket_probability_delta: string | null;
+    mean_expected_gross_bps_delta: string | null;
+  };
   capital_choice_evidence: {
     evaluation_version: string;
     capital_behavior_id: string;
