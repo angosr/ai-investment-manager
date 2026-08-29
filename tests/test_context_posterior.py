@@ -14,6 +14,9 @@ from investment_manager.forecast.context.posterior_contract import (
     finalize_posterior,
     posterior_output_schema,
 )
+from investment_manager.forecast.context.posterior_preparation import (
+    ContextPosteriorPreparation,
+)
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import ForecastPriceAnchor
 from investment_manager.forecast.models import (
@@ -72,7 +75,7 @@ def _prior_targets():
         maximum_quote_age_seconds=300,
         clock=lambda: SLOT_AT + timedelta(minutes=1),
     ).produce(as_of=SLOT_AT + timedelta(minutes=1))
-    return tuple(
+    targets = tuple(
         PosteriorPriorTarget(
             contract=contracts.contract(item.contract_id),
             slot=contracts.slot(item.decision_slot_id),
@@ -80,6 +83,7 @@ def _prior_targets():
         )
         for item in prior
     )
+    return contracts, forecasts, targets
 
 
 def _world_model() -> ContextAssessment:
@@ -126,7 +130,7 @@ def _input(*, eligible: bool = True) -> ContextPosteriorInput:
         information_cutoff_at=SLOT_AT,
         world_model=_world_model(),
         eligible_mechanism_ids=("structural-liquidity-1",) if eligible else (),
-        targets=_prior_targets(),
+        targets=_prior_targets()[2],
     )
 
 
@@ -255,4 +259,88 @@ def test_posterior_schema_is_bounded_to_frozen_contracts_and_mechanisms() -> Non
             "maxItems"
         ]
         == 0
+    )
+
+
+class _AssessmentFacts:
+    def __init__(self, world_model):
+        self.world_model = world_model
+
+    def latest_before(self, *, analysis_scope, as_of):
+        assert analysis_scope == "primary-portfolio"
+        assert as_of == SLOT_AT
+        return self.world_model
+
+    def packet_for_assessment(self, assessment_id):
+        assert assessment_id == self.world_model.assessment_id
+        fact = type("Fact", (), {"revision_id": "fact-1"})()
+        return type("Packet", (), {"facts": (fact,), "intelligence_events": ()})()
+
+    def mechanism_observations(self, assessment_id):
+        assert assessment_id == self.world_model.assessment_id
+        return ()
+
+
+def _preparation(base_app_config, world_model):
+    contract_store, forecast_store, targets = _prior_targets()
+    contracts = tuple(
+        sorted((item.contract for item in targets), key=lambda item: item.contract_id)
+    )
+    return (
+        ContextPosteriorPreparation(
+            contracts=contracts,
+            runtime=base_app_config.codex_runtime,
+            analysis_scope="primary-portfolio",
+            activated_at=SLOT_AT - timedelta(hours=1),
+            contract_store=contract_store,
+            forecast_store=forecast_store,
+            assessments=_AssessmentFacts(world_model),
+        ),
+        contract_store,
+        forecast_store,
+        targets,
+    )
+
+
+def test_preparation_records_research_obligations_and_structural_eligibility(
+    base_app_config,
+) -> None:
+    preparation, contract_store, _forecast_store, targets = _preparation(
+        base_app_config,
+        _world_model(),
+    )
+
+    frozen = preparation.prepare(
+        tuple(item.prior for item in targets),
+        as_of=SLOT_AT + timedelta(minutes=2),
+    )
+
+    assert frozen is not None
+    assert frozen.eligible_mechanism_ids == ("structural-liquidity-1",)
+    for target in frozen.targets:
+        binding = preparation.binding(target.contract)
+        assert contract_store.latest_obligated_slot_at(binding_id=binding.binding_id) == SLOT_AT
+
+
+def test_preparation_records_no_estimate_when_world_model_was_not_available(
+    base_app_config,
+) -> None:
+    preparation, _contract_store, forecast_store, targets = _preparation(
+        base_app_config,
+        None,
+    )
+
+    assert (
+        preparation.prepare(
+            tuple(item.prior for item in targets),
+            as_of=SLOT_AT + timedelta(minutes=2),
+        )
+        is None
+    )
+    assert all(
+        forecast_store.no_estimate_exists(
+            decision_slot_id=item.slot.slot_id,
+            producer_behavior_id=preparation.producer_behavior_id,
+        )
+        for item in targets
     )
