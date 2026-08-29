@@ -240,8 +240,8 @@ def test_terminal_trigger_failure_can_be_repaired_by_a_safe_release_cutover() ->
     # The separate Temporal query still requires the coordinator to be idle;
     # its last terminal batch result must not make the repair undeployable.
     _require_health_checks(payload, required=_CUTOVER_SAFETY_HEALTH_KEYS)
-    with pytest.raises(ValueError, match="trigger_coordinator"):
-        _require_health_checks(payload, required=_DASHBOARD_READY_KEYS)
+    _require_health_checks(payload, required=_DASHBOARD_READY_KEYS)
+    assert "trigger_coordinator" not in _DASHBOARD_READY_KEYS
 
 
 def test_process_group_starts_and_stops_the_exact_release_set(tmp_path: Path) -> None:

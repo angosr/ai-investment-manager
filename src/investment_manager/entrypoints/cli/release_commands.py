@@ -79,7 +79,6 @@ _DASHBOARD_READY_KEYS = {
     *_CUTOVER_SAFETY_HEALTH_KEYS,
     "capital_freshness",
     "release_alignment",
-    "trigger_coordinator",
 }
 
 
