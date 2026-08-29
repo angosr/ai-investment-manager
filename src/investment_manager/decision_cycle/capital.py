@@ -126,10 +126,6 @@ class CapitalProductPayoffProjector(Protocol):
     def for_source(self, source_forecast_id: str) -> tuple[ProductPayoffProjection, ...]: ...
 
 
-class CashYieldEvidenceObserver(Protocol):
-    def observe(self, *, preview_amount: Decimal) -> object: ...
-
-
 @dataclass(frozen=True, slots=True)
 class CapitalForecastSource:
     """One contract/product source, optionally authorized to add capital."""
@@ -196,7 +192,6 @@ class CapitalCycleService:
         decisions: PortfolioDecisionPipeline,
         execution: TradePlanExecutionPipeline,
         cycle_records: SqlCapitalCycleStore,
-        cash_yield_observer: CashYieldEvidenceObserver | None = None,
     ) -> None:
         families = tuple(item.contract.outcome_family_id for item in forecast_sources)
         if tuple(sorted(set(families))) != tuple(sorted(families)):
@@ -220,7 +215,6 @@ class CapitalCycleService:
         self._decisions = decisions
         self._execution = execution
         self._cycle_records = cycle_records
-        self._cash_yield_observer = cash_yield_observer
 
     @property
     def portfolio_id(self) -> str:
@@ -293,7 +287,6 @@ class CapitalCycleService:
             # noise and has no risk or investment content.  A review that just
             # executed an exit is materially different even though its final
             # account is now all cash, and must continue into `_finish`.
-            self._observe_cash_yield(account)
             return result
         return self._finish(
             result=result,
@@ -640,24 +633,7 @@ class CapitalCycleService:
                 reason_codes=reason_codes,
             )
         )
-        self._observe_cash_yield(account)
         return result
-
-    def _observe_cash_yield(self, account: PortfolioAccountSnapshot) -> None:
-        observer = self._cash_yield_observer
-        preview_amount = min(account.cash_balance, account.equity)
-        if observer is None or preview_amount <= 0:
-            return
-        try:
-            observer.observe(preview_amount=preview_amount)
-        except Exception as exc:
-            logger.warning(
-                "cash yield evidence unavailable; capital result remains authoritative",
-                extra={
-                    "portfolio_id": account.portfolio_id,
-                    "error_class": type(exc).__name__,
-                },
-            )
 
     def _recorded_result(
         self,
@@ -1200,7 +1176,6 @@ def assemble_capital_cycle(
     venue: ProductOrderVenue,
     initial_cash: Decimal,
     forecast_sources: tuple[CapitalForecastSource, ...] | None = None,
-    cash_yield_observer: CashYieldEvidenceObserver | None = None,
 ) -> CapitalCycleService:
     if not config.capital.enabled:
         raise ValueError("Capital cycle 未启用")
@@ -1261,5 +1236,4 @@ def assemble_capital_cycle(
             portfolio_store=portfolio,
         ),
         cycle_records=SqlCapitalCycleStore(engine),
-        cash_yield_observer=cash_yield_observer,
     )

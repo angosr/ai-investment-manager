@@ -92,6 +92,8 @@ Evidence、State、WorldModel、Forecast、PortfolioTarget、RiskDecision、订�
 
 Reference beta、主动偏离以及 Risk/Execution/成本造成的保留或损耗分别展示，但最终只有一条可对账的总组合反事实和真实账户结果。相对现金、单资产被动暴露、模拟 PnL 和组件分数只是诊断；没有合格 Reference Policy 时，总组合盈利考试尚未开始。回放证明实现与历史适配，Mock 证明链路和模拟经济性，真实资本扩大必须依赖 Forecast 可用后真实 Venue 的订单、成交、费用、账户和风险结果。
 
+Reference 及其产品实现必须在不依赖候选 Alpha 输出的前提下独立成立；否则 Reference 会随被考察对象改变，或者形成“没有 Reference 不能评价 Alpha、没有 Alpha 不实现 Reference”的循环。Reference 组件可以用其自身的经济目标、现实义务、产品残差、完整成本、流动性和压力结果获得产品评价结论，但不能由此取得主动风险权限。某个 Reference 产品尚未可执行时，应先完成或拒绝这一产品假设，而不是运行更多 Forecast、模拟订单或 AI 调用来绕过缺口。
+
 ### 5.2 可选组件是否值得存在
 
 组件评价只用于归因和删除复杂度，不直接授予资本：

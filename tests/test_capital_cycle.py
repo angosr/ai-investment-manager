@@ -1037,37 +1037,6 @@ def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
     assert CapitalDashboardReader(engine, config).activity() == ()
 
 
-def test_cash_only_capital_review_records_read_only_yield_evidence() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    create_schema(engine)
-    config = load_config("config/investment-manager.shadow.yaml")
-    market = SqlMarketDataStore(engine)
-    _put_market(market, config, at=NOW, sequence=60)
-
-    class Observer:
-        def __init__(self):
-            self.amounts = []
-
-        def observe(self, *, preview_amount):
-            self.amounts.append(preview_amount)
-
-    observer = Observer()
-    _assemble_capital_cycle(
-        config,
-        engine,
-        forecast_sources=(),
-        cash_yield_observer=observer,
-    ).produce(
-        as_of=NOW,
-        cause_id="cash-yield-evidence",
-        trigger_batch_id="cash-yield-evidence",
-        symbol="BTCUSDT",
-        trigger_types=("HEARTBEAT",),
-    )
-
-    assert observer.amounts == [Decimal("10000")]
-
-
 def test_recovered_old_cadence_never_backdates_the_account_ledger() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)

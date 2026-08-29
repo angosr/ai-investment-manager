@@ -5,9 +5,6 @@ capital:
   # 当前没有通过成本下界的 Forecast producer；Capital 仅维护账户与风险事实。
   candidate_capital_authorizations: []
 
-cash_yield_evidence:
-  enabled: true
-
 codex_runtime:
   enabled: true
   isolation_verified: true
