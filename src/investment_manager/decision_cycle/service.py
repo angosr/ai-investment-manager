@@ -18,8 +18,13 @@ from investment_manager.decision_cycle.trigger import (
 )
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
+from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.program.baseline import load_forecast_baseline
+from investment_manager.forecast.program.prior import RollingPriorForecastProducer
+from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.scheduling.application import ensure_trigger_plans
 from investment_manager.scheduling.repository import (
@@ -72,7 +77,11 @@ def assemble_trigger_service(
                 SqlContextAssessmentStore(engine) if config.assessment.enabled else None
             ),
             batch_recorder=repository,
-            program_forecast_producers=(),
+            program_forecast_producers=(
+                _assemble_forecast_prior(config=config, manifest=manifest, engine=engine)
+            )
+            if config.outcome_evaluation.forecast_prior.enabled
+            else (),
             program_batch_consumers=(
                 CapitalTriggerConsumer(
                     capital_consumer,
@@ -165,4 +174,25 @@ def _assemble_capital_consumer(
         engine,
         venue=execution.venue,
         initial_cash=execution.initial_cash,
+    )
+
+
+def _assemble_forecast_prior(
+    *,
+    config: AppConfig,
+    manifest: ReleaseManifest,
+    engine,
+) -> RollingPriorForecastProducer:
+    policy = config.outcome_evaluation.forecast_prior
+    artifact = load_forecast_baseline(policy.artifact_path)
+    if artifact.artifact_id != policy.artifact_id:
+        raise ValueError("Forecast prior 配置与制品身份不一致")
+    return RollingPriorForecastProducer(
+        artifact=artifact,
+        market=SqlMarketDataStore(engine),
+        contracts=SqlForecastContractStore(engine),
+        forecasts=SqlForecastStore(engine),
+        outcome_evaluation_version=config.outcome_evaluation.target_forecast_version,
+        activated_at=manifest.created_at,
+        maximum_quote_age_seconds=config.capital.risk.maximum_quote_age_seconds,
     )

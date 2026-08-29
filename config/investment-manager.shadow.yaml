@@ -12,6 +12,10 @@ codex_runtime:
 assessment:
   enabled: true
 
+outcome_evaluation:
+  forecast_prior:
+    enabled: true
+
 codex_accounts:
   accounts:
     - account_id: .codex
@@ -28,7 +32,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-capital-shadow-v80
+  version: world-capital-shadow-v81
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

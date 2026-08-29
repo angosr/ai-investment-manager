@@ -255,7 +255,7 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
 outcome_evaluation:
-  version: typed-outcome-settlement-v56
+  version: typed-outcome-settlement-v57
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   product_payoff_version: product-payoff-outcome-v1
@@ -263,6 +263,11 @@ outcome_evaluation:
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300
+  forecast_prior:
+    version: rolling-unconditional-prior-runtime-v1
+    enabled: false
+    artifact_path: evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json
+    artifact_id: forecast_baseline_7edf2cf090b47cdad2e5
 
 governance:
   version: governance-cycle-v2

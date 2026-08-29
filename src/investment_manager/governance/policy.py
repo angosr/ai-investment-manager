@@ -1,8 +1,16 @@
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import Field, model_validator
 
 from investment_manager.kernel.configuration import StrictConfig
+
+
+class ForecastPriorRuntimePolicy(StrictConfig):
+    version: str
+    enabled: bool = False
+    artifact_path: Path
+    artifact_id: str = Field(min_length=1)
 
 
 class OutcomeEvaluationPolicy(StrictConfig):
@@ -14,6 +22,7 @@ class OutcomeEvaluationPolicy(StrictConfig):
     window_hours: int = Field(default=24, ge=1, le=168)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)
+    forecast_prior: ForecastPriorRuntimePolicy
 
 
 class GovernancePolicy(StrictConfig):
