@@ -70,16 +70,16 @@ from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.schema import compose_metadata
 from investment_manager.settings import AppConfig, load_config
 
-_SAFETY_HEALTH_KEYS = {
+_CUTOVER_SAFETY_HEALTH_KEYS = {
     "capital_account",
     "capital_execution",
     "trigger_delivery",
-    "trigger_coordinator",
 }
 _DASHBOARD_READY_KEYS = {
-    *_SAFETY_HEALTH_KEYS,
+    *_CUTOVER_SAFETY_HEALTH_KEYS,
     "capital_freshness",
     "release_alignment",
+    "trigger_coordinator",
 }
 
 
@@ -477,7 +477,7 @@ def _require_safe_cutover(
     )
     response = httpx.get(url, timeout=5)
     response.raise_for_status()
-    _require_health_checks(response.json(), required=_SAFETY_HEALTH_KEYS)
+    _require_health_checks(response.json(), required=_CUTOVER_SAFETY_HEALTH_KEYS)
     asyncio.run(
         _require_trigger_coordinators_idle(
             config=config,

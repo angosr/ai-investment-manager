@@ -280,7 +280,7 @@ outcome_evaluation:
     artifact_id: forecast_baseline_7edf2cf090b47cdad2e5
 
 governance:
-  version: governance-cycle-v2
+  version: governance-cycle-v3
   snapshot_lookback_days: 90
   maximum_metric_windows: 30
   maximum_failed_experiments: 20

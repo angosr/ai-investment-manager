@@ -33,6 +33,8 @@
 
 新 Release 启动后先保持 warming。只有当前 Manifest 已接管 TriggerPlan、Worker 正常，且行情、信息与账户事实满足新鲜度，才允许切换只读入口；不能单纯以进程在线宣称 ready。若 Pipeline 与 ProducerBehavior 均未改变，发布应重绑定现有 TriggerPlan 并延续其节拍与 cohort，不得为制造“新版本行动”重算既有事实。
 
+切流前必须确认账户、非终态执行、到期投递和 Temporal Coordinator 的当前 `active_batch_id` 安全；上一批已经终态失败只是一项待修复事实，不能反过来禁止部署修复它的 Release。候选仍必须由自己的 Coordinator、Worker、数据和只读入口重新通过完整 readiness，不能继承旧版本的失败状态或健康记录。
+
 冻结与测试完成后只使用一个现役发布入口，不再手工依次后台启动六个命令：
 
 ```bash

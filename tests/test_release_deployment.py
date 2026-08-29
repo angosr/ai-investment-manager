@@ -12,8 +12,11 @@ from pydantic import ValidationError
 
 from investment_manager.entrypoints.cli import release_commands
 from investment_manager.entrypoints.cli.release_commands import (
+    _CUTOVER_SAFETY_HEALTH_KEYS,
+    _DASHBOARD_READY_KEYS,
     _initialize_assembly_database,
     _recover_ready_failure,
+    _require_health_checks,
     _require_trigger_coordinators_idle,
     _required_release_artifacts,
     _start_candidate_or_rollback,
@@ -220,6 +223,25 @@ def test_release_cutover_requires_every_trigger_coordinator_to_be_idle(
                 manifest_id="release-current",
             )
         )
+
+
+def test_terminal_trigger_failure_can_be_repaired_by_a_safe_release_cutover() -> None:
+    payload = {
+        "checks": (
+            {"key": "capital_account", "state": "ok"},
+            {"key": "capital_execution", "state": "ok"},
+            {"key": "trigger_delivery", "state": "ok"},
+            {"key": "capital_freshness", "state": "ok"},
+            {"key": "release_alignment", "state": "ok"},
+            {"key": "trigger_coordinator", "state": "bad"},
+        )
+    }
+
+    # The separate Temporal query still requires the coordinator to be idle;
+    # its last terminal batch result must not make the repair undeployable.
+    _require_health_checks(payload, required=_CUTOVER_SAFETY_HEALTH_KEYS)
+    with pytest.raises(ValueError, match="trigger_coordinator"):
+        _require_health_checks(payload, required=_DASHBOARD_READY_KEYS)
 
 
 def test_process_group_starts_and_stops_the_exact_release_set(tmp_path: Path) -> None:
