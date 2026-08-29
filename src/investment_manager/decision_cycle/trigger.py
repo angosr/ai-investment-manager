@@ -190,6 +190,8 @@ class TriggerDispatchBuilder:
         if owns_portfolio_assessment:
             for producer in self._program_forecast_producers:
                 cadence_results.extend(producer.produce(as_of=as_of))
+            if self._posterior_preparation is not None:
+                self._posterior_preparation.activate()
         cadence_cutoffs = tuple(sorted({item.information_cutoff_at for item in cadence_results}))
         prior_panels.extend(
             (

@@ -90,7 +90,7 @@ ForecastContract 还必须通过唯一 Product 投影做“资本分辨率”验
 
 用于预测或资本权限的 Outcome 经济起点不得早于 Forecast 实际可用时点；来源需要同口径比较时，合同可以冻结一个晚于共同完成期限的统一决策锚点。`information_cutoff → Forecast 可用` 期间已经发生的收益不可交易，采用更早起点的历史标签只能作为行为诊断，不能贡献权限证据。Portfolio 与资本 PnL 始终从当时真实可成交锚点或实际成交开始。
 
-ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不可变地绑定“哪个 producer behavior 对该槽负有应答义务”。某行为的覆盖率分母只包含分配给该行为且已经到期的槽，分子包含同一批槽的 Forecast 与明确 `NO_ESTIMATE`；不得把旧行为槽计入新行为分母，也不得从第一条成功结果反推行为起点以隐藏漏报。ProducerBinding 首次登记时冻结行为激活点，后续仅部署代码或前端的新 Release 继续使用该激活点；只有 producer behavior 身份改变才建立新行为起点。激活前已经开始的槽不得追记为漏报。
+ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不可变地绑定“哪个 producer behavior 对该槽负有应答义务”。某行为的覆盖率分母只包含分配给该行为且已经到期的槽，分子包含同一批槽的 Forecast 与明确 `NO_ESTIMATE`；不得把旧行为槽计入新行为分母，也不得从第一条成功结果反推行为起点以隐藏漏报。ProducerBinding 首次登记时冻结行为激活点；登记行为身份不等于创建槽、义务或结果。组合所有者首次正常运行时必须同时登记已经装配的联合 prior 与 posterior，后续仅部署代码或前端的等价 Release 继续使用该激活点；只有 producer behavior 身份改变才建立新行为起点。激活前已经开始的槽不得追记为漏报。
 
 每个槽与 producer behavior 最多拥有一个终态结果：Forecast 或 `NO_ESTIMATE`。迟到 heartbeat、重启、Pipeline 切换和漏报恢复都只能确保该结果存在；若任一终态已经存在，必须原样接受并继续本轮账户复核，不能把已有 Forecast 改判为漏报，也不能因新 Pipeline 尚无资本回执而拒绝旧结果。
 

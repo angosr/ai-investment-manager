@@ -209,7 +209,7 @@ WorldModel 在以下情况更新：出现材料事实修订或意外事件；活
 
 WorldModel 更新时钟与 Forecast 槽时钟是两个领域概念，但共用唯一 TriggerCoordinator：前者来自材料变化和显式复核计划；后者来自合同 cadence，或冻结的材料状态触发政策。事件槽不是新闻到来就任意插入一次 AI，而是由点时 `State/Delta` 和 producer behavior 确定性地产生。每个槽在生产前冻结唯一来源、实际 delta 引用、Outcome、截止和失败处理；固定 cadence 与材料事件分别形成独立义务，时间接近也不得合并。触发政策不判断多空，也不读取账户；Heartbeat 只恢复已登记任务、遗漏终态、账户和风险复核，不能制造新样本。
 
-固定 cadence 的槽身份锚定在合同绝对时点，不随实际唤醒相位漂移。运行恢复必须从行为首次激活点继续枚举全部到期边界：仍在完成期限内的最近槽正常生成，已经超时的每个槽分别留下 `NO_ESTIMATE`。行为等价的 Release 复用原 ProducerBinding 激活时点；不得把新 Manifest 时间误当成新行为激活，也不得只取“当前最近槽”而让跨多个边界的停机区间从覆盖率中消失。联合 prior 的全部目标和同槽 posterior 由 mandate owner 一次编排，其他 symbol 的 heartbeat 不竞争创建半个组合槽。
+固定 cadence 的槽身份锚定在合同绝对时点，不随实际唤醒相位漂移。运行恢复必须从行为首次激活点继续枚举全部到期边界：仍在完成期限内的最近槽正常生成，已经超时的每个槽分别留下 `NO_ESTIMATE`。行为等价的 Release 复用原 ProducerBinding 激活时点；不得把新 Manifest 时间误当成新行为激活，也不得只取“当前最近槽”而让跨多个边界的停机区间从覆盖率中消失。联合 prior 的全部目标和同槽 posterior 由 mandate owner 一次编排；首个所有者批次只登记两者冻结身份而不制造未到期义务，其他 symbol 的 heartbeat 不竞争创建半个组合槽。
 
 `next_review_at` 只表示该机制下一次应被新事实复核的自然时间点，不是 WorldModel 的有效期，也不授予程序宣告机制失效的语义。复核到期后，上一份完整 WorldModel 仍是网页和普通材料更新前可获得的最新认知，不能被程序机械删除；但正式 Forecast 槽不把它当作本槽条件输入，而是按第 7 节用槽边界冻结的新 Packet 生成同截止 WorldModel。若这次生成失败，诚实记录本槽 `NO_ESTIMATE`，不能退回旧认知，也不能把 AI 自定复核时间当作数据时效。真正的数据时效由各输入事实自己的点时时效合同裁决，机制的反驳、延续或退休则由下一份 WorldModel 显式完成。
 

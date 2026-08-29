@@ -84,6 +84,11 @@ class ForecastResultStub:
 class RecordingPosteriorPreparation:
     def __init__(self) -> None:
         self.calls = []
+        self.activation_count = 0
+
+    def activate(self):
+        self.activation_count += 1
+        return ()
 
     def reserve(self, prior_results, *, as_of):
         self.calls.append((prior_results, as_of))
@@ -269,6 +274,7 @@ def test_trigger_builder_groups_recovered_cadence_results_by_cutoff(app_config) 
     assert tuple(
         tuple(item.information_cutoff_at for item in results) for results, _as_of in posterior.calls
     ) == ((earlier, earlier), (NOW, NOW))
+    assert posterior.activation_count == 1
 
 
 def test_non_owner_trigger_does_not_race_joint_cadence_producer(app_config) -> None:
@@ -290,10 +296,12 @@ def test_non_owner_trigger_does_not_race_joint_cadence_producer(app_config) -> N
         dedup_key="non-owner-heartbeat",
     )
     producer = RecordingForecastProducer()
+    posterior = RecordingPosteriorPreparation()
 
     TriggerDispatchBuilder(
         config=config,
         program_forecast_producers=(producer,),
+        posterior_preparation=posterior,
     ).build(
         build_trigger_batch(
             plan=plan,
@@ -304,6 +312,7 @@ def test_non_owner_trigger_does_not_race_joint_cadence_producer(app_config) -> N
     )
 
     assert producer.calls == []
+    assert posterior.activation_count == 0
 
 
 def test_qualified_information_event_creates_separate_material_forecast_panel(

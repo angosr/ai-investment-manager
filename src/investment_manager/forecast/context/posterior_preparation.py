@@ -75,6 +75,17 @@ class ContextPosteriorPreparation:
             permission=ForecastPermission.RESEARCH,
         )
 
+    def activate(self) -> tuple[ForecastProducerBinding, ...]:
+        """Register the frozen joint producer without inventing a Forecast slot."""
+
+        return tuple(
+            self.contract_store.resolve_binding(
+                self.binding(contract),
+                activated_at=self.activated_at,
+            )
+            for contract in self.contracts
+        )
+
     def reserve(
         self,
         prior_results: tuple[PriorResult, ...],
@@ -95,13 +106,7 @@ class ContextPosteriorPreparation:
         if len(cutoffs) != 1:
             raise ValueError("Posterior prior 结果必须共享信息截止")
         cutoff = next(iter(cutoffs))
-        posterior_bindings = {
-            contract.contract_id: self.contract_store.resolve_binding(
-                self.binding(contract),
-                activated_at=self.activated_at,
-            )
-            for contract in self.contracts
-        }
+        posterior_bindings = {binding.contract_id: binding for binding in self.activate()}
         joint_activation = max(
             self.contract_store.binding_activation_at(binding.binding_id)
             for binding in posterior_bindings.values()

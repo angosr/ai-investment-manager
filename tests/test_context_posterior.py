@@ -612,6 +612,31 @@ def test_equivalent_release_reuses_original_posterior_activation(base_app_config
     assert rebound == first
 
 
+def test_equivalent_release_reuses_activation_without_creating_an_obligation(
+    base_app_config,
+) -> None:
+    preparation, contracts, _forecasts, _targets, _market, _engine = _preparation(
+        base_app_config
+    )
+
+    bindings = preparation.activate()
+    rebound = replace(
+        preparation,
+        activated_at=SLOT_AT + timedelta(minutes=30),
+    ).activate()
+
+    assert len(bindings) == 2
+    assert rebound == bindings
+    assert all(
+        contracts.binding_activation_at(binding.binding_id) == preparation.activated_at
+        for binding in bindings
+    )
+    assert all(
+        contracts.latest_obligated_slot_at(binding_id=binding.binding_id) is None
+        for binding in bindings
+    )
+
+
 def test_posterior_behavior_identity_includes_prior_behavior(base_app_config) -> None:
     preparation, *_rest = _preparation(base_app_config)
     original = preparation.prior_bindings[0]
@@ -1346,6 +1371,9 @@ def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -
     class PosteriorPreparation:
         producer_behavior_id = "posterior-behavior-v1"
 
+        def activate(self):
+            return ()
+
         def reserve(self, prior_results, *, as_of):
             assert prior_results == tuple(item.prior for item in frozen.targets)
             assert as_of == SLOT_AT + timedelta(minutes=1)
@@ -1391,6 +1419,9 @@ def test_trigger_closes_reserved_posterior_when_world_packet_is_unavailable(
 
     class PosteriorPreparation:
         producer_behavior_id = "posterior-behavior-v1"
+
+        def activate(self):
+            return ()
 
         def reserve(self, prior_results, *, as_of):
             assert prior_results == tuple(item.prior for item in frozen.targets)
