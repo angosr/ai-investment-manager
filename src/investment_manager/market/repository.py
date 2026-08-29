@@ -17,6 +17,7 @@ from investment_manager.market.models import (
     InstrumentId,
     InstrumentProduct,
     MarketQuote,
+    MarketReferencePrice,
     MarketSnapshot,
     MarketTrade,
     SpotVenue,
@@ -34,6 +35,7 @@ from investment_manager.market.tables import (
     funding_settlements,
     market_bars,
     market_quotes,
+    market_reference_prices,
     market_tables,
     market_trades,
     perpetual_market_states,
@@ -48,6 +50,8 @@ logger = logging.getLogger(__name__)
 
 class MarketDataStore(Protocol):
     def put_quote(self, quote: MarketQuote) -> bool: ...
+
+    def put_reference_price(self, price: MarketReferencePrice) -> bool: ...
 
     def put_cross_venue_spot_quote(self, quote: CrossVenueSpotQuote) -> bool: ...
 
@@ -179,6 +183,10 @@ def _quote_market_facts(quote: MarketQuote) -> dict[str, Any]:
     return quote.model_dump(exclude={"observed_at", "source"}, mode="json")
 
 
+def _reference_price_market_facts(price: MarketReferencePrice) -> dict[str, Any]:
+    return price.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
 def _cross_venue_quote_facts(quote: CrossVenueSpotQuote) -> dict[str, Any]:
     return quote.model_dump(exclude={"observed_at", "source"}, mode="json")
 
@@ -232,6 +240,7 @@ def trade_at_or_before(
 @dataclass(slots=True)
 class InMemoryMarketDataStore:
     _quotes: dict[str, MarketQuote] = field(default_factory=dict)
+    _reference_prices: dict[str, MarketReferencePrice] = field(default_factory=dict)
     _cross_venue_quotes: dict[str, CrossVenueSpotQuote] = field(default_factory=dict)
     _trades: dict[tuple[str, int], MarketTrade] = field(default_factory=dict)
     _bars: dict[tuple[str, str, datetime], ClosedMarketBar] = field(default_factory=dict)
@@ -252,6 +261,18 @@ class InMemoryMarketDataStore:
                     raise ValueError("quote_id 冲突且事实不一致")
                 return False
             self._quotes[quote.quote_id] = quote
+            return True
+
+    def put_reference_price(self, price: MarketReferencePrice) -> bool:
+        with self._lock:
+            existing = self._reference_prices.get(price.reference_price_id)
+            if existing is not None:
+                if _reference_price_market_facts(
+                    existing
+                ) != _reference_price_market_facts(price):
+                    raise ValueError("reference_price_id 冲突且事实不一致")
+                return False
+            self._reference_prices[price.reference_price_id] = price
             return True
 
     def put_cross_venue_spot_quote(self, quote: CrossVenueSpotQuote) -> bool:
@@ -605,6 +626,36 @@ class SqlMarketDataStore:
                 quote
             ):
                 raise ValueError("quote_id 冲突且事实不一致") from None
+            return False
+
+    def put_reference_price(self, price: MarketReferencePrice) -> bool:
+        payload = price.model_dump(mode="json")
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(market_reference_prices).values(
+                        reference_price_id=price.reference_price_id,
+                        symbol=price.symbol,
+                        exchange_time=price.exchange_time,
+                        observed_at=price.observed_at,
+                        payload=payload,
+                    )
+                )
+            return True
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(market_reference_prices.c.payload).where(
+                        market_reference_prices.c.reference_price_id
+                        == price.reference_price_id
+                    )
+                ).scalar_one()
+            if _reference_price_market_facts(
+                MarketReferencePrice.model_validate(existing)
+            ) != _reference_price_market_facts(price):
+                raise ValueError(
+                    "reference_price_id 冲突且 ReferencePrice 事实不一致"
+                ) from None
             return False
 
     def put_cross_venue_spot_quote(self, quote: CrossVenueSpotQuote) -> bool:

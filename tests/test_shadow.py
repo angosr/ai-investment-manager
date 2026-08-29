@@ -34,6 +34,7 @@ def _shadow_config(app_config) -> AppConfig:
         "manual_approval_ref": None,
     }
     raw["market_data"]["symbols"] = ("BTCUSDT",)
+    raw["market_data"]["reference_price_symbols"] = ()
     raw["market_data"]["cross_venue_spot"]["products"] = (
         raw["market_data"]["cross_venue_spot"]["products"][0],
     )

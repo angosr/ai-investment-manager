@@ -61,6 +61,7 @@ class MarketDataPolicy(StrictConfig):
     symbols: tuple[str, ...] = Field(
         default=("BTCUSDT", "ETHUSDT"), min_length=1, max_length=20
     )
+    reference_price_symbols: tuple[str, ...] = ()
     interval: str = Field(
         default="5m", pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$"
     )
@@ -96,6 +97,17 @@ class MarketDataPolicy(StrictConfig):
             raise ValueError("行情 symbol 必须是大写字母数字")
         return symbols
 
+    @field_validator("reference_price_symbols")
+    @classmethod
+    def reference_price_symbols_must_be_canonical(
+        cls, symbols: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        if tuple(sorted(set(symbols))) != symbols:
+            raise ValueError("reference price symbols 必须唯一排序")
+        if any(not symbol.isalnum() or symbol != symbol.upper() for symbol in symbols):
+            raise ValueError("reference price symbol 必须是大写字母数字")
+        return symbols
+
     @model_validator(mode="after")
     def public_endpoints_and_backoff_must_be_safe(self):
         endpoint_pairs = {
@@ -109,6 +121,8 @@ class MarketDataPolicy(StrictConfig):
             raise ValueError("行情 REST 与 WebSocket 必须使用同一 Binance 官方环境")
         if self.reconnect_maximum_seconds < self.reconnect_initial_seconds:
             raise ValueError("行情最大重连间隔不得短于初始间隔")
+        if not set(self.reference_price_symbols).issubset(self.symbols):
+            raise ValueError("reference price symbols 必须属于 Spot 行情观测域")
         if self.perpetual_rest_base_url not in {
             "https://fapi.binance.com",
             "https://testnet.binancefuture.com",

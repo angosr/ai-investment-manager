@@ -19,6 +19,7 @@ assessment:
 market_data:
   version: binance-public-testnet-v3
   symbols: [BTCUSDT, ETHUSDT]
+  reference_price_symbols: []
   rest_base_url: https://testnet.binance.vision
   websocket_base_url: wss://stream.testnet.binance.vision
   perpetual_rest_base_url: https://testnet.binancefuture.com

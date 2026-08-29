@@ -22,6 +22,7 @@ from investment_manager.market.models import (
     InstrumentId,
     InstrumentProduct,
     MarketQuote,
+    MarketReferencePrice,
     MarketTrade,
     SpotVenue,
     TradFiMarket,
@@ -87,6 +88,26 @@ def _quote(at: datetime = NOW, *, update_id: int = 1) -> MarketQuote:
         ask_quantity="3",
         update_id=update_id,
         source="test",
+    )
+
+
+def _reference_price(
+    *,
+    exchange_time: datetime = NOW - timedelta(milliseconds=5),
+    observed_at: datetime = NOW,
+    price: str = "100",
+) -> MarketReferencePrice:
+    return MarketReferencePrice(
+        reference_price_id=stable_id(
+            "binance_spot_reference_price",
+            "SPYBUSDT",
+            exchange_time.isoformat(),
+        ),
+        symbol="SPYBUSDT",
+        exchange_time=exchange_time,
+        observed_at=observed_at,
+        price=price,
+        source="binance-spot-reference-price-websocket",
     )
 
 
@@ -774,6 +795,29 @@ def test_official_websocket_contract_parses_quote_trade_and_only_closed_bar() ->
     closed_bar = parser.parse(json.dumps(open_bar), observed_at=NOW)
     assert isinstance(closed_bar, ClosedMarketBar)
     assert closed_bar.taker_buy_base_volume == Decimal("6")
+
+
+def test_official_websocket_contract_parses_reference_price_without_fabricating_null() -> None:
+    parser = BinanceMessageParser()
+    exchange_time = NOW - timedelta(milliseconds=5)
+    payload = {
+        "stream": "spybusdt@referencePrice",
+        "data": {
+            "e": "referencePrice",
+            "s": "SPYBUSDT",
+            "r": "769.78",
+            "t": _millis(exchange_time),
+        },
+    }
+
+    price = parser.parse(json.dumps(payload), observed_at=NOW)
+
+    assert price == _reference_price(
+        exchange_time=exchange_time,
+        price="769.78",
+    )
+    payload["data"]["r"] = None
+    assert parser.parse(json.dumps(payload), observed_at=NOW) is None
 
 
 class FakeHttpTransport:
@@ -1628,6 +1672,13 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
         create_market_schema(engine)
         store = SqlMarketDataStore(engine)
     store.put_quote(_quote())
+    reference_price = _reference_price()
+    assert store.put_reference_price(reference_price)
+    assert not store.put_reference_price(reference_price)
+    with pytest.raises(ValueError, match="事实不一致"):
+        store.put_reference_price(
+            reference_price.model_copy(update={"price": Decimal("101")})
+        )
     store.put_trade(_trade())
     store.put_bar(_bar(NOW - timedelta(minutes=10)))
     store.put_bar(_bar(NOW - timedelta(minutes=5)))
@@ -2172,6 +2223,8 @@ def test_connector_uses_one_combined_public_stream_and_mock_stage_fails_closed(
     assert "btcusdt@bookTicker" in uri
     assert "btcusdt@aggTrade" in uri
     assert "btcusdt@kline_5m" in uri
+    assert "spybusdt@referencePrice" in uri
+    assert "btcusdt@referencePrice" not in uri
     with pytest.raises(ValueError, match="SHADOW"):
         assemble_shadow_market_stream(app_config, InMemoryMarketDataStore())
     shadow_config = app_config.model_copy(

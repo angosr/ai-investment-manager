@@ -12,6 +12,22 @@ market_quotes = Table(
 )
 Index("ix_market_quotes_symbol_observed", market_quotes.c.symbol, market_quotes.c.observed_at)
 
+market_reference_prices = Table(
+    "market_reference_prices",
+    metadata,
+    Column("reference_price_id", String(128), primary_key=True),
+    Column("symbol", String(32), nullable=False),
+    Column("exchange_time", DateTime(timezone=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_market_reference_prices_symbol_time",
+    market_reference_prices.c.symbol,
+    market_reference_prices.c.exchange_time,
+    market_reference_prices.c.observed_at,
+)
+
 cross_venue_spot_quotes = Table(
     "cross_venue_spot_quotes",
     metadata,
@@ -138,6 +154,7 @@ Index(
 
 market_tables = (
     market_quotes,
+    market_reference_prices,
     cross_venue_spot_quotes,
     market_trades,
     market_bars,

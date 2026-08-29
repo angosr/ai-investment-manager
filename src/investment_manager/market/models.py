@@ -217,6 +217,32 @@ class MarketQuote(FrozenModel):
         return self
 
 
+class MarketReferencePrice(FrozenModel):
+    """First-seen exchange reference price; never an executable quote."""
+
+    reference_price_id: str = Field(min_length=1)
+    symbol: str = Field(pattern=r"^[A-Z0-9]+$")
+    exchange_time: datetime
+    observed_at: datetime
+    price: PositiveDecimal
+    source: Literal["binance-spot-reference-price-websocket"]
+
+    _utc_exchange_time = field_validator("exchange_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_visibility_must_match(self):
+        if self.exchange_time > self.observed_at:
+            raise ValueError("ReferencePrice exchange_time 不能晚于首次观察时间")
+        if self.reference_price_id != stable_id(
+            "binance_spot_reference_price",
+            self.symbol,
+            self.exchange_time.isoformat(),
+        ):
+            raise ValueError("ReferencePrice 身份与交易所时间不一致")
+        return self
+
+
 class CrossVenueSpotQuote(FrozenModel):
     """Immutable first-seen L1 quote from an independent spot venue."""
 
@@ -402,4 +428,4 @@ class ClosedMarketBar(FrozenModel):
         )
 
 
-MarketEvent = MarketQuote | MarketTrade | ClosedMarketBar
+MarketEvent = MarketQuote | MarketReferencePrice | MarketTrade | ClosedMarketBar

@@ -22,6 +22,7 @@ from investment_manager.market.models import (
     CrossVenueSpotQuote,
     MarketEvent,
     MarketQuote,
+    MarketReferencePrice,
     MarketTrade,
     SpotVenue,
 )
@@ -104,7 +105,7 @@ class MarketShockDetector:
     def observe(self, event: MarketEvent) -> bool:
         if self._trigger_symbols is not None and event.symbol not in self._trigger_symbols:
             return False
-        if isinstance(event, MarketQuote):
+        if isinstance(event, (MarketQuote, MarketReferencePrice)):
             return False
         if isinstance(event, ClosedMarketBar):
             state = self._windows.get(event.symbol)
@@ -279,6 +280,23 @@ class BinanceMessageParser:
                 ask_quantity=Decimal(str(data["A"])),
                 update_id=update_id,
                 source="binance-websocket",
+            )
+        if data.get("e") == "referencePrice" or "@referenceprice" in lower_stream:
+            raw_price = data.get("r")
+            if raw_price is None:
+                return None
+            exchange_time = _from_milliseconds(int(data["t"]))
+            return MarketReferencePrice(
+                reference_price_id=stable_id(
+                    "binance_spot_reference_price",
+                    symbol,
+                    exchange_time.isoformat(),
+                ),
+                symbol=symbol,
+                exchange_time=exchange_time,
+                observed_at=observed_at,
+                price=Decimal(str(raw_price)),
+                source="binance-spot-reference-price-websocket",
             )
         if data.get("e") == "aggTrade":
             aggregate_trade_id = int(data["a"])
@@ -727,6 +745,10 @@ class BinanceWebSocketConnector:
                 f"{symbol.lower()}@kline_{self.policy.interval}",
             )
         ]
+        streams.extend(
+            f"{symbol.lower()}@referencePrice"
+            for symbol in self.policy.reference_price_symbols
+        )
         return f"{self.policy.websocket_base_url}/stream?streams={'/'.join(streams)}"
 
     @asynccontextmanager
@@ -824,6 +846,15 @@ class BinanceMarketStreamService:
             ):
                 return False
             return self._store.put_quote(event)
+        elif isinstance(event, MarketReferencePrice):
+            if not self._persistence_due(
+                "reference-price",
+                event.symbol,
+                event.observed_at,
+                self._policy.quote_persist_interval_ms,
+            ):
+                return False
+            return self._store.put_reference_price(event)
         elif isinstance(event, MarketTrade):
             if not self._persistence_due(
                 "trade",

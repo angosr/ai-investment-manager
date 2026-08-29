@@ -220,6 +220,89 @@ def freeze_executable_quotes_command(
     )
 
 
+@app.command("freeze-reference-product-mapping")
+def freeze_reference_product_mapping_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[str, typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL")],
+    instrument_key: Annotated[str, typer.Option()],
+    start: Annotated[str, typer.Option(help="带时区的 ISO-8601 起点（含）")],
+    end: Annotated[str, typer.Option(help="带时区的 ISO-8601 终点（不含）")],
+    reference_calculation_type: Annotated[str, typer.Option()],
+    reference_external_calculation_id: Annotated[int, typer.Option(min=1)],
+    sampling_interval_seconds: Annotated[int, typer.Option(min=1)] = 60,
+    maximum_reference_age_ms: Annotated[int, typer.Option(min=1)] = 3_000,
+    catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/reference-product-mappings"
+    ),
+) -> None:
+    """冻结候选 Spot 报价与官方同步 ReferencePrice 的点时映射证据。"""
+
+    from investment_manager.market.models import InstrumentProduct
+    from investment_manager.research.reference_product_mapping import (
+        freeze_reference_product_mapping,
+        store_reference_product_mapping,
+    )
+
+    loaded = load_config(config)
+    instruments = tuple(
+        item
+        for item in _observed_market_instruments(loaded)
+        if item.key == instrument_key
+    )
+    if len(instruments) != 1 or instruments[0].product != InstrumentProduct.SPOT:
+        raise typer.BadParameter("instrument-key 必须唯一属于 Market Spot 观测产品")
+    instrument = instruments[0]
+    if instrument.symbol not in loaded.market_data.reference_price_symbols:
+        raise typer.BadParameter("候选未启用官方 ReferencePrice 观测")
+    engine = _runtime_engine(database_url)
+    try:
+        artifact = freeze_reference_product_mapping(
+            engine,
+            instrument=instrument,
+            start=_parse_utc_option(start, name="start"),
+            end=_parse_utc_option(end, name="end"),
+            sampling_interval_seconds=sampling_interval_seconds,
+            maximum_reference_age_ms=maximum_reference_age_ms,
+            reference_contract=(
+                "https://developers.binance.com/docs/binance-spot-api-docs/"
+                "rest-api/market-data-endpoints#reference-price"
+            ),
+            reference_calculation_type=reference_calculation_type,
+            reference_external_calculation_id=reference_external_calculation_id,
+            captured_at=datetime.now(UTC),
+        )
+        target = store_reference_product_mapping(artifact, root=catalog)
+    finally:
+        engine.dispose()
+    typer.echo(
+        json.dumps(
+            {
+                "artifact_id": artifact.artifact_id,
+                "instrument_key": artifact.instrument.key,
+                "sampled_quote_count": artifact.sampled_quote_count,
+                "matched_quote_count": artifact.matched_quote_count,
+                "matched_fraction": str(artifact.matched_fraction),
+                "mean_absolute_mid_premium_bps": str(
+                    artifact.mean_absolute_mid_premium_bps
+                ),
+                "maximum_absolute_mid_premium_bps": str(
+                    artifact.maximum_absolute_mid_premium_bps
+                ),
+                "mean_spread_bps": str(artifact.mean_spread_bps),
+                "minimum_bid_top_notional": str(
+                    artifact.minimum_bid_top_notional
+                ),
+                "minimum_ask_top_notional": str(
+                    artifact.minimum_ask_top_notional
+                ),
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("fetch-economic-series")
 def fetch_economic_series_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],

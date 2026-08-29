@@ -101,13 +101,14 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
     assert config.decision_state.packet_policy.maximum_market_age_seconds == 180
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.market_data.version == "binance-public-shadow-v17"
+    assert config.market_data.version == "binance-public-shadow-v18"
     assert config.market_data.symbols == (
         "BTCUSDT",
         "ETHUSDT",
         "PAXGUSDT",
         "SPYBUSDT",
     )
+    assert config.market_data.reference_price_symbols == ("SPYBUSDT",)
     assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
     observed = {item.key for item in observed_market_instruments(config)}
     assert "BINANCE:SPOT:SPYBUSDT" in observed

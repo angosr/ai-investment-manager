@@ -37,6 +37,11 @@ CLI_CONTRACT = {
     "freeze-executable-quotes": (
         "config,database_url,instrument_key,start,end,sampling_interval_seconds,catalog"
     ),
+    "freeze-reference-product-mapping": (
+        "config,database_url,instrument_key,start,end,reference_calculation_type,"
+        "reference_external_calculation_id,sampling_interval_seconds,"
+        "maximum_reference_age_ms,catalog"
+    ),
     "freeze-event-history": "database_url,start,end,catalog",
     "information-collector": "config,database_url,release_manifest",
     "invalidate-evaluation-plan": "database_url,plan_id,reason_code,evidence_id",
@@ -69,6 +74,7 @@ RESEARCH_COMMAND_NAMES = {
     "fetch-economic-series",
     "freeze-event-history",
     "freeze-executable-quotes",
+    "freeze-reference-product-mapping",
     "record-reference-rejection",
 }
 
@@ -167,9 +173,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 72
+    assert len(contract) == 73
     assert content_hash(contract) == (
-        "d9c5b7277c670c256d933d75404b607dea329361f1c71112c4e34ecef302ffc8"
+        "f2735d1ea2c5732ae08140b077ab24ea09c5b42845aa36d4d683157b9ff41bb9"
     )
 
 
@@ -271,6 +277,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         "entrypoints/cli/research_commands.py": {
             "record-reference-rejection",
             "freeze-executable-quotes",
+            "freeze-reference-product-mapping",
             "fetch-economic-series",
             "fetch-binance-history",
             "fetch-binance-usdm-history",
@@ -715,6 +722,7 @@ def test_market_tables_have_one_domain_owner_and_no_repository_reexports() -> No
         "funding_settlements",
         "market_bars",
         "market_quotes",
+        "market_reference_prices",
         "market_trades",
         "perpetual_market_states",
         "perpetual_quotes",

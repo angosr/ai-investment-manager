@@ -307,9 +307,10 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v17
+  version: binance-public-shadow-v18
   # SPYBUSDT 仅积累 SPYB 产品映射证据；不属于 Mandate 或可投资域。
   symbols: [BTCUSDT, ETHUSDT, PAXGUSDT, SPYBUSDT]
+  reference_price_symbols: [SPYBUSDT]
   interval: 5m
   bar_window: 64
   rest_base_url: https://api.binance.com
