@@ -219,7 +219,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
               <Fragment key={item.forecast_id}>
                 <dt>概率预测</dt>
                 <dd>
-                  {forecastLabel(item.outcome_family_id)}　
+                  {forecastLabel(item.outcome_family_id, item.horizon_minutes)}　
                   {item.outcome_probabilities.map((bucket) => (
                     <span key={bucket.bucket_id}>
                       {bucket.bucket_id} {probability(bucket.probability)}　
@@ -408,9 +408,12 @@ function candidateLabel(candidate: CapitalCandidateSummary): string {
   }).join(" + ");
 }
 
-function forecastLabel(outcomeFamilyId: string): string {
+function forecastLabel(outcomeFamilyId: string, horizonMinutes: number): string {
   const asset = outcomeFamilyId.split("-", 1)[0]?.toUpperCase();
-  return asset ? `${asset} · 4 小时` : "4 小时";
+  const horizon = horizonMinutes % 60 === 0
+    ? `${horizonMinutes / 60} 小时`
+    : `${horizonMinutes} 分钟`;
+  return asset ? `${asset} · ${horizon}` : horizon;
 }
 
 function effectLabel(effect: string): string {

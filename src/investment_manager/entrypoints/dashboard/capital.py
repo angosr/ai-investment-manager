@@ -105,6 +105,7 @@ class CapitalCandidateEconomics:
     payoff_projection_id: str | None
     producer_id: str
     outcome_family_id: str
+    horizon_minutes: int
     target_legs: tuple[tuple[str, str, str, str], ...]
     edge_basis: str
     forecast_current: bool
@@ -927,6 +928,7 @@ class CapitalDashboardReader:
                     payoff_projection_id=evaluation.payoff_projection_id,
                     producer_id=forecast.producer_id,
                     outcome_family_id=forecast.outcome_family_id,
+                    horizon_minutes=forecast.horizon_minutes,
                     target_legs=tuple(
                         (
                             leg.instrument.key,
@@ -1205,6 +1207,7 @@ def _serialize_capital_activity_item(
             {
                 "candidate_id": candidate.candidate_id,
                 "outcome_family_id": candidate.outcome_family_id,
+                "horizon_minutes": candidate.horizon_minutes,
                 "target_legs": [
                     {
                         "instrument": instrument,
@@ -1237,6 +1240,7 @@ def _serialize_capital_activity_item(
                     "payoff_projection_id": candidate.payoff_projection_id,
                     "producer_id": candidate.producer_id,
                     "outcome_family_id": candidate.outcome_family_id,
+                    "horizon_minutes": candidate.horizon_minutes,
                     "target_legs": [
                         {
                             "instrument": instrument,

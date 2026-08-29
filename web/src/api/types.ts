@@ -107,6 +107,7 @@ export interface CapitalTargetLeg {
 export interface CapitalCandidateSummary {
   candidate_id: string;
   outcome_family_id: string;
+  horizon_minutes: number;
   target_legs: CapitalTargetLeg[];
   net_bps: string;
   desired_gross_notional: string;

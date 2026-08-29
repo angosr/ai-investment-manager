@@ -1396,6 +1396,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert activity.candidate_economics_recorded
     economics = activity.candidate_economics[0]
     assert economics.net_bps < economics.decision_threshold_bps
+    assert economics.horizon_minutes == 7 * 24 * 60
     assert economics.candidate_id
     assert economics.payoff_projection_id is None
     assert economics.target_legs == (
@@ -1422,6 +1423,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
         {
             "candidate_id": economics.candidate_id,
             "outcome_family_id": economics.outcome_family_id,
+            "horizon_minutes": economics.horizon_minutes,
             "target_legs": serialized["candidate_economics"][0]["target_legs"],
             "net_bps": str(economics.net_bps),
             "desired_gross_notional": str(economics.desired_gross_notional),
