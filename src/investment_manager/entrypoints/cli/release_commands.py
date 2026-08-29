@@ -439,6 +439,8 @@ def _required_release_artifacts(config: AppConfig) -> tuple[str, ...]:
     required = {"web-dist"}
     if reference is not None:
         required.add(reference.selection_artifact_id)
+    if config.outcome_evaluation.forecast_prior.enabled:
+        required.add(config.outcome_evaluation.forecast_prior.artifact_id)
     return tuple(sorted(required))
 
 

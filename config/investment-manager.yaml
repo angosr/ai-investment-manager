@@ -266,7 +266,6 @@ outcome_evaluation:
   forecast_prior:
     version: rolling-unconditional-prior-runtime-v1
     enabled: false
-    artifact_path: evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json
     artifact_id: forecast_baseline_7edf2cf090b47cdad2e5
 
 governance:

@@ -90,8 +90,14 @@ def test_release_children_import_candidate_before_existing_pythonpath(tmp_path: 
 
 
 def test_release_requires_only_enabled_runtime_artifacts() -> None:
+    base = load_config("config/investment-manager.yaml")
+    assert _required_release_artifacts(base) == ("web-dist",)
+
     config = load_config("config/investment-manager.shadow.yaml")
-    assert _required_release_artifacts(config) == ("web-dist",)
+    assert _required_release_artifacts(config) == (
+        "forecast_baseline_7edf2cf090b47cdad2e5",
+        "web-dist",
+    )
 
     payload = config.model_dump(mode="python")
     payload["capital"]["mandate"]["status"] = "APPROVED"
@@ -118,6 +124,7 @@ def test_release_requires_only_enabled_runtime_artifacts() -> None:
     configured = type(config).model_validate(payload)
 
     assert _required_release_artifacts(configured) == (
+        "forecast_baseline_7edf2cf090b47cdad2e5",
         "reference-selection-v1",
         "web-dist",
     )

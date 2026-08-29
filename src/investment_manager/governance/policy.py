@@ -1,6 +1,4 @@
 from enum import StrEnum
-from pathlib import Path
-
 from pydantic import Field, model_validator
 
 from investment_manager.kernel.configuration import StrictConfig
@@ -9,7 +7,6 @@ from investment_manager.kernel.configuration import StrictConfig
 class ForecastPriorRuntimePolicy(StrictConfig):
     version: str
     enabled: bool = False
-    artifact_path: Path
     artifact_id: str = Field(min_length=1)
 
 

@@ -22,7 +22,10 @@ from investment_manager.forecast.contract_repository import SqlForecastContractS
 from investment_manager.forecast.program.baseline import load_forecast_baseline
 from investment_manager.forecast.program.prior import RollingPriorForecastProducer
 from investment_manager.forecast.repository import SqlForecastStore
-from investment_manager.governance.models import ReleaseManifest
+from investment_manager.governance.models import (
+    ReleaseManifest,
+    resolve_manifest_artifact,
+)
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
@@ -184,9 +187,9 @@ def _assemble_forecast_prior(
     engine,
 ) -> RollingPriorForecastProducer:
     policy = config.outcome_evaluation.forecast_prior
-    artifact = load_forecast_baseline(policy.artifact_path)
-    if artifact.artifact_id != policy.artifact_id:
-        raise ValueError("Forecast prior 配置与制品身份不一致")
+    artifact = load_forecast_baseline(
+        resolve_manifest_artifact(manifest, policy.artifact_id)
+    )
     return RollingPriorForecastProducer(
         artifact=artifact,
         market=SqlMarketDataStore(engine),
