@@ -2307,6 +2307,40 @@ def test_previous_world_model_projection_bounds_historical_test_inventory(
     )
 
 
+def test_previous_world_model_projection_preserves_inferred_causal_node(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    output = _world_model_output()
+    mechanism = output.world_model.mechanisms[0]
+    inferred_chain = (
+        mechanism.causal_chain[0],
+        mechanism.causal_chain[1].model_copy(update={"evidence_ids": ()}),
+    )
+    assessment = finalize_world_model(
+        output=output.model_copy(
+            update={
+                "world_model": output.world_model.model_copy(
+                    update={
+                        "mechanisms": (
+                            mechanism.model_copy(update={"causal_chain": inferred_chain}),
+                        )
+                    }
+                )
+            }
+        ),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    previous = _previous_context(assessment)
+
+    assert previous is not None
+    assert previous.mechanisms[0].causal_chain[1].evidence_ids == ()
+
+
 def test_world_model_allows_connected_downstream_response_test(
     app_config,
     replay_input,

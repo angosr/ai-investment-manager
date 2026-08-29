@@ -1022,7 +1022,10 @@ class PacketPreviousEventReference(FrozenModel):
 
 class PacketPreviousCausalNode(FrozenModel):
     statement: str = Field(min_length=1, max_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS)
-    evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=12)
+    # Preserve the WorldModel distinction between directly observed anchors and
+    # inferred transmission steps. The mechanism as a whole must retain direct
+    # evidence; an individual downstream step may legitimately have none.
+    evidence_ids: tuple[str, ...] = Field(max_length=12)
 
     @model_validator(mode="after")
     def evidence_must_be_unique(self):
