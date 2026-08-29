@@ -917,6 +917,92 @@ def test_projection_version_baseline_does_not_swallow_explicit_material_event(
     assert exact_retry == result
 
 
+def test_explicit_review_always_freezes_its_bound_event(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    events = InMemoryEventStore()
+    event = IntelligenceEvent(
+        evidence_id="bound-official-event",
+        normalizer_version="official-normalizer-v1",
+        acquisition_route="official-feed-v1",
+        event_time=OBSERVED_AT - timedelta(days=2),
+        observed_at=OBSERVED_AT - timedelta(days=2),
+        source="official:central-bank",
+        title="Official policy statement",
+        body="An older official statement explicitly selected for review.",
+        symbols=("BTCUSDT",),
+        relevance="0.95",
+        impact="0.95",
+        source_reliability="1",
+        novelty="0.95",
+        immediate_review_eligible=True,
+        directional_support_eligible=True,
+    )
+    events.put(event)
+    preparation = DecisionPacketPreparation(
+        market_store=_PointInTimeMarketStore(replay_input.market),
+        event_reader=events,
+        facts=SqlFactStateStore(engine),
+        projector=SqlStateProjector(
+            engine,
+            projection_version="portfolio-state-bound-review-v1",
+            delta_policy=DELTA_POLICY,
+        ),
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-policy-bound-review-v1",
+                schema_version="decision-packet-bound-review-v1",
+                maximum_background_fact_distance_seconds=3600,
+            ),
+        ),
+        features=FeatureEngine(app_config.feature),
+        market_interval=app_config.market_data.interval,
+        market_bar_window=app_config.market_data.bar_window,
+        market_source=app_config.market_data.version,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
+        clock=lambda: OBSERVED_AT,
+    )
+    mandate = AnalysisMandate(
+        version="portfolio-mandate-v1",
+        analysis_scope="primary-portfolio",
+        question="Assess the explicitly bound official evidence.",
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("EXTERNAL_INFORMATION",),
+    )
+    review = PacketReviewRequest.create(
+        requested_at=OBSERVED_AT,
+        reason="复核明确绑定的一手政策材料",
+        evidence_ids=(event.evidence_id,),
+    )
+
+    result = preparation.prepare(
+        analysis_id="bound-official-review",
+        as_of=OBSERVED_AT,
+        mandate=mandate,
+        review_requests=(review,),
+    )
+
+    assert result.status == PacketPreparationStatus.READY
+    assert result.packet is not None
+    assert result.packet.review_requests == (review,)
+    assert len(result.packet.intelligence_events) == 1
+    assert result.packet.intelligence_events[0].evidence_id == event.evidence_id
+    assert result.packet.intelligence_events[0].directly_triggered is True
+
+
 def test_explicit_review_receives_recent_background_intelligence(
     app_config,
     replay_input,

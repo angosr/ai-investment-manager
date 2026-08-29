@@ -181,18 +181,35 @@ class DecisionPacketPreparation:
             raise ValueError("review_requests 必须按 review_id 唯一且排序")
         if any(item.requested_at > as_of for item in review_requests):
             raise ValueError("review_requests 不能晚于 DecisionPacket as_of")
+        facts = self._facts.facts_as_of(as_of=as_of)
+        fact_revision_ids = {item.revision_id for item in facts}
+        reviewed_evidence_ids = {
+            evidence_id for review in review_requests for evidence_id in review.evidence_ids
+        }
+        requested_event_ids = tuple(
+            sorted(
+                {
+                    *intelligence_evidence_ids,
+                    *(reviewed_evidence_ids - fact_revision_ids),
+                }
+            )
+        )
         triggered_events = self._event_reader.exact(
-            evidence_ids=intelligence_evidence_ids,
+            evidence_ids=requested_event_ids,
             as_of=as_of,
         )
         material_triggered_events = tuple(
             event
             for event in triggered_events
-            if self._assembler.intelligence_directional_support_eligible(event)
+            if event.evidence_id in intelligence_evidence_ids
+            and self._assembler.intelligence_directional_support_eligible(event)
         )
         material_event_ids = {event.evidence_id for event in material_triggered_events}
         weak_triggered_events = tuple(
-            event for event in triggered_events if event.evidence_id not in material_event_ids
+            event
+            for event in triggered_events
+            if event.evidence_id in intelligence_evidence_ids
+            and event.evidence_id not in material_event_ids
         )
         effective_reviews = review_requests
         if weak_triggered_events:
@@ -285,7 +302,7 @@ class DecisionPacketPreparation:
             analysis_scope=mandate.analysis_scope,
             as_of=as_of,
             built_at=max(require_utc(self._clock()), as_of),
-            facts=self._facts.facts_as_of(as_of=as_of),
+            facts=facts,
             markets=markets,
             features=feature_snapshots,
             derivatives=derivatives,
