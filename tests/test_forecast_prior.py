@@ -4,6 +4,11 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from itertools import pairwise
 
+from investment_manager.forecast.program.baseline import (
+    ForecastBaselineArtifact,
+    load_forecast_baseline,
+    store_forecast_baseline,
+)
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import ClosedMarketBar
 from investment_manager.research.dataset import (
@@ -14,7 +19,6 @@ from investment_manager.research.dataset import (
     _bars_hash,
 )
 from investment_manager.research.forecast_prior import (
-    ForecastBaselineArtifact,
     ForecastBaselineEstimation,
     ForecastBaselineEvaluation,
     ForecastBaselinePlan,
@@ -25,8 +29,6 @@ from investment_manager.research.forecast_prior import (
     build_non_overlapping_returns,
     evaluate_forecast_baseline,
     expanding_prior,
-    load_forecast_baseline,
-    store_forecast_baseline,
 )
 
 

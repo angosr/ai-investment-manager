@@ -387,7 +387,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
     }
     capabilities = {
         "execution": {"group", "planning", "venue"},
-        "forecast": {"codex", "context", "product"},
+        "forecast": {"codex", "context", "product", "program"},
         "governance": {"audit", "evaluation", "release"},
         "information": {"official"},
         "market": {"perpetual"},

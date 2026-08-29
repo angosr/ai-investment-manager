@@ -660,6 +660,7 @@ def evaluate_forecast_baseline_command(
 ) -> None:
     """验证点时无条件先验；结果只提供 Forecast 比较坐标。"""
 
+    from investment_manager.forecast.program.baseline import store_forecast_baseline
     from investment_manager.governance.models import (
         committed_file_revision,
         current_clean_code_version,
@@ -667,7 +668,6 @@ def evaluate_forecast_baseline_command(
     from investment_manager.research.forecast_prior import (
         evaluate_forecast_baseline,
         load_forecast_baseline_plan,
-        store_forecast_baseline,
     )
 
     root = project_root.resolve()
