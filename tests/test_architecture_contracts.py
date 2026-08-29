@@ -28,9 +28,6 @@ CLI_CONTRACT = {
         "config,database_url,release_manifest,host,port,web_dist"
     ),
     "evaluate-forecast-baseline": "plan,project_root,dataset_catalog,result_catalog",
-    "evaluate-orthogonal-quant-prior": (
-        "plan,project_root,dataset_catalog,baseline_catalog,result_catalog"
-    ),
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
     ),
@@ -72,7 +69,6 @@ CLI_CONTRACT = {
 
 RESEARCH_COMMAND_NAMES = {
     "evaluate-forecast-baseline",
-    "evaluate-orthogonal-quant-prior",
     "fetch-binance-carry-history",
     "fetch-binance-funding-history",
     "fetch-binance-history",
@@ -282,7 +278,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         },
         "entrypoints/cli/research_commands.py": {
             "evaluate-forecast-baseline",
-            "evaluate-orthogonal-quant-prior",
             "record-reference-rejection",
             "freeze-executable-quotes",
             "freeze-reference-product-mapping",

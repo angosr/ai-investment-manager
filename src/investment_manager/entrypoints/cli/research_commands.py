@@ -66,7 +66,6 @@ def record_reference_rejection_command(
         evaluate_reference_economics,
         persist_reference_evidence_manifests,
     )
-
     try:
         cutoff = date.fromisoformat(information_cutoff)
     except ValueError as exc:
@@ -695,82 +694,6 @@ def evaluate_forecast_baseline_command(
                         "fixed_brier": str(item.fixed_mean_brier),
                         "maximum_calibration_error": str(
                             item.rolling_maximum_absolute_calibration_error
-                        ),
-                    }
-                    for item in artifact.results
-                ],
-                "capital_change": artifact.capital_change,
-                "path": str(target),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-
-
-@app.command("evaluate-orthogonal-quant-prior")
-def evaluate_orthogonal_quant_prior_command(
-    plan: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
-    dataset_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
-        ".runtime/datasets"
-    ),
-    baseline_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
-        "evidence/forecast-baselines"
-    ),
-    result_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
-        "evidence/quant-candidates"
-    ),
-) -> None:
-    """一次性评价冻结的正交 Quant prior；结果不能直接授予资本权限。"""
-
-    from investment_manager.research.quant_prior import (
-        evaluate_orthogonal_quant_prior,
-        load_orthogonal_quant_prior_plan,
-        store_orthogonal_quant_prior,
-    )
-
-    root = project_root.resolve()
-    registered = load_orthogonal_quant_prior_plan(plan)
-    plan_commit, _committed_at = committed_file_revision(plan, repository_root=root)
-    artifact = evaluate_orthogonal_quant_prior(
-        registered,
-        dataset_catalog=dataset_catalog,
-        baseline_catalog=baseline_catalog,
-        plan_commit=plan_commit,
-        evaluator_code_version=current_clean_code_version(repository_root=root),
-        evaluated_at=datetime.now(UTC),
-    )
-    target = store_orthogonal_quant_prior(artifact, root=result_catalog)
-    typer.echo(
-        json.dumps(
-            {
-                "artifact_id": artifact.artifact_id,
-                "status": artifact.status,
-                "targets": [
-                    {
-                        "symbol": item.symbol,
-                        "status": item.status,
-                        "selected_experts": item.selected_experts,
-                        "validation_ranked_probability_score": (
-                            str(item.validation.candidate_ranked_probability_score)
-                            if item.validation
-                            else None
-                        ),
-                        "validation_baseline_ranked_probability_score": (
-                            str(item.validation.baseline_ranked_probability_score)
-                            if item.validation
-                            else None
-                        ),
-                        "held_out_ranked_probability_score": (
-                            str(item.held_out.candidate_ranked_probability_score)
-                            if item.held_out
-                            else None
-                        ),
-                        "held_out_baseline_ranked_probability_score": (
-                            str(item.held_out.baseline_ranked_probability_score)
-                            if item.held_out
-                            else None
                         ),
                     }
                     for item in artifact.results
