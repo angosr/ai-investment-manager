@@ -402,8 +402,8 @@ def _preflight_release(
                 assemble_assessment_service(
                     config,
                     assembly_url,
-                    code_version=manifest.code_version,
-                    manifest_id=manifest.manifest_id,
+                    manifest=manifest,
+                    repository_root=unit.project_root,
                 )
                 assemble_outcome_evaluation(
                     config,

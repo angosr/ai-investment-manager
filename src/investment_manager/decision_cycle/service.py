@@ -17,10 +17,16 @@ from investment_manager.decision_cycle.trigger import (
     TriggerDispatchBuilder,
 )
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
+from investment_manager.forecast.context.posterior_preparation import (
+    ContextPosteriorPreparation,
+)
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.program.baseline import load_forecast_baseline
-from investment_manager.forecast.program.prior import RollingPriorForecastProducer
+from investment_manager.forecast.program.prior import (
+    RollingPriorForecastProducer,
+    build_prior_targets,
+)
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.models import (
     ReleaseManifest,
@@ -64,9 +70,7 @@ def assemble_trigger_service(
 
     repository = repository or SqlTriggerRepository(engine, config.trigger)
     capital_consumer = (
-        _assemble_capital_consumer(config=config, engine=engine)
-        if config.capital.enabled
-        else None
+        _assemble_capital_consumer(config=config, engine=engine) if config.capital.enabled else None
     )
     activities = TriggerCoordinatorActivities(
         TriggerDispatchBuilder(
@@ -89,6 +93,15 @@ def assemble_trigger_service(
             )
             if config.outcome_evaluation.forecast_prior.enabled
             else (),
+            posterior_preparation=(
+                _assemble_context_posterior(
+                    config=config,
+                    manifest=manifest,
+                    engine=engine,
+                )
+                if config.assessment.enabled and config.outcome_evaluation.forecast_prior.enabled
+                else None
+            ),
             program_batch_consumers=(
                 CapitalTriggerConsumer(
                     capital_consumer,
@@ -193,9 +206,7 @@ def _assemble_forecast_prior(
     policy = config.outcome_evaluation.forecast_prior
     if policy.artifact_id is None:
         raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
-    artifact = load_forecast_baseline(
-        resolve_manifest_artifact(manifest, policy.artifact_id)
-    )
+    artifact = load_forecast_baseline(resolve_manifest_artifact(manifest, policy.artifact_id))
     return RollingPriorForecastProducer(
         artifact=artifact,
         market=SqlMarketDataStore(engine),
@@ -204,4 +215,31 @@ def _assemble_forecast_prior(
         outcome_evaluation_version=config.outcome_evaluation.target_forecast_version,
         activated_at=manifest.created_at,
         maximum_quote_age_seconds=config.capital.risk.maximum_quote_age_seconds,
+    )
+
+
+def _assemble_context_posterior(
+    *,
+    config: AppConfig,
+    manifest: ReleaseManifest,
+    engine,
+) -> ContextPosteriorPreparation:
+    policy = config.outcome_evaluation.forecast_prior
+    if policy.artifact_id is None:
+        raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
+    artifact = load_forecast_baseline(resolve_manifest_artifact(manifest, policy.artifact_id))
+    contracts = tuple(
+        sorted(
+            (item.contract for item in build_prior_targets(artifact)),
+            key=lambda item: item.contract_id,
+        )
+    )
+    return ContextPosteriorPreparation(
+        contracts=contracts,
+        runtime=config.codex_runtime,
+        analysis_scope=config.assessment.mandate.analysis_scope,
+        activated_at=manifest.created_at,
+        contract_store=SqlForecastContractStore(engine),
+        forecast_store=SqlForecastStore(engine),
+        assessments=SqlContextAssessmentStore(engine),
     )

@@ -93,7 +93,7 @@ class ContextAssessmentWorkflow:
             return _infrastructure_failure(workflow_id, "INVALID_WORKFLOW_INPUT")
         self._input_hash = raw_input_hash
         try:
-            deadline, start_to_close, schedule_to_close, retry = _activity_options(
+            deadline, start_to_close, schedule_to_close, retry = activity_options_from_request(
                 request
             )
         except (KeyError, TypeError, ValueError):
@@ -135,15 +135,13 @@ class ContextAssessmentWorkflow:
         return result.model_dump(mode="json")
 
 
-def _activity_options(
+def activity_options_from_request(
     request: dict[str, Any],
 ) -> tuple[datetime, timedelta, timedelta, RetryPolicy]:
     deadline = require_utc(datetime.fromisoformat(str(request["deadline"])))
     policy = request["orchestration"]
     start_to_close = timedelta(seconds=int(policy["activity_start_to_close_seconds"]))
-    schedule_to_close = timedelta(
-        seconds=int(policy["activity_schedule_to_close_seconds"])
-    )
+    schedule_to_close = timedelta(seconds=int(policy["activity_schedule_to_close_seconds"]))
     retry = RetryPolicy(
         initial_interval=timedelta(seconds=int(policy["retry_initial_seconds"])),
         maximum_interval=timedelta(seconds=int(policy["retry_maximum_seconds"])),

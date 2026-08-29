@@ -5,6 +5,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -23,15 +24,32 @@ from investment_manager.forecast.context.application import (
     AssessmentWorkflowExecution,
 )
 from investment_manager.forecast.context.executor import ContextAssessmentExecutor
+from investment_manager.forecast.context.posterior_analyst import (
+    assemble_codex_context_posterior_analyst,
+)
+from investment_manager.forecast.context.posterior_execution import (
+    ContextPosteriorApplication,
+)
+from investment_manager.forecast.context.posterior_workflow import (
+    POSTERIOR_ACTIVITY_NAME,
+    ContextPosteriorWorkflow,
+    PosteriorWorkflowRequest,
+)
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.workflow import (
     ASSESSMENT_ACTIVITY_NAME,
     AssessmentWorkflowRequest,
     ContextAssessmentWorkflow,
 )
+from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.models import ContextAssessment
+from investment_manager.forecast.program.baseline import load_forecast_baseline
+from investment_manager.forecast.program.prior import build_prior_targets
+from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.governance.models import ReleaseManifest, resolve_manifest_artifact
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.platform.temporal import SingleActivityWorker
 from investment_manager.scheduling.models import (
@@ -235,6 +253,37 @@ class AssessmentActivities:
 
 
 @dataclass(slots=True)
+class PosteriorActivities:
+    application: ContextPosteriorApplication
+
+    @activity.defn(name=POSTERIOR_ACTIVITY_NAME)
+    def execute_context_posterior(self, raw_request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            request = PosteriorWorkflowRequest.model_validate(raw_request)
+        except ValidationError as exc:
+            raise ApplicationError(
+                "ContextPosterior Workflow 输入未通过契约校验",
+                type="InvalidWorkflowInput",
+                non_retryable=True,
+            ) from exc
+        try:
+            execution = self.application.execute(
+                request.frozen_input,
+                expected_behavior_hash=request.producer_behavior_id,
+            )
+        except ValueError as exc:
+            raise ApplicationError(
+                "ContextPosterior 冻结输入与权威事实冲突",
+                type="PermanentDomainError",
+                non_retryable=True,
+            ) from exc
+        return {
+            "attempt": activity.info().attempt,
+            "execution": execution.model_dump(mode="json"),
+        }
+
+
+@dataclass(slots=True)
 class AssessmentTemporalCoordinator:
     client: Client
     policy: TemporalPolicy
@@ -273,15 +322,19 @@ class AssessmentTemporalWorker(SingleActivityWorker):
         policy: TemporalPolicy,
         application: AssessmentApplication,
         *,
+        posterior_application: ContextPosteriorApplication | None = None,
         worker_threads: int,
     ) -> None:
+        activities = [AssessmentActivities(application).execute_context_assessment]
+        workflows = [ContextAssessmentWorkflow]
+        if posterior_application is not None:
+            workflows.append(ContextPosteriorWorkflow)
+            activities.append(PosteriorActivities(posterior_application).execute_context_posterior)
         super().__init__(
             client,
             task_queue=policy.assessment_task_queue,
-            workflows=[ContextAssessmentWorkflow],
-            activities=[
-                AssessmentActivities(application).execute_context_assessment,
-            ],
+            workflows=workflows,
+            activities=activities,
             thread_name_prefix="assessment-activity",
             max_concurrent_activities=worker_threads,
         )
@@ -292,6 +345,7 @@ class AssessmentServiceAssembly:
     """Purely constructed worker graph; activation may update durable wakeups."""
 
     application: AssessmentApplication
+    posterior_application: ContextPosteriorApplication | None
     scheduler: WorldModelReviewScheduler
     analysis_scope: str
 
@@ -303,17 +357,19 @@ def assemble_assessment_service(
     config: AppConfig,
     database_url: str,
     *,
-    code_version: str,
-    manifest_id: str,
+    manifest: ReleaseManifest,
+    repository_root: Path,
 ) -> AssessmentServiceAssembly:
     engine = build_engine(database_url)
     require_current_schema(engine)
+    leases = SqlAccountLeaseStore(engine)
+    audit = SqlCodexAuditStore(engine)
     analyst = assemble_codex_context_analyst(
         config,
         bundle_root=config.codex_runtime.bundle_root,
-        code_version=code_version,
-        leases=SqlAccountLeaseStore(engine),
-        audit=SqlCodexAuditStore(engine),
+        code_version=manifest.code_version,
+        leases=leases,
+        audit=audit,
     )
     config.codex_runtime.bundle_root.mkdir(parents=True, exist_ok=True)
     assessments = SqlContextAssessmentStore(engine)
@@ -325,14 +381,47 @@ def assemble_assessment_service(
         triggers=SqlTriggerRepository(engine, config.trigger),
         symbol=review_symbol,
         pipeline_id=config.pipeline.version,
-        manifest_id=manifest_id,
+        manifest_id=manifest.manifest_id,
         minimum_call_interval_seconds=config.trigger.minimum_call_interval_seconds,
         trigger_expiry_seconds=config.trigger.trigger_expiry_seconds,
     )
+
     def complete_world_model(assessment: ContextAssessment) -> None:
         scheduler.schedule(assessment)
         scheduler.publish_update(assessment)
 
+    posterior_application = None
+    prior_policy = config.outcome_evaluation.forecast_prior
+    if prior_policy.enabled:
+        if prior_policy.artifact_id is None:
+            raise ValueError("启用 Forecast prior 时缺少 Release 制品 ID")
+        artifact = load_forecast_baseline(
+            resolve_manifest_artifact(
+                manifest,
+                prior_policy.artifact_id,
+                repository_root=repository_root,
+            )
+        )
+        posterior_contracts = tuple(
+            sorted(
+                (item.contract for item in build_prior_targets(artifact)),
+                key=lambda item: item.contract_id,
+            )
+        )
+        posterior_application = ContextPosteriorApplication(
+            analyst=assemble_codex_context_posterior_analyst(
+                config,
+                bundle_root=config.codex_runtime.bundle_root,
+                contracts=posterior_contracts,
+                code_version=manifest.code_version,
+                leases=leases,
+                audit=audit,
+            ),
+            contracts=SqlForecastContractStore(engine),
+            forecasts=SqlForecastStore(engine),
+            market=SqlMarketDataStore(engine),
+            maximum_quote_age_seconds=config.capital.risk.maximum_quote_age_seconds,
+        )
     return AssessmentServiceAssembly(
         application=AssessmentApplication(
             ContextAssessmentExecutor(
@@ -341,6 +430,7 @@ def assemble_assessment_service(
                 on_success=complete_world_model,
             )
         ),
+        posterior_application=posterior_application,
         scheduler=scheduler,
         analysis_scope=config.assessment.mandate.analysis_scope,
     )
@@ -350,6 +440,7 @@ async def run_assessment_worker_forever(
     *,
     config: AppConfig,
     application: AssessmentApplication,
+    posterior_application: ContextPosteriorApplication | None = None,
 ) -> None:
     coordinator = await AssessmentTemporalCoordinator.connect(config.temporal)
     enabled_accounts = sum(account.enabled for account in config.codex_accounts.accounts)
@@ -360,6 +451,7 @@ async def run_assessment_worker_forever(
         coordinator.client,
         config.temporal,
         application,
+        posterior_application=posterior_application,
         worker_threads=worker_threads,
     ):
         await asyncio.Event().wait()
@@ -369,10 +461,12 @@ def run_assessment_worker_process(
     *,
     config: AppConfig,
     application: AssessmentApplication,
+    posterior_application: ContextPosteriorApplication | None = None,
 ) -> None:
     asyncio.run(
         run_assessment_worker_forever(
             config=config,
             application=application,
+            posterior_application=posterior_application,
         )
     )

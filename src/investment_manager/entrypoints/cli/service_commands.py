@@ -190,11 +190,15 @@ def assessment_worker(
     assembly = assemble_assessment_service(
         loaded,
         database_url,
-        code_version=manifest.code_version,
-        manifest_id=manifest.manifest_id,
+        manifest=manifest,
+        repository_root=config.resolve().parents[1],
     )
     assembly.activate()
-    run_assessment_worker_process(config=loaded, application=assembly.application)
+    run_assessment_worker_process(
+        config=loaded,
+        application=assembly.application,
+        posterior_application=assembly.posterior_application,
+    )
 
 
 @app.command("submit-context-assessment")

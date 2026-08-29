@@ -64,12 +64,13 @@ class RecordingPacketPreparation:
 
 
 class RecordingForecastProducer:
-    def __init__(self) -> None:
+    def __init__(self, results=()) -> None:
         self.as_of = None
+        self.results = results
 
     def produce(self, *, as_of):
         self.as_of = as_of
-        return None
+        return self.results
 
 
 class EmptyAssessmentHistory:
@@ -308,7 +309,6 @@ def test_heartbeat_reviews_consumers_without_updating_world_model(app_config) ->
     assert dispatches == ()
     assert preparation.intelligence_evidence_ids is None
     assert consumer.batch == batch
-
 
 
 def test_capital_trigger_consumer_has_one_portfolio_scope_owner(app_config) -> None:

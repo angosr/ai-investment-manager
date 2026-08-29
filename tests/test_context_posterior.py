@@ -1,10 +1,14 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
+from sqlalchemy.pool import StaticPool
+from temporalio.testing import WorkflowEnvironment
 
+from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
 from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.posterior_analyst import (
     CodexContextPosteriorAnalyst,
@@ -19,9 +23,20 @@ from investment_manager.forecast.context.posterior_contract import (
     finalize_posterior,
     posterior_output_schema,
 )
+from investment_manager.forecast.context.posterior_execution import (
+    ContextPosteriorApplication,
+    PosteriorExecutionStatus,
+)
 from investment_manager.forecast.context.posterior_preparation import (
     ContextPosteriorPreparation,
 )
+from investment_manager.forecast.context.posterior_workflow import (
+    ContextPosteriorWorkflow,
+    PosteriorWorkflowExecution,
+    PosteriorWorkflowRequest,
+    PosteriorWorkflowStatus,
+)
+from investment_manager.forecast.context.service import AssessmentTemporalWorker
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import ForecastPriceAnchor
 from investment_manager.forecast.models import (
@@ -40,8 +55,17 @@ from investment_manager.forecast.results import (
     ForecastMechanismContribution,
     ForecastMechanismEffect,
 )
+from investment_manager.forecast.tables import forecasts as forecast_rows
+from investment_manager.governance.policy import DeploymentStage
 from investment_manager.market.models import MarketQuote
 from investment_manager.market.repository import InMemoryMarketDataStore
+from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
+from investment_manager.scheduling.models import (
+    AnalysisTriggerType,
+    build_initial_trigger_plan,
+    build_trigger_batch,
+    build_trigger_event,
+)
 from investment_manager.schema import create_schema
 
 SLOT_AT = datetime(2026, 8, 30, tzinfo=UTC)
@@ -52,7 +76,11 @@ def _prior_targets():
     artifact = load_forecast_baseline(
         root / "evidence/forecast-baselines/forecast_baseline_7edf2cf090b47cdad2e5.json"
     )
-    engine = create_engine("sqlite+pysqlite:///:memory:")
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     create_schema(engine)
     contracts = SqlForecastContractStore(engine)
     forecasts = SqlForecastStore(engine)
@@ -88,7 +116,7 @@ def _prior_targets():
         )
         for item in prior
     )
-    return contracts, forecasts, targets
+    return contracts, forecasts, targets, market, engine
 
 
 def _world_model() -> ContextAssessment:
@@ -344,7 +372,7 @@ class _AssessmentFacts:
 
 
 def _preparation(base_app_config, world_model):
-    contract_store, forecast_store, targets = _prior_targets()
+    contract_store, forecast_store, targets, market, engine = _prior_targets()
     contracts = tuple(
         sorted((item.contract for item in targets), key=lambda item: item.contract_id)
     )
@@ -361,13 +389,15 @@ def _preparation(base_app_config, world_model):
         contract_store,
         forecast_store,
         targets,
+        market,
+        engine,
     )
 
 
 def test_preparation_records_research_obligations_and_structural_eligibility(
     base_app_config,
 ) -> None:
-    preparation, contract_store, _forecast_store, targets = _preparation(
+    preparation, contract_store, _forecast_store, targets, _market, _engine = _preparation(
         base_app_config,
         _world_model(),
     )
@@ -387,7 +417,7 @@ def test_preparation_records_research_obligations_and_structural_eligibility(
 def test_preparation_records_no_estimate_when_world_model_was_not_available(
     base_app_config,
 ) -> None:
-    preparation, _contract_store, forecast_store, targets = _preparation(
+    preparation, _contract_store, forecast_store, targets, _market, _engine = _preparation(
         base_app_config,
         None,
     )
@@ -406,3 +436,302 @@ def test_preparation_records_no_estimate_when_world_model_was_not_available(
         )
         for item in targets
     )
+
+
+class _ExecutionAnalyst:
+    def __init__(self, behavior_hash: str, result: AnalystResult) -> None:
+        self._behavior_hash = behavior_hash
+        self.result = result
+        self.calls = 0
+
+    def behavior_hash(self, _value) -> str:
+        return self._behavior_hash
+
+    def forecast(self, _value) -> AnalystResult:
+        self.calls += 1
+        return self.result
+
+
+def _execution_fixture(base_app_config):
+    preparation, contracts, forecasts, targets, market, engine = _preparation(
+        base_app_config,
+        _world_model(),
+    )
+    frozen = preparation.prepare(
+        tuple(item.prior for item in targets),
+        as_of=SLOT_AT + timedelta(minutes=2),
+    )
+    assert frozen is not None
+    completed_at = SLOT_AT + timedelta(minutes=10)
+    for target in frozen.targets:
+        instrument = target.contract.target.legs[0].instrument
+        price = target.prior.entry_prices[0].price
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"{instrument.symbol}-posterior-entry",
+                symbol=instrument.symbol,
+                observed_at=completed_at,
+                bid=price,
+                bid_quantity="1",
+                ask=price + Decimal("1"),
+                ask_quantity="1",
+                source="test",
+            )
+        )
+    return preparation, contracts, forecasts, market, engine, frozen, completed_at
+
+
+def test_posterior_execution_records_joint_forecasts_and_reuses_them(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, _engine, frozen, completed_at = _execution_fixture(
+        base_app_config
+    )
+    analyst = _ExecutionAnalyst(
+        preparation.producer_behavior_id,
+        AnalystResult(
+            True,
+            _output(frozen, change=False, contribute=False),
+            "CODEX_ANALYSIS_SUCCEEDED",
+            attempts=1,
+            completed_at=completed_at,
+            run_id="posterior-run-1",
+        ),
+    )
+    application = ContextPosteriorApplication(
+        analyst=analyst,
+        contracts=contracts,
+        forecasts=forecasts,
+        market=market,
+        maximum_quote_age_seconds=300,
+        clock=lambda: SLOT_AT + timedelta(minutes=3),
+    )
+
+    first = application.execute(
+        frozen,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+    replayed = application.execute(
+        frozen,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+
+    assert first.status == PosteriorExecutionStatus.SUCCEEDED
+    assert len(first.forecast_ids) == len(frozen.targets)
+    assert replayed.reused_authoritative is True
+    assert replayed.forecast_ids == first.forecast_ids
+    assert analyst.calls == 1
+
+
+def test_posterior_execution_recovers_partial_joint_write_without_second_ai_call(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, engine, frozen, completed_at = _execution_fixture(
+        base_app_config
+    )
+    analyst = _ExecutionAnalyst(
+        preparation.producer_behavior_id,
+        AnalystResult(
+            True,
+            _output(frozen, change=False, contribute=False),
+            "CODEX_ANALYSIS_SUCCEEDED",
+            attempts=1,
+            completed_at=completed_at,
+            run_id="posterior-run-1",
+        ),
+    )
+    application = ContextPosteriorApplication(
+        analyst=analyst,
+        contracts=contracts,
+        forecasts=forecasts,
+        market=market,
+        maximum_quote_age_seconds=300,
+        clock=lambda: SLOT_AT + timedelta(minutes=3),
+    )
+    first = application.execute(
+        frozen,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            delete(forecast_rows).where(forecast_rows.c.forecast_id == first.forecast_ids[-1])
+        )
+
+    recovered = application.execute(
+        frozen,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+
+    assert recovered.status == PosteriorExecutionStatus.SUCCEEDED
+    assert recovered.reused_authoritative is True
+    assert recovered.forecast_ids == first.forecast_ids
+    assert analyst.calls == 1
+
+
+def test_posterior_business_failure_records_terminal_no_estimates(
+    base_app_config,
+) -> None:
+    preparation, contracts, forecasts, market, _engine, frozen, completed_at = _execution_fixture(
+        base_app_config
+    )
+    analyst = _ExecutionAnalyst(
+        preparation.producer_behavior_id,
+        AnalystResult(
+            False,
+            None,
+            "CODEX_ACCOUNTS_UNAVAILABLE",
+            attempts=3,
+            completed_at=completed_at,
+        ),
+    )
+    application = ContextPosteriorApplication(
+        analyst=analyst,
+        contracts=contracts,
+        forecasts=forecasts,
+        market=market,
+        maximum_quote_age_seconds=300,
+        clock=lambda: SLOT_AT + timedelta(minutes=3),
+    )
+
+    result = application.execute(
+        frozen,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+    replayed = application.execute(
+        frozen,
+        expected_behavior_hash=preparation.producer_behavior_id,
+    )
+
+    assert result.status == PosteriorExecutionStatus.NO_ESTIMATE
+    assert len(result.no_estimate_ids) == len(frozen.targets)
+    assert replayed.reused_authoritative is True
+    assert analyst.calls == 1
+
+
+class _UnusedAssessmentApplication:
+    def execute(self, _command):
+        raise AssertionError("Posterior Workflow 不应调用 ContextAssessment application")
+
+
+def test_existing_assessment_worker_executes_posterior_workflow(
+    base_app_config,
+) -> None:
+    async def scenario() -> None:
+        preparation, contracts, forecasts, market, _engine, frozen, completed_at = (
+            _execution_fixture(base_app_config)
+        )
+        analyst = _ExecutionAnalyst(
+            preparation.producer_behavior_id,
+            AnalystResult(
+                True,
+                _output(frozen, change=False, contribute=False),
+                "CODEX_ANALYSIS_SUCCEEDED",
+                attempts=1,
+                completed_at=completed_at,
+                run_id="posterior-temporal-run-1",
+            ),
+        )
+        application = ContextPosteriorApplication(
+            analyst=analyst,
+            contracts=contracts,
+            forecasts=forecasts,
+            market=market,
+            maximum_quote_age_seconds=300,
+            clock=lambda: SLOT_AT + timedelta(minutes=3),
+        )
+        policy = base_app_config.temporal.model_copy(
+            update={"assessment_task_queue": "posterior-workflow-test"}
+        )
+        request = PosteriorWorkflowRequest.create(
+            frozen_input=frozen,
+            producer_behavior_id=preparation.producer_behavior_id,
+            orchestration=OrchestrationPolicySnapshot.from_config(policy),
+            created_at=SLOT_AT + timedelta(minutes=2),
+        )
+        async with (
+            await WorkflowEnvironment.start_time_skipping() as environment,
+            AssessmentTemporalWorker(
+                environment.client,
+                policy,
+                _UnusedAssessmentApplication(),
+                posterior_application=application,
+                worker_threads=1,
+            ),
+        ):
+            raw = await environment.client.execute_workflow(
+                ContextPosteriorWorkflow.run,
+                request.model_dump(mode="json"),
+                id=request.workflow_id,
+                task_queue=policy.assessment_task_queue,
+            )
+        result = PosteriorWorkflowExecution.model_validate(raw)
+        assert result.status == PosteriorWorkflowStatus.SUCCEEDED
+        assert result.attempt == 1
+        assert result.execution is not None
+        assert len(result.execution.forecast_ids) == len(frozen.targets)
+
+    asyncio.run(scenario())
+
+
+def test_trigger_dispatches_one_joint_posterior_from_program_prior(app_config) -> None:
+    frozen = _input()
+
+    class PriorProducer:
+        def produce(self, *, as_of):
+            assert as_of == SLOT_AT + timedelta(minutes=1)
+            return tuple(item.prior for item in frozen.targets)
+
+    class PosteriorPreparation:
+        producer_behavior_id = "posterior-behavior-v1"
+
+        def prepare(self, prior_results, *, as_of):
+            assert prior_results == tuple(item.prior for item in frozen.targets)
+            assert as_of == SLOT_AT + timedelta(minutes=1)
+            return frozen
+
+    config = app_config.model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": False}),
+            "deployment": app_config.deployment.model_copy(
+                update={
+                    "stage": DeploymentStage.SHADOW,
+                    "shadow_market_data_enabled": True,
+                }
+            ),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="posterior-release-v1",
+        updated_at=SLOT_AT,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        occurred_at=SLOT_AT + timedelta(minutes=1),
+        observed_at=SLOT_AT + timedelta(minutes=1),
+        priority=1,
+        dedup_key="posterior-slot-v1",
+    )
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=SLOT_AT + timedelta(minutes=1),
+        deadline=SLOT_AT + timedelta(minutes=15),
+    )
+
+    dispatches = TriggerDispatchBuilder(
+        config=config,
+        program_forecast_producers=(PriorProducer(),),
+        posterior_preparation=PosteriorPreparation(),
+    ).build(batch)
+
+    assert len(dispatches) == 1
+    dispatch = dispatches[0]
+    assert dispatch.workflow_name == "ContextPosteriorWorkflow"
+    request = PosteriorWorkflowRequest.model_validate(dispatch.payload)
+    assert request.frozen_input == frozen
+    assert request.producer_behavior_id == "posterior-behavior-v1"

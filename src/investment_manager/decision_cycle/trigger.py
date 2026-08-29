@@ -12,6 +12,14 @@ from temporalio.exceptions import ApplicationError
 
 from investment_manager.forecast.context.analyst import assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
+from investment_manager.forecast.context.posterior_preparation import (
+    ContextPosteriorPreparation,
+    PriorResult,
+)
+from investment_manager.forecast.context.posterior_workflow import (
+    POSTERIOR_WORKFLOW_NAME,
+    PosteriorWorkflowRequest,
+)
 from investment_manager.forecast.context.verification import verification_test_id
 from investment_manager.forecast.context.workflow import (
     ASSESSMENT_WORKFLOW_NAME,
@@ -72,7 +80,7 @@ class TriggerBatchRecorder(Protocol):
 
 
 class ProgramForecastProducer(Protocol):
-    def produce(self, *, as_of: datetime) -> object: ...
+    def produce(self, *, as_of: datetime) -> tuple[PriorResult, ...]: ...
 
 
 class ProgramBatchConsumer(Protocol):
@@ -117,6 +125,7 @@ class TriggerDispatchBuilder:
         assessment_history: AssessmentHistoryReader | None = None,
         batch_recorder: TriggerBatchRecorder | None = None,
         program_forecast_producers: tuple[ProgramForecastProducer, ...] = (),
+        posterior_preparation: ContextPosteriorPreparation | None = None,
         program_batch_consumers: tuple[ProgramBatchConsumer, ...] = (),
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -131,13 +140,15 @@ class TriggerDispatchBuilder:
         self._assessment_history = assessment_history
         self._batch_recorder = batch_recorder
         self._program_forecast_producers = program_forecast_producers
+        self._posterior_preparation = posterior_preparation
         self._program_batch_consumers = program_batch_consumers
         self._clock = clock
 
     def build(self, batch: TriggerBatch) -> tuple[AnalysisDispatchRequest, ...]:
         as_of = batch.created_at
+        prior_results: list[PriorResult] = []
         for producer in self._program_forecast_producers:
-            producer.produce(as_of=as_of)
+            prior_results.extend(producer.produce(as_of=as_of))
         for consumer in self._program_batch_consumers:
             consumer.consume(batch)
         trigger_types = {item.trigger_type for item in batch.triggers}
@@ -185,14 +196,28 @@ class TriggerDispatchBuilder:
                 AnalysisTriggerType.AGENT_WAKEUP,
             }
         )
-        owns_portfolio_assessment = (
-            batch.symbol == self._config.assessment.review_trigger_symbol
-        )
-        if (
-            self._config.assessment.enabled
-            and assessment_triggered
-            and owns_portfolio_assessment
-        ):
+        owns_portfolio_assessment = batch.symbol == self._config.assessment.review_trigger_symbol
+        if self._posterior_preparation is not None and owns_portfolio_assessment:
+            frozen_posterior = self._posterior_preparation.prepare(
+                tuple(prior_results),
+                as_of=as_of,
+            )
+            if frozen_posterior is not None:
+                posterior_request = PosteriorWorkflowRequest.create(
+                    frozen_input=frozen_posterior,
+                    producer_behavior_id=(self._posterior_preparation.producer_behavior_id),
+                    orchestration=OrchestrationPolicySnapshot.from_config(self._config.temporal),
+                    created_at=as_of,
+                )
+                dispatches.append(
+                    AnalysisDispatchRequest(
+                        workflow_name=POSTERIOR_WORKFLOW_NAME,
+                        workflow_id=posterior_request.workflow_id,
+                        task_queue=self._config.temporal.assessment_task_queue,
+                        payload=posterior_request.model_dump(mode="json"),
+                    )
+                )
+        if self._config.assessment.enabled and assessment_triggered and owns_portfolio_assessment:
             assert self._packet_preparation is not None
             assert self._assessment_history is not None
             previous = self._assessment_history.latest_before(
@@ -391,11 +416,7 @@ def _previous_verification_tests(
             break
     if len(selected) < MAX_WORLD_VERIFICATION_TESTS:
         selected_indices = {item[0] for item in selected}
-        selected.extend(
-            item
-            for item in ordered
-            if item[0] not in selected_indices
-        )
+        selected.extend(item for item in ordered if item[0] not in selected_indices)
     selected = sorted(selected[:MAX_WORLD_VERIFICATION_TESTS], key=lambda item: item[0])
     return tuple(
         PacketPreviousVerificationTest(
