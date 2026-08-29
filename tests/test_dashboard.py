@@ -307,6 +307,70 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
     }
 
 
+@pytest.mark.parametrize(
+    ("updates", "expected_state", "expected_detail"),
+    (
+        (
+            {},
+            "ok",
+            "现役先验与世界认知预测已登记 · 尚无到期时点",
+        ),
+        (
+            {"due_panel_count": 1, "pending_panel_count": 1},
+            "warn",
+            "1 个到期时点仍在分析",
+        ),
+        (
+            {"due_panel_count": 2, "unavailable_panel_count": 1},
+            "warn",
+            "1 个到期时点未形成预测",
+        ),
+        (
+            {
+                "due_panel_count": 2,
+                "forecast_panel_count": 2,
+                "settled_panel_count": 1,
+            },
+            "ok",
+            "2 个到期时点已形成预测 · 1 个已结算",
+        ),
+    ),
+)
+def test_health_reports_forward_forecast_failures_without_sample_gates(
+    updates,
+    expected_state,
+    expected_detail,
+) -> None:
+    now = datetime(2026, 8, 29, 23, tzinfo=UTC)
+    overview, reader, config = _healthy_capital_health_context(now)
+    values = {
+        "candidate_behavior_id": "posterior-behavior",
+        "due_panel_count": 0,
+        "forecast_panel_count": 0,
+        "unavailable_panel_count": 0,
+        "pending_panel_count": 0,
+        "settled_panel_count": 0,
+    }
+    values.update(updates)
+
+    result = assemble_health(
+        reader,
+        config,
+        now=now,
+        capital_overview=overview,
+        forecast_research=SimpleNamespace(**values),
+    )
+    check = next(item for item in result["checks"] if item["key"] == "forecast_research")
+
+    assert check == {
+        "key": "forecast_research",
+        "name": "前向预测",
+        "state": expected_state,
+        "detail": expected_detail,
+    }
+    assert result["overall"] == expected_state
+
+
 def test_world_event_serializes_injection_flag():
     event = WorldEvent(
         event_id="NEWS:test-event",

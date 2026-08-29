@@ -133,12 +133,14 @@ def create_app(
             assessment_quality = (
                 reader.assessment_quality_status(now=now) if config.assessment.enabled else None
             )
+            forecast_research = evaluation_reader.world_model_increment_evidence()
             return assemble_health(
                 reader,
                 config,
                 now=now,
                 capital_overview=capital_overview,
                 assessment_quality=assessment_quality,
+                forecast_research=forecast_research,
                 host_resources=sample_host_resources(),
                 coordinator_statuses=coordinator_facts,
             )

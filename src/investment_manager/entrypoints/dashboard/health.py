@@ -18,6 +18,9 @@ from investment_manager.entrypoints.dashboard.read_models import (
     AssessmentQualityStatus,
     DashboardReader,
 )
+from investment_manager.forecast.context.increment_evidence import (
+    ForecastIncrementEvidence,
+)
 
 _SEVERITY = {"ok": 0, "unknown": 1, "warn": 2, "bad": 3}
 _DISK_WARN_PERCENT = 90
@@ -31,6 +34,7 @@ def assemble_health(
     now: datetime,
     capital_overview: CapitalOverview | None = None,
     assessment_quality: AssessmentQualityStatus | None = None,
+    forecast_research: ForecastIncrementEvidence | None = None,
     host_resources: dict | None = None,
     coordinator_statuses: tuple[dict, ...] | None = None,
 ) -> dict:
@@ -46,6 +50,8 @@ def assemble_health(
     ]
     if assessment_quality is not None:
         checks.append(_assessment_output_quality_check(assessment_quality))
+    if forecast_research is not None:
+        checks.append(_forecast_research_check(forecast_research))
     if coordinator_statuses is not None:
         checks.append(_trigger_coordinator_check(coordinator_statuses, now))
     if host_resources is not None:
@@ -61,6 +67,44 @@ def assemble_health(
     else:
         headline = f"{worst['name']}异常"
     return {"overall": overall, "headline": headline, "checks": checks}
+
+
+def _forecast_research_check(evidence: ForecastIncrementEvidence) -> dict:
+    if evidence.candidate_behavior_id is None:
+        return _check(
+            "forecast_research",
+            "前向预测",
+            "unknown",
+            "现役预测行为尚未登记",
+        )
+    if evidence.pending_panel_count:
+        return _check(
+            "forecast_research",
+            "前向预测",
+            "warn",
+            f"{evidence.pending_panel_count} 个到期时点仍在分析",
+        )
+    if evidence.unavailable_panel_count:
+        return _check(
+            "forecast_research",
+            "前向预测",
+            "warn",
+            f"{evidence.unavailable_panel_count} 个到期时点未形成预测",
+        )
+    if evidence.due_panel_count == 0:
+        return _check(
+            "forecast_research",
+            "前向预测",
+            "ok",
+            "现役先验与世界认知预测已登记 · 尚无到期时点",
+        )
+    return _check(
+        "forecast_research",
+        "前向预测",
+        "ok",
+        f"{evidence.forecast_panel_count} 个到期时点已形成预测 · "
+        f"{evidence.settled_panel_count} 个已结算",
+    )
 
 
 def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
