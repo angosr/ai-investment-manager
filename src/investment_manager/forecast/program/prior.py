@@ -172,7 +172,7 @@ class RollingPriorForecastProducer:
                 slot_at = existing_slot_at
             elif not adds_unseen_evidence:
                 return ()
-        return tuple(
+        results = (
             self._produce(
                 target,
                 slot_at=slot_at,
@@ -181,6 +181,7 @@ class RollingPriorForecastProducer:
             )
             for target in build_prior_targets(self.artifact)
         )
+        return tuple(item for item in results if item is not None)
 
     def _produce(
         self,
@@ -189,12 +190,14 @@ class RollingPriorForecastProducer:
         slot_at: datetime,
         observed_at: datetime,
         cause: ForecastSlotCause,
-    ) -> BaseForecast | ForecastNoEstimate:
+    ) -> BaseForecast | ForecastNoEstimate | None:
         self.contracts.record_contract(target.contract)
         binding = self.contracts.resolve_binding(
             target.binding,
             activated_at=self.activated_at,
         )
+        if slot_at < self.contracts.binding_activation_at(binding.binding_id):
+            return None
         slot_id = ForecastDecisionSlot.identity_for(
             target.contract.contract_id, slot_at, cause=cause
         )

@@ -6,6 +6,10 @@ from sqlalchemy import create_engine
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     MATERIAL_SLOT_POLICY_VERSION,
+    ForecastDecisionSlot,
+    ForecastPermission,
+    ForecastProducerBinding,
+    ForecastProducerKind,
     ForecastSlotCause,
 )
 from investment_manager.forecast.program.baseline import load_forecast_baseline
@@ -132,6 +136,52 @@ def test_prior_producer_records_material_event_as_independent_slot() -> None:
     slots = tuple(contracts.slot(item.decision_slot_id) for item in results)
     assert all(slot is not None and slot.slot_as_of == event_at for slot in slots)
     assert all(slot is not None and slot.cause == cause for slot in slots)
+
+
+def test_new_behavior_cannot_backfill_an_existing_material_event() -> None:
+    event_at = datetime(2026, 8, 29, 14, tzinfo=UTC)
+    activation_at = event_at + timedelta(hours=1)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    cause = ForecastSlotCause.material_state(
+        policy_version=MATERIAL_SLOT_POLICY_VERSION,
+        trigger_refs=("official-event-before-activation",),
+    )
+    for target in build_prior_targets(_artifact()):
+        contracts.record_contract(target.contract)
+        old_binding = ForecastProducerBinding.create(
+            contract_id=target.contract.contract_id,
+            producer_kind=ForecastProducerKind.PROGRAM,
+            producer_id="retired-prior",
+            producer_behavior_id="retired-prior-behavior",
+            permission=ForecastPermission.RESEARCH,
+        )
+        contracts.record_binding(old_binding, activated_at=event_at - timedelta(hours=1))
+        contracts.record_slot(
+            ForecastDecisionSlot.create(
+                target.contract,
+                slot_as_of=event_at,
+                cutoff_prices=(),
+                cause=cause,
+            ),
+            binding=old_binding,
+        )
+    producer = RollingPriorForecastProducer(
+        artifact=_artifact(),
+        market=InMemoryMarketDataStore(),
+        contracts=contracts,
+        forecasts=SqlForecastStore(engine),
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        activated_at=activation_at,
+        maximum_quote_age_seconds=300,
+        clock=lambda: activation_at + timedelta(hours=1),
+    )
+
+    assert producer.produce(
+        as_of=activation_at + timedelta(hours=1),
+        cause=cause,
+    ) == ()
 
 
 def test_prior_cadence_never_backfills_before_activation() -> None:
