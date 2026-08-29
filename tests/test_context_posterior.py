@@ -31,7 +31,9 @@ from investment_manager.forecast.context.posterior_contract import (
     PosteriorBucketDraft,
     PosteriorPriorTarget,
     PosteriorTargetDraft,
+    build_posterior_prompt,
     finalize_posterior,
+    posterior_analysis_projection,
     posterior_output_schema,
 )
 from investment_manager.forecast.context.posterior_execution import (
@@ -427,6 +429,23 @@ def test_posterior_schema_is_bounded_to_frozen_contracts_and_mechanisms() -> Non
         ]
         == 0
     )
+
+
+def test_posterior_prompt_projects_decision_semantics_once_within_capacity() -> None:
+    frozen = _input()
+    projection = posterior_analysis_projection(frozen)
+    prompt = build_posterior_prompt(frozen)
+
+    assert len(prompt) < 16_000
+    assert projection["eligible_mechanism_ids"] == ("structural-liquidity-1",)
+    assert projection["world_model"]["eligible_mechanisms"][0]["claim"] == (
+        frozen.world_model.mechanisms[0].claim
+    )
+    assert len(projection["targets"]) == 2
+    assert "program_input_json" not in prompt
+    assert "entry_prices" not in prompt
+    assert "cutoff_prices" not in prompt
+    assert "forecast_benchmark" not in prompt
 
 
 def test_posterior_rejects_direction_inconsistent_with_mechanism() -> None:

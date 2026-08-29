@@ -32,10 +32,11 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 
 POSTERIOR_INPUT_VERSION = "world-model-posterior-input-v1"
+POSTERIOR_MODEL_INPUT_VERSION = "world-model-posterior-projection-v2"
 POSTERIOR_SEED_VERSION = "world-model-posterior-seed-v1"
 POSTERIOR_OUTPUT_VERSION = "world-model-posterior-output-v1"
 POSTERIOR_PRODUCER_ID = "world-model-posterior"
-POSTERIOR_PRODUCTION_SEMANTICS_VERSION = "same-cutoff-structural-conditioning-v2"
+POSTERIOR_PRODUCTION_SEMANTICS_VERSION = "same-cutoff-structural-conditioning-v3"
 
 
 class PosteriorPriorTarget(FrozenModel):
@@ -252,9 +253,101 @@ def build_posterior_prompt(value: ContextPosteriorInput) -> str:
         (
             *POSTERIOR_INSTRUCTIONS,
             "posterior_input_json=",
-            canonical_json(value),
+            canonical_json(posterior_analysis_projection(value)),
         )
     )
+
+
+def posterior_analysis_projection(value: ContextPosteriorInput) -> dict[str, object]:
+    """Decision-dense model view; the complete immutable input stays auditable.
+
+    Contracts, slots, quotes and program-input lineage are required to freeze
+    identity and settle outcomes, but repeating them to the model dilutes the
+    only judgment it owns: whether named structural mechanisms should move the
+    prior distribution.  The projection therefore carries each semantic fact
+    exactly once and never truncates a mechanism or target opportunistically.
+    """
+
+    observations_by_mechanism: dict[str, list[dict[str, object]]] = {}
+    for observation in value.mechanism_observations:
+        observations_by_mechanism.setdefault(observation.mechanism_id, []).append(
+            {
+                "feature": observation.feature_selector,
+                "value": observation.value,
+                "match": observation.match,
+                "support_streak": observation.support_streak,
+                "contradiction_streak": observation.contradiction_streak,
+                "resolution": observation.resolution,
+                "observed_at": observation.observed_at,
+            }
+        )
+    eligible = set(value.eligible_mechanism_ids)
+    mechanisms = tuple(
+        {
+            "mechanism_id": mechanism.mechanism_id,
+            "relationship": mechanism.relationship,
+            "claim": mechanism.claim,
+            "horizon_hours": mechanism.horizon_hours,
+            "transmission_stage": mechanism.transmission_stage,
+            "causal_chain": tuple(node.statement for node in mechanism.causal_chain),
+            "observations": tuple(
+                observations_by_mechanism.get(mechanism.mechanism_id, ())
+            ),
+        }
+        for mechanism in value.world_model.mechanisms
+        if mechanism.mechanism_id in eligible
+    )
+    targets = tuple(
+        {
+            "contract_id": target.contract.contract_id,
+            "target": tuple(
+                {
+                    "instrument_id": leg.instrument.key,
+                    "direction": leg.direction,
+                    "gross_weight": leg.gross_weight,
+                }
+                for leg in target.contract.target.legs
+            ),
+            "horizon_minutes": target.contract.horizon_minutes,
+            "prior_expected_gross_bps": target.prior.expected_gross_bps,
+            "buckets": tuple(
+                {
+                    "bucket_id": bucket.bucket_id,
+                    "lower_bps": bucket.lower_bps,
+                    "upper_bps": bucket.upper_bps,
+                    "representative_bps": bucket.representative_bps,
+                    "prior_probability": probability.probability,
+                }
+                for bucket, probability in zip(
+                    target.contract.outcome_buckets,
+                    target.prior.outcome_probabilities,
+                    strict=True,
+                )
+            ),
+        }
+        for target in value.targets
+    )
+    return {
+        "projection_version": POSTERIOR_MODEL_INPUT_VERSION,
+        "input_id": value.input_id,
+        "information_cutoff_at": value.information_cutoff_at,
+        "world_model": {
+            "assessment_id": value.world_model.assessment_id,
+            "synthesis": value.world_model.synthesis,
+            "synthesis_horizon_hours": value.world_model.synthesis_horizon_hours,
+            "active_events": tuple(
+                {
+                    "title": event.title,
+                    "rationale": event.rationale,
+                }
+                for event in value.world_model.event_references
+                if event.impact_state.value == "ACTIVE"
+            ),
+            "eligible_mechanisms": mechanisms,
+        },
+        "eligible_mechanism_ids": value.eligible_mechanism_ids,
+        "targets": targets,
+    }
 
 
 def posterior_behavior_hash(
@@ -269,6 +362,7 @@ def posterior_behavior_hash(
     return content_hash(
         {
             "input_version": POSTERIOR_INPUT_VERSION,
+            "model_input_version": POSTERIOR_MODEL_INPUT_VERSION,
             "output_version": POSTERIOR_OUTPUT_VERSION,
             "instructions": POSTERIOR_INSTRUCTIONS,
             "input_schema": ContextPosteriorInput.model_json_schema(),
