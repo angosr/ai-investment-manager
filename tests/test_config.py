@@ -381,6 +381,27 @@ def test_historical_state_policy_does_not_require_future_source_rules() -> None:
     )
 
 
+def test_previous_official_fact_policy_does_not_require_new_metric_rules() -> None:
+    config = load_config("config/investment-manager.yaml")
+    payload = config.decision_state.model_dump(mode="python")
+    payload["version"] = "portfolio-state-v53"
+    payload["official_fact_policy"]["version"] = "official-fact-v20"
+    future_fact_types = {
+        "US_TREASURY_AVERAGE_INTEREST_COST_SNAPSHOT",
+        "US_TREASURY_INTEREST_EXPENSE_SNAPSHOT",
+        "US_TREASURY_REFINANCING_PROFILE_SNAPSHOT",
+    }
+    payload["delta_policy"]["rules"] = tuple(
+        item
+        for item in payload["delta_policy"]["rules"]
+        if item["fact_type"] not in future_fact_types
+    )
+
+    restored = DecisionStatePolicy.model_validate(payload)
+
+    assert restored.official_fact_policy.version == "official-fact-v20"
+
+
 def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.capital.model_dump(mode="python")

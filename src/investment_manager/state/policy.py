@@ -5,7 +5,10 @@ from pydantic import Field, model_validator
 from investment_manager.information.aggregated_flows import (
     AGGREGATED_FLOW_FACT_TYPES,
 )
-from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
+from investment_manager.information.official.metrics import (
+    OFFICIAL_METRIC_FACT_TYPES,
+    OFFICIAL_METRIC_FACT_TYPES_BY_POLICY_VERSION,
+)
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.facts import (
@@ -76,7 +79,11 @@ class DecisionStatePolicy(StrictConfig):
         if not required.issubset(configured):
             raise ValueError("OfficialFact projection 缺少对应 MaterialDelta 规则")
         configured_metrics = configured & OFFICIAL_METRIC_FACT_TYPES
-        if configured_metrics and configured_metrics != OFFICIAL_METRIC_FACT_TYPES:
+        required_metrics = OFFICIAL_METRIC_FACT_TYPES_BY_POLICY_VERSION.get(
+            self.official_fact_policy.version,
+            OFFICIAL_METRIC_FACT_TYPES,
+        )
+        if configured_metrics and configured_metrics != required_metrics:
             raise ValueError("官方宏观指标 MaterialDelta 规则必须完整启用或完整关闭")
         configured_flows = configured & AGGREGATED_FLOW_FACT_TYPES
         if configured_flows and configured_flows != AGGREGATED_FLOW_FACT_TYPES:
