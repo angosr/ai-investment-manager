@@ -79,6 +79,7 @@ from investment_manager.forecast.program.prior import (
     PRIOR_PRODUCER_ID,
     RollingPriorForecastProducer,
     build_prior_targets,
+    prior_slot_at_or_before,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import (
@@ -118,7 +119,7 @@ from investment_manager.state.decision.packet import (
 )
 from investment_manager.state.models import FactDecisionMateriality, FactRevisionStatus
 
-SLOT_AT = datetime(2026, 8, 30, tzinfo=UTC)
+SLOT_AT = prior_slot_at_or_before(datetime.now(tz=UTC) + timedelta(days=4))
 
 
 def _packet() -> DecisionPacket:

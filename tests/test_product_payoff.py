@@ -14,6 +14,8 @@ from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
     ForecastContract,
     ForecastDecisionSlot,
+    ForecastNoEstimate,
+    ForecastNoEstimateReason,
     ForecastOutcomeBucket,
     ForecastPermission,
     ForecastPriceAnchor,
@@ -1636,7 +1638,7 @@ def test_point_in_time_projector_maps_one_forecast_to_both_perpetual_directions(
     assert all(rules.rules_id in item.input_refs for item in projections)
 
 
-def test_world_model_capital_increment_replays_prior_and_posterior_with_same_costs(
+def test_world_model_capital_increment_replays_forecast_and_terminal_gap_with_same_costs(
     app_config,
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -1792,6 +1794,46 @@ def test_world_model_capital_increment_replays_prior_and_posterior_with_same_cos
     )
     assert evidence.net_equity_increment is not None
     assert evidence.net_equity_increment > 0
+
+    unavailable_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id=POSTERIOR_PRODUCER_ID,
+        producer_behavior_id="zz-joint-posterior-unavailable-behavior",
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(unavailable_binding, activated_at=NOW)
+    contracts.record_obligation(slot=slot, binding=unavailable_binding)
+    contracts.record_no_estimate(
+        ForecastNoEstimate(
+            result_id=stable_id(
+                "forecast_no_estimate",
+                slot.slot_id,
+                unavailable_binding.producer_behavior_id,
+            ),
+            slot_id=slot.slot_id,
+            contract_id=contract.contract_id,
+            producer_kind=unavailable_binding.producer_kind,
+            producer_id=unavailable_binding.producer_id,
+            producer_behavior_id=unavailable_binding.producer_behavior_id,
+            reason=ForecastNoEstimateReason.PRODUCER_FAILED,
+            information_cutoff_at=slot.information_cutoff_at,
+            attempted_at=available_at,
+            completed_at=available_at,
+            input_refs=(prior.forecast_id,),
+            detail="WORLD_MODEL_PACKET_UNAVAILABLE",
+        )
+    )
+
+    unavailable = reader.read(as_of=slot.evaluation_at + timedelta(minutes=1))
+
+    assert unavailable.status == CapitalIncrementStatus.EVIDENCE_AVAILABLE
+    assert unavailable.candidate is not None and unavailable.comparator is not None
+    assert unavailable.candidate.equity == Decimal("10000")
+    assert unavailable.candidate.gross_turnover == 0
+    assert unavailable.candidate.fee_cost == 0
+    assert unavailable.comparator.gross_turnover > 0
+    assert unavailable.net_equity_increment is not None
 
 
 def test_event_response_capital_compares_material_forecast_with_cadence_only_cash(
