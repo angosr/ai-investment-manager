@@ -253,9 +253,44 @@ def assessment_quality(status: AssessmentQualityStatus) -> dict:
 
 
 def _assessment_input_snapshot(packet: DecisionPacket) -> dict:
-    """Return the exact persisted AI input without inventing a second state model."""
+    """Return the exact AI input in the dashboard's stable object-list shape.
 
-    return assessment_input_projection(packet)
+    The analyst projection deduplicates homogeneous state field names into
+    ``columns``/``rows`` tables.  That transport shape is useful for model
+    capacity but is not the dashboard API contract, so decode it losslessly at
+    this boundary instead of leaking model-specific compression into the UI.
+    """
+
+    payload = assessment_input_projection(packet)
+    payload["asset_states"] = _dashboard_state_rows(
+        payload["asset_states"],
+        field_name="asset_states",
+    )
+    payload["derivative_states"] = _dashboard_state_rows(
+        payload.get("derivative_states", {"columns": (), "rows": ()}),
+        field_name="derivative_states",
+    )
+    return payload
+
+
+def _dashboard_state_rows(value: object, *, field_name: str) -> list[dict[str, object]]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} 分析投影必须是 columns/rows 表")
+    columns = value.get("columns")
+    rows = value.get("rows")
+    if not isinstance(columns, (list, tuple)) or not all(
+        isinstance(column, str) for column in columns
+    ):
+        raise ValueError(f"{field_name} columns 无效")
+    if not isinstance(rows, (list, tuple)):
+        raise ValueError(f"{field_name} rows 无效")
+
+    decoded: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) != len(columns):
+            raise ValueError(f"{field_name} row 与 columns 不一致")
+        decoded.append(dict(zip(columns, row, strict=True)))
+    return decoded
 
 
 def world_event(event: WorldEvent) -> dict:

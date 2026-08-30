@@ -46,6 +46,7 @@ from investment_manager.state.decision.packet import (
     MandateExposure,
     PacketAssetState,
     PacketDelta,
+    PacketDerivativeState,
     PacketIntelligenceEvent,
     PacketPortfolioState,
     RequiredView,
@@ -234,6 +235,27 @@ def test_dashboard_revalidates_shell_and_caches_hashed_assets(
 def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
     as_of = datetime(2026, 8, 22, 18, tzinfo=UTC)
     packet = _dashboard_assessment_packet(as_of=as_of, analysis_scope="primary-portfolio")
+    packet = packet.model_copy(
+        update={
+            "derivative_states": (
+                PacketDerivativeState(
+                    evidence_ref="f" * 64,
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    observed_at=as_of,
+                    mark_index_premium_bps=Decimal("1.2"),
+                    executable_short_basis_bps=Decimal("0.8"),
+                    perpetual_spread_bps=Decimal("0.4"),
+                    last_funding_rate_bps=Decimal("0.1"),
+                    trailing_funding_rate_mean_bps=Decimal("0.08"),
+                    trailing_funding_rate_sum_bps=Decimal("0.24"),
+                    funding_settlement_count=3,
+                    funding_window_hours=24,
+                    next_funding_time=as_of + timedelta(hours=4),
+                ),
+            )
+        }
+    )
     evidence_id = "d" * 64
     assessment = _dashboard_world_model(
         packet,
@@ -248,6 +270,13 @@ def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
     assert dto["synthesis"] == assessment.synthesis
     assert dto["mechanisms"][0]["causal_chain"][0]["evidence"][0]["evidence_id"] == evidence_id
     assert dto["cited_evidence"] == dto["mechanisms"][0]["causal_chain"][0]["evidence"]
+    snapshot = dto["input_snapshot"]
+    assert isinstance(snapshot["asset_states"], list)
+    assert snapshot["asset_states"][0]["asset"] == "BTC"
+    assert snapshot["asset_states"][0]["last"] == "60000"
+    assert isinstance(snapshot["derivative_states"], list)
+    assert snapshot["derivative_states"][0]["evidence_ref"] == "f" * 64
+    assert snapshot["derivative_states"][0]["mark_index_premium_bps"] == "1.2"
 
 
 def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
@@ -430,10 +459,13 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
         }
     ]
     assert assessment_detail.json()["event_references"][0]["impact_state"] == "ACTIVE"
-    assert assessment_detail.json()["input_snapshot"]["analysis_scope"] == (packet.analysis_scope)
-    assert "packet_id" not in assessment_detail.json()["input_snapshot"]
-    assert "capacity_summary" not in assessment_detail.json()["input_snapshot"]
-    assert "omitted_intelligence_event_refs" not in assessment_detail.json()["input_snapshot"]
+    input_snapshot = assessment_detail.json()["input_snapshot"]
+    assert input_snapshot["analysis_scope"] == packet.analysis_scope
+    assert isinstance(input_snapshot["asset_states"], list)
+    assert input_snapshot["derivative_states"] == []
+    assert "packet_id" not in input_snapshot
+    assert "capacity_summary" not in input_snapshot
+    assert "omitted_intelligence_event_refs" not in input_snapshot
     assert bad_assessment_detail.status_code == 200
     assert capital_overview.status_code == 200
     assert "forecast_evidence" not in capital_overview.json()
