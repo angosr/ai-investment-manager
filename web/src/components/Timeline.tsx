@@ -143,14 +143,17 @@ function WorldModelIncrementLine({
     );
   }
   if (cadenceEvidence.status === "AWAITING_FORECAST") {
+    const stillRunning = cadenceEvidence.pending_panel_count > 0;
     return (
       <div className={styles.forecastEvidence}>
-        <b>固定时点预测尚未完整产出</b>
+        <b>{stillRunning ? "固定时点预测仍在分析" : "固定时点预测存在终态缺报"}</b>
         <span>
           已到 {cadenceEvidence.due_panel_count} 个固定预测窗口，完整输出
           {cadenceEvidence.forecast_panel_count} 个，未能估计
-          {cadenceEvidence.unavailable_panel_count} 个，仍待完成
-          {cadenceEvidence.pending_panel_count} 个。
+          {cadenceEvidence.unavailable_panel_count} 个
+          {stillRunning
+            ? `，尚在分析 ${cadenceEvidence.pending_panel_count} 个。`
+            : "。缺报已经终态，不会事后补写，并将计入预测覆盖率。"}
           <MaterialForecastText evidence={material} />
         </span>
       </div>
@@ -199,7 +202,9 @@ function MaterialForecastText({
 }) {
   if (!evidence || evidence.status === "NOT_STARTED") return null;
   if (evidence.status === "AWAITING_FORECAST") {
-    return <> 重大事件窗口有 {evidence.due_panel_count} 个，其中 {evidence.pending_panel_count} 个尚未完整产出。</>;
+    return evidence.pending_panel_count > 0
+      ? <> 重大事件窗口有 {evidence.due_panel_count} 个，其中 {evidence.pending_panel_count} 个仍在分析。</>
+      : <> 重大事件窗口有 {evidence.due_panel_count} 个，其中 {evidence.unavailable_panel_count} 个已终态缺报。</>;
   }
   if (evidence.status === "AWAITING_SETTLEMENT") {
     return <> 另有 {evidence.forecast_panel_count} 个重大事件窗口已经冻结预测，正在等待各自终点。</>;
