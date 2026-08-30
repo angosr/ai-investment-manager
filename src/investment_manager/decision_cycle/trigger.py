@@ -229,6 +229,13 @@ class TriggerDispatchBuilder:
                     batch,
                     as_of=posterior_seed.information_cutoff_at,
                     analysis_identity=posterior_seed.seed_id,
+                    required_review_requests=(
+                        PacketReviewRequest.create(
+                            requested_at=posterior_seed.information_cutoff_at,
+                            reason="为冻结 Forecast DecisionSlot 构建同点时世界模型",
+                            evidence_ids=(),
+                        ),
+                    ),
                 )
                 if command is None:
                     self._posterior_preparation.close_seed(
@@ -301,6 +308,7 @@ class TriggerDispatchBuilder:
         *,
         as_of: datetime,
         analysis_identity: str,
+        required_review_requests: tuple[PacketReviewRequest, ...] = (),
     ) -> AssessmentCommand | None:
         assert self._packet_preparation is not None
         assert self._assessment_history is not None
@@ -325,7 +333,9 @@ class TriggerDispatchBuilder:
                 }
             )
         )
-        reviews_by_id: dict[str, PacketReviewRequest] = {}
+        reviews_by_id: dict[str, PacketReviewRequest] = {
+            item.review_id: item for item in required_review_requests
+        }
         for trigger in visible_triggers:
             if (
                 trigger.trigger_type != AnalysisTriggerType.AGENT_WAKEUP

@@ -1503,11 +1503,20 @@ def test_heartbeat_dispatches_one_due_joint_posterior_without_standalone_assessm
         analysis_behavior_hash="a" * 64,
     )
     analysis_identities = []
+    required_reviews = []
 
     class DispatchBuilder(TriggerDispatchBuilder):
-        def _assessment_command(self, batch, *, as_of, analysis_identity):
+        def _assessment_command(
+            self,
+            batch,
+            *,
+            as_of,
+            analysis_identity,
+            required_review_requests=(),
+        ):
             assert as_of == SLOT_AT
             analysis_identities.append(analysis_identity)
+            required_reviews.extend(required_review_requests)
             return command
 
     dispatches = DispatchBuilder(
@@ -1524,6 +1533,10 @@ def test_heartbeat_dispatches_one_due_joint_posterior_without_standalone_assessm
     assert len(request.seed.targets) == 2
     assert all(item.prior.producer_id == PRIOR_PRODUCER_ID for item in request.seed.targets)
     assert analysis_identities == [request.seed.seed_id]
+    assert len(required_reviews) == 1
+    assert required_reviews[0].requested_at == SLOT_AT
+    assert required_reviews[0].evidence_ids == ()
+    assert "Forecast DecisionSlot" in required_reviews[0].reason
     assert request.assessment_command == command
     assert request.producer_behavior_id == preparation.producer_behavior_id
     with engine.connect() as connection:
@@ -1566,9 +1579,18 @@ def test_trigger_closes_reserved_posterior_when_world_packet_is_unavailable(
             closed.append((value, attempted_at, reason, detail))
 
     class DispatchBuilder(TriggerDispatchBuilder):
-        def _assessment_command(self, batch, *, as_of, analysis_identity):
+        def _assessment_command(
+            self,
+            batch,
+            *,
+            as_of,
+            analysis_identity,
+            required_review_requests=(),
+        ):
             assert as_of == SLOT_AT
             assert analysis_identity == seed.seed_id
+            assert len(required_review_requests) == 1
+            assert required_review_requests[0].requested_at == SLOT_AT
             return None
 
     config, batch = _posterior_trigger_config_and_batch(app_config)
