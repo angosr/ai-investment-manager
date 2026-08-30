@@ -48,6 +48,7 @@ from investment_manager.kernel.identity import content_hash, stable_id
 class ForecastIncrementStatus(StrEnum):
     NOT_STARTED = "NOT_STARTED"
     AWAITING_FORECAST = "AWAITING_FORECAST"
+    FORECAST_UNAVAILABLE = "FORECAST_UNAVAILABLE"
     AWAITING_SETTLEMENT = "AWAITING_SETTLEMENT"
     EVIDENCE_AVAILABLE = "EVIDENCE_AVAILABLE"
 
@@ -248,6 +249,8 @@ class SqlForecastIncrementEvidenceReader:
         status = self._status(
             due_panel_count=len(panels),
             forecast_panel_count=forecast_panels,
+            unavailable_panel_count=unavailable_panels,
+            pending_panel_count=pending_panels,
             pair=pair,
         )
         source_evidence_values = []
@@ -259,6 +262,8 @@ class SqlForecastIncrementEvidenceReader:
                     status=self._status(
                         due_panel_count=source_counts[stratum]["due"],
                         forecast_panel_count=source_counts[stratum]["forecast"],
+                        unavailable_panel_count=source_counts[stratum]["unavailable"],
+                        pending_panel_count=source_counts[stratum]["pending"],
                         pair=source_pair,
                     ),
                     due_panel_count=source_counts[stratum]["due"],
@@ -320,14 +325,20 @@ class SqlForecastIncrementEvidenceReader:
         *,
         due_panel_count: int,
         forecast_panel_count: int,
+        unavailable_panel_count: int,
+        pending_panel_count: int,
         pair: ForecastPairEvidence,
     ) -> ForecastIncrementStatus:
         if pair.settled_panel_count > 0:
             return ForecastIncrementStatus.EVIDENCE_AVAILABLE
         if forecast_panel_count > 0:
             return ForecastIncrementStatus.AWAITING_SETTLEMENT
-        if due_panel_count > 0:
+        if pending_panel_count > 0:
             return ForecastIncrementStatus.AWAITING_FORECAST
+        if unavailable_panel_count > 0:
+            return ForecastIncrementStatus.FORECAST_UNAVAILABLE
+        if due_panel_count > 0:
+            raise ValueError("到期 Forecast panel 缺少 pending 或终态结果")
         return ForecastIncrementStatus.NOT_STARTED
 
     def _latest_behavior_id(self) -> str | None:

@@ -209,6 +209,7 @@ export interface AssessmentFeed {
 type ForecastIncrementStatus =
   | "NOT_STARTED"
   | "AWAITING_FORECAST"
+  | "FORECAST_UNAVAILABLE"
   | "AWAITING_SETTLEMENT"
   | "EVIDENCE_AVAILABLE";
 

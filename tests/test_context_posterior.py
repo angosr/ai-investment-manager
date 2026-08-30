@@ -1090,7 +1090,7 @@ def test_posterior_execution_recovers_partial_joint_write_without_second_ai_call
 def test_posterior_business_failure_records_terminal_no_estimates(
     base_app_config,
 ) -> None:
-    preparation, contracts, forecasts, market, _engine, frozen, completed_at = _execution_fixture(
+    preparation, contracts, forecasts, market, engine, frozen, completed_at = _execution_fixture(
         base_app_config
     )
     analyst = _ExecutionAnalyst(
@@ -1125,6 +1125,16 @@ def test_posterior_business_failure_records_terminal_no_estimates(
     assert len(result.no_estimate_ids) == len(frozen.targets)
     assert replayed.reused_authoritative is True
     assert analyst.calls == 1
+    evidence = SqlForecastIncrementEvidenceReader(
+        engine=engine,
+        outcome_evaluation_version="forecast-target-outcome-v1",
+        candidate_producer_id="world-model-posterior",
+        comparator_producer_id=PRIOR_PRODUCER_ID,
+    ).read()
+    assert evidence.status == ForecastIncrementStatus.FORECAST_UNAVAILABLE
+    assert evidence.pending_panel_count == 0
+    assert evidence.unavailable_panel_count == 1
+    assert evidence.source_evidence[0].status == ForecastIncrementStatus.FORECAST_UNAVAILABLE
 
 
 class _SuccessfulAssessmentApplication:
