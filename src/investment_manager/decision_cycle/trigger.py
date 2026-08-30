@@ -27,6 +27,7 @@ from investment_manager.forecast.context.workflow import (
 )
 from investment_manager.forecast.contracts import (
     MATERIAL_SLOT_POLICY_VERSION,
+    ForecastNoEstimate,
     ForecastNoEstimateReason,
     ForecastSlotCause,
 )
@@ -37,6 +38,7 @@ from investment_manager.forecast.models import (
     ContextMechanism,
     ContextMechanismObservation,
 )
+from investment_manager.forecast.results import BaseForecast
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.information.text import sanitize_external_text
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
@@ -95,6 +97,24 @@ class ProgramForecastProducer(Protocol):
 
 class ProgramBatchConsumer(Protocol):
     def consume(self, batch: TriggerBatch) -> object: ...
+
+
+def _prior_panel_ready_at(
+    prior_results: tuple[PriorResult, ...],
+    *,
+    batch_as_of: datetime,
+) -> datetime:
+    """Return the earliest honest time every prior result was visible."""
+
+    visible_at = [require_utc(batch_as_of)]
+    for result in prior_results:
+        if isinstance(result, BaseForecast):
+            visible_at.append(result.available_at)
+        elif isinstance(result, ForecastNoEstimate):
+            visible_at.append(result.completed_at)
+        else:  # pragma: no cover - PriorResult is a closed runtime union.
+            raise TypeError("未知 prior 终态")
+    return max(visible_at)
 
 
 def _material_forecast_cause(batch: TriggerBatch) -> ForecastSlotCause | None:
@@ -217,9 +237,13 @@ class TriggerDispatchBuilder:
         material_seed_created = False
         if self._posterior_preparation is not None and owns_portfolio_assessment:
             for cause, prior_results in prior_panels:
+                prior_ready_at = _prior_panel_ready_at(
+                    prior_results,
+                    batch_as_of=as_of,
+                )
                 posterior_seed = self._posterior_preparation.reserve(
                     prior_results,
-                    as_of=as_of,
+                    as_of=prior_ready_at,
                 )
                 if posterior_seed is None:
                     continue
@@ -237,10 +261,11 @@ class TriggerDispatchBuilder:
                         ),
                     ),
                 )
+                command_ready_at = max(prior_ready_at, require_utc(self._clock()))
                 if command is None:
                     self._posterior_preparation.close_seed(
                         posterior_seed,
-                        attempted_at=as_of,
+                        attempted_at=command_ready_at,
                         reason=ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
                         detail="WORLD_MODEL_DECISION_PACKET_UNAVAILABLE",
                     )
@@ -252,7 +277,7 @@ class TriggerDispatchBuilder:
                         orchestration=OrchestrationPolicySnapshot.from_config(
                             self._config.temporal
                         ),
-                        created_at=as_of,
+                        created_at=command_ready_at,
                     )
                     dispatches.append(
                         AnalysisDispatchRequest(

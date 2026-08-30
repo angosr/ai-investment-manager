@@ -9,7 +9,10 @@ from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
+from investment_manager.decision_cycle.trigger import (
+    TriggerDispatchBuilder,
+    _prior_panel_ready_at,
+)
 from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
@@ -1484,6 +1487,18 @@ def _posterior_trigger_config_and_batch(app_config):
     )
 
 
+def test_posterior_dependency_time_cannot_precede_prior_visibility() -> None:
+    targets = _input().targets
+    delayed = targets[0].prior.model_copy(
+        update={"available_at": SLOT_AT + timedelta(minutes=3)}
+    )
+
+    assert _prior_panel_ready_at(
+        (delayed, targets[1].prior),
+        batch_as_of=SLOT_AT + timedelta(minutes=1),
+    ) == SLOT_AT + timedelta(minutes=3)
+
+
 def test_heartbeat_dispatches_one_due_joint_posterior_without_standalone_assessment(
     app_config,
 ) -> None:
@@ -1523,6 +1538,7 @@ def test_heartbeat_dispatches_one_due_joint_posterior_without_standalone_assessm
         config=config,
         program_forecast_producers=(prior,),
         posterior_preparation=preparation,
+        clock=lambda: SLOT_AT + timedelta(minutes=2),
     ).build(batch)
 
     assert len(dispatches) == 1
@@ -1599,13 +1615,14 @@ def test_trigger_closes_reserved_posterior_when_world_packet_is_unavailable(
         config=config,
         program_forecast_producers=(PriorProducer(),),
         posterior_preparation=PosteriorPreparation(),
+        clock=lambda: SLOT_AT + timedelta(minutes=2),
     ).build(batch)
 
     assert dispatches == ()
     assert closed == [
         (
             seed,
-            SLOT_AT + timedelta(minutes=1),
+            SLOT_AT + timedelta(minutes=2),
             ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
             "WORLD_MODEL_DECISION_PACKET_UNAVAILABLE",
         )
