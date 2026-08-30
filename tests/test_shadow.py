@@ -5,6 +5,12 @@ from datetime import UTC, datetime, timedelta
 from investment_manager.decision_cycle import service as decision_service
 from investment_manager.decision_cycle.capital import CapitalTriggerConsumer
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
+from investment_manager.forecast.contracts import (
+    ForecastNoEstimate,
+    ForecastNoEstimateReason,
+    ForecastProducerKind,
+)
+from investment_manager.kernel.identity import stable_id
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     build_initial_trigger_plan,
@@ -76,9 +82,22 @@ class RecordingForecastProducer:
         return self.results
 
 
-class ForecastResultStub:
-    def __init__(self, information_cutoff_at: datetime) -> None:
-        self.information_cutoff_at = information_cutoff_at
+def _forecast_result(information_cutoff_at: datetime, suffix: str) -> ForecastNoEstimate:
+    slot_id = f"slot-{suffix}"
+    producer_behavior_id = "program-prior-v1"
+    return ForecastNoEstimate(
+        result_id=stable_id("forecast_no_estimate", slot_id, producer_behavior_id),
+        slot_id=slot_id,
+        contract_id=f"contract-{suffix}",
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id="program-prior",
+        producer_behavior_id=producer_behavior_id,
+        reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
+        information_cutoff_at=information_cutoff_at,
+        attempted_at=NOW,
+        completed_at=NOW,
+        detail="TEST_INPUT_UNAVAILABLE",
+    )
 
 
 class RecordingPosteriorPreparation:
@@ -242,10 +261,10 @@ def test_trigger_builder_groups_recovered_cadence_results_by_cutoff(app_config) 
     earlier = NOW - timedelta(days=3)
     producer = RecordingForecastProducer(
         (
-            ForecastResultStub(earlier),
-            ForecastResultStub(earlier),
-            ForecastResultStub(NOW),
-            ForecastResultStub(NOW),
+            _forecast_result(earlier, "earlier-a"),
+            _forecast_result(earlier, "earlier-b"),
+            _forecast_result(NOW, "current-a"),
+            _forecast_result(NOW, "current-b"),
         )
     )
     posterior = RecordingPosteriorPreparation()
